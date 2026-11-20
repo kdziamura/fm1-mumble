@@ -431,14 +431,14 @@ static int voice_wave(unsigned period, int amp, unsigned phase)
  * (x, y, w, h in portrait pixels); a closed eye is a grey dash. */
 struct voice_rig { uint8_t mouth_y; uint8_t eyes[2][4]; };
 static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
-    {14, {{8, 10, 1, 2}, {15, 10, 1, 2}}},  /* HERO */
-    {15, {{6, 9, 4, 1}, {14, 9, 4, 1}}},    /* GUARD: slit glow; the visor opens to speak */
-    {13, {{0}}},                            /* SISTER: eyes closed in prayer */
-    {14, {{7, 9, 2, 3}, {15, 9, 2, 3}}},    /* KID */
-    {13, {{8, 9, 1, 2}}},                   /* PIRATE: one eye, one patch */
-    {14, {{0}}},                            /* ELDER: spectacles */
-    {13, {{7, 8, 2, 3}, {14, 8, 2, 3}}},    /* BOT */
-    {14, {{7, 8, 2, 3}, {15, 8, 2, 3}}},    /* GHOST */
+    {10, {{9, 7, 1, 2}, {14, 7, 1, 2}}},    /* HERO */
+    {10, {{8, 6, 2, 1}, {14, 6, 2, 1}}},    /* GUARD: slit glow; the visor opens to speak */
+    {10, {{0}}},                            /* SISTER: eyes closed in prayer */
+    {10, {{8, 7, 2, 2}, {14, 7, 2, 2}}},    /* KID */
+    {10, {{9, 7, 1, 1}}},                   /* PIRATE: one eye, one patch */
+    {11, {{0}}},                            /* ELDER: spectacles */
+    {21, {{9, 6, 2, 2}, {13, 6, 2, 2}}},    /* BOT: the mouth is the chest panel */
+    {10, {{9, 6, 1, 2}, {14, 6, 1, 2}}},    /* GHOST */
 };
 enum { CAST_GUARD = 1, CAST_KID = 3, CAST_ELDER = 5, CAST_BOT = 6, CAST_GHOST = 7 };
 /* Mouth size per vowel when fully open (icon pixels). */
@@ -468,7 +468,7 @@ static void voice_pose(const struct pose *p)
         }
     int y = rig->mouth_y;
     if (p->cast == CAST_BOT) {
-        /* An equaliser for a mouth; the antenna lamp blinks. */
+        /* An equaliser on its chest panel for a mouth; the antenna lamp blinks. */
         for (int b = 0; b < 4; ++b) {
             int h = p->open ? 1 + (int)((p->open * (2U + (unsigned)(b * 3 + (int)p->tick) % 3U)) / 4U) : 1;
             if (h > 3) h = 3;
@@ -488,7 +488,7 @@ static void voice_pose(const struct pose *p)
     } else if (p->cast != CAST_GUARD) {
         grid_rect(11, y, 2, 1, 'm');
     }
-    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(11, 4, 'o');          /* the star twinkles */
+    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(11, 3, 'o');          /* the star twinkles */
     if (p->shout) {                                                             /* "!" */
         grid_rect(23, 0, 1, 3, 'o');
         grid_set(23, 4, 'o');
