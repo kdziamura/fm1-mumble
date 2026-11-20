@@ -261,19 +261,24 @@ struct script {
     struct mumble_syllable syllable[MUMBLE_SYLLABLES];
     uint16_t char_ms[MUMBLE_TEXT];
 };
-enum { VOICES = 3, SUB = 32, GLOTTAL = 256 };
+enum { VOICES = 4, SUB = 32, GLOTTAL = 256 };
 struct hum {
     int32_t pos;                 /* <0: not yet started */
     uint32_t frames, dur, attack, release, glide;
     float inv_dur, inv_attack, inv_release, inv_glide, wobble_phase, phase, inc, period, amp, semis, gain, air, jitter, wobble, pitch;
+    float fall, fade;            /* per frame: pitch fall (semitones) and level fade */
     float start[4], target[4], radius[4], y1[4], y2[4], a[4], b[4], c[4], last;
     uint32_t noise;
     uint8_t active, vowel;
+    uint8_t tag, gen, hold;      /* held letter + 1 (0 = not held), its press, sustains */
 };
 static struct script scripts[3];
 static volatile uint8_t request, ack;
 static volatile uint8_t enabled;
 static volatile uint32_t clock_frames;          /* frames since the playing script began */
+/* Bumped by every press and release of a letter; a held hum lets go when its
+ * letter's count moves past the press it started from. */
+static volatile uint8_t held_gen[MUMBLE_LETTERS];
 static volatile uint8_t status_vowel = MUMBLE_VOWELS, status_level, status_line;
 static volatile int16_t status_cents;
 static struct hum hums[VOICES];
@@ -375,6 +380,100 @@ void mumble_stop(void)
     struct script *s = free_slot();
     s->count = 0; s->line = 0; s->length = 0; s->end_ms = 0;
     publish(s);
+    for (unsigned i = 0; i < MUMBLE_LETTERS; ++i) held_gen[i] = (uint8_t)(held_gen[i] + 2U);
+}
+
+/* ------------------------------------------------------------------------
+ * Play mode: letters sung by name.
+ * ---------------------------------------------------------------------- */
+const char *const mumble_letter_names[MUMBLE_LETTERS] = {
+    "AY", "BEE", "SEE", "DEE", "EE", "EF", "JEE", "AYCH", "EYE", "JAY", "KAY", "EL", "EM",
+    "EN", "OH", "PEE", "KYOO", "AR", "ES", "TEE", "YOO", "VEE", "DUBBLYOO", "EX", "WHY",
+    "ZEE", "MMM"};
+enum { LIP = 8, TIP = 17, VELUM = 21, PALATE = 23 }; /* consonant F2 loci / 100 Hz */
+/* Up to three syllables per name: vowel, locus/100 Hz, MUMBLE_HUM. The last one holds. */
+static const uint8_t letter_sound[MUMBLE_LETTERS][3][3] = {
+    {{MUMBLE_E, 0, 0}, {MUMBLE_I, 0, 0}},              /* a  ay   */
+    {{MUMBLE_I, LIP, 0}},                              /* b  bee  */
+    {{MUMBLE_I, TIP, 0}},                              /* c  see  */
+    {{MUMBLE_I, TIP, 0}},                              /* d  dee  */
+    {{MUMBLE_I, 0, 0}},                                /* e  ee   */
+    {{MUMBLE_E, 0, 0}},                                /* f  ef   */
+    {{MUMBLE_I, PALATE, 0}},                           /* g  jee  */
+    {{MUMBLE_E, 0, 0}, {MUMBLE_I, PALATE, 0}},         /* h  aych */
+    {{MUMBLE_A, 0, 0}, {MUMBLE_I, 0, 0}},              /* i  eye  */
+    {{MUMBLE_E, PALATE, 0}, {MUMBLE_I, 0, 0}},         /* j  jay  */
+    {{MUMBLE_E, VELUM, 0}, {MUMBLE_I, 0, 0}},           /* k  kay  */
+    {{MUMBLE_E, 0, 0}, {MUMBLE_U, TIP, MUMBLE_HUM}},   /* l  el   */
+    {{MUMBLE_E, 0, 0}, {MUMBLE_U, LIP, MUMBLE_HUM}},   /* m  em   */
+    {{MUMBLE_E, 0, 0}, {MUMBLE_U, TIP, MUMBLE_HUM}},   /* n  en   */
+    {{MUMBLE_O, 0, 0}, {MUMBLE_OO, 0, 0}},             /* o  oh   */
+    {{MUMBLE_I, LIP, 0}},                              /* p  pee  */
+    {{MUMBLE_OO, VELUM, 0}},                            /* q  kyoo */
+    {{MUMBLE_A, 0, 0}, {MUMBLE_U, TIP, MUMBLE_HUM}},   /* r  ar   */
+    {{MUMBLE_E, 0, 0}},                                /* s  es   */
+    {{MUMBLE_I, TIP, 0}},                              /* t  tee  */
+    {{MUMBLE_OO, PALATE, 0}},                          /* u  yoo  */
+    {{MUMBLE_I, LIP, 0}},                              /* v  vee  */
+    {{MUMBLE_U, TIP, 0}, {MUMBLE_U, LIP, 0}, {MUMBLE_OO, PALATE, 0}}, /* w dub-bl-yoo */
+    {{MUMBLE_E, 0, 0}},                                /* x  ex   */
+    {{MUMBLE_A, LIP, 0}, {MUMBLE_I, 0, 0}},            /* y  why  */
+    {{MUMBLE_I, TIP, 0}},                              /* z  zee  */
+    {{MUMBLE_U, 0, MUMBLE_HUM}},                       /* hum     */
+};
+
+/* Cents of hz above A4. Linear within a semitone: under a cent of error. */
+static int cents_from_a4(float hz)
+{
+    const float up = 1.0594631f;
+    float f = 440.0f;
+    int c = 0;
+    if (hz < 20.0f) hz = 20.0f;
+    while (hz >= f * up) { f *= up; c += 100; }
+    while (hz < f) { f /= up; c -= 100; }
+    return c + (int)(100.0f * (hz - f) / (f * up - f) + 0.5f);
+}
+
+int mumble_register(const struct mumble_voice *voice)
+{
+    if (!voice) return 0;
+    int from_f4 = cents_from_a4((float)voice->value[MUMBLE_PITCH]) + 400; /* F4 is 400 cents under A4 */
+    return from_f4 >= 0 ? (from_f4 + 600) / 1200 : -((-from_f4 + 600) / 1200);
+}
+
+int mumble_press(unsigned letter, unsigned note, unsigned shout, const struct mumble_voice *voice)
+{
+    if (letter >= MUMBLE_LETTERS || note > 127U || !voice) return -1;
+    struct script *s = free_slot();
+    int cents = ((int)note - 69) * 100 - cents_from_a4((float)voice->value[MUMBLE_PITCH]);
+    unsigned speed = voice->value[MUMBLE_SPEED] ? voice->value[MUMBLE_SPEED] : 100U;
+    uint8_t gen = (uint8_t)(held_gen[letter] + 1U);
+    held_gen[letter] = gen;
+    unsigned n = 0;
+    while (n < 3 && (n == 0 || letter_sound[letter][n][0] || letter_sound[letter][n][1])) ++n;
+    for (unsigned i = 0; i < n; ++i) {
+        struct mumble_syllable *y = &s->syllable[i];
+        const uint8_t *sound = letter_sound[letter][i];
+        y->ms = (uint16_t)(i * 9000U / speed);              /* 90 ms apart at 100% */
+        y->dur_ms = (uint16_t)(i + 1 < n ? 14000U / speed : 8000U);
+        y->cents = (int16_t)cents;
+        y->vowel = sound[0];
+        y->locus = (uint8_t)(sound[1] * 10U);
+        y->gain = shout ? 83 : 64;
+        y->flags = (uint8_t)(sound[2] | (shout ? MUMBLE_SHOUT : 0) | (i + 1 == n ? MUMBLE_HOLD : 0));
+        y->index = (uint8_t)letter;
+        y->gen = gen;
+    }
+    s->count = (uint8_t)n;
+    s->line = 0; s->length = 0; s->end_ms = 0;
+    s->voice = *voice;
+    publish(s);
+    return 0;
+}
+
+void mumble_release(unsigned letter)
+{
+    if (letter < MUMBLE_LETTERS) held_gen[letter] = (uint8_t)(held_gen[letter] + 1U);
 }
 
 void mumble_status(struct mumble_status *status)
@@ -397,11 +496,11 @@ void mumble_status(struct mumble_status *status)
 static FM1_AUDIO_CODE void hum_start(const struct mumble_syllable *s, const struct mumble_voice *v,
                                      int32_t delay, uint32_t seed)
 {
-    /* Steal the quietest (oldest) voice. */
+    /* Steal a free voice, else the oldest; a held letter goes last. */
     struct hum *h = &hums[0];
     for (unsigned i = 0; i < VOICES; ++i) {
         if (!hums[i].active) { h = &hums[i]; break; }
-        if (hums[i].pos > h->pos) h = &hums[i];
+        if ((h->tag && !hums[i].tag) || (!h->tag == !hums[i].tag && hums[i].pos > h->pos)) h = &hums[i];
     }
     float tube = (float)v->value[MUMBLE_TUBE] * 0.01f;
     float mouth = (float)v->value[MUMBLE_MOUTH] * 0.01f;
@@ -428,6 +527,13 @@ static FM1_AUDIO_CODE void hum_start(const struct mumble_syllable *s, const stru
     h->frames = h->dur + FM1_SAMPLE_RATE * 3U / 100U;
     h->attack = h->dur * 2U / 5U; if (h->attack > 1985U) h->attack = 1985U;    /* 45 ms */
     h->release = h->dur / 2U;    if (h->release > 3528U) h->release = 3528U;   /* 80 ms */
+    /* A spoken syllable sags in pitch and level; a held note stays put. */
+    h->hold = (s->flags & MUMBLE_HOLD) != 0;
+    h->fall = h->hold ? 0.0f : 0.7f * h->inv_dur;
+    h->fade = h->hold ? 0.0f : 0.2f * h->inv_dur;
+    if (h->hold) h->release = 5292U;                                             /* 120 ms */
+    h->tag = h->hold && s->index < MUMBLE_LETTERS ? (uint8_t)(s->index + 1U) : 0U;
+    h->gen = s->gen;
     h->glide = s->locus ? 1543U : 0U;                                            /* 35 ms */
     if (!h->attack) h->attack = 1;
     if (!h->release) h->release = 1;
@@ -483,7 +589,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, float *out, unsigned frames
         float q = wp < 0.5f ? wp : wp - 0.5f, wave = 16.0f * q * (0.5f - q);
         h->wobble_phase = wp + (float)run * (2.0f / RATE);
         if (wp >= 0.5f) wave = -wave;
-        float semis = h->semis - 0.7f * t * h->inv_dur + h->wobble * wave;
+        float semis = h->semis - h->fall * t + h->wobble * wave;
         float inc = h->pitch * exp2_approx(semis * (1.0f / 12.0f)) / RATE;
 
         for (unsigned end = i + run; i < end; ++i, ++h->pos) {
@@ -516,7 +622,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, float *out, unsigned frames
             else if (pos + h->release < h->dur) env = 1.0f;
             else if (pos < h->dur) env = 1.0f - smooth((float)(pos + h->release - h->dur) * h->inv_release);
             else env = 0.0f;
-            env *= 1.0f - 0.2f * (float)pos * h->inv_dur;
+            env *= 1.0f - h->fade * (float)pos;
             out[i] += bright * env * h->gain;
         }
     }
@@ -550,7 +656,20 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
     clock_frames = now + FM1_BLOCK_FRAMES;
 
     unsigned any = 0;
-    for (unsigned v = 0; v < VOICES; ++v) any |= hums[v].active;
+    for (unsigned v = 0; v < VOICES; ++v) {
+        struct hum *h = &hums[v];
+        any |= h->active;
+        /* A released letter lets go from where it is (after its swell). */
+        if (h->active && h->tag && held_gen[h->tag - 1U] != h->gen) {
+            uint32_t from = h->pos > 0 ? (uint32_t)h->pos : 0U;
+            if (from < h->attack) from = h->attack;
+            if (from + h->release < h->dur) {
+                h->dur = from + h->release;
+                h->frames = h->dur + FM1_SAMPLE_RATE * 3U / 100U;
+            }
+            h->tag = 0;
+        }
+    }
     if (!any) {
         status_vowel = MUMBLE_VOWELS; status_level = 0;
         wobble_phase += (float)FM1_BLOCK_FRAMES * (2.0f / RATE);
@@ -567,7 +686,7 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         if (!h->active) continue;
         hum_render(h, mix, FM1_BLOCK_FRAMES);
         if (h->pos > 0 && (uint32_t)h->pos < h->dur) {
-            float x = (float)h->pos * h->inv_dur, e = x < 0.5f ? x : 1.0f - x;
+            float x = (float)h->pos * h->inv_dur, e = h->hold ? 0.5f : x < 0.5f ? x : 1.0f - x;
             if (e * h->gain > loud) { loud = e * h->gain; loudest = v; }
         }
     }

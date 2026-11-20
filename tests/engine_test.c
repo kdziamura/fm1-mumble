@@ -122,6 +122,36 @@ int main(int argc, char **argv)
     for (unsigned b = 0; b < 8; ++b) { memset(z, 0, sizeof z); mumble_render(z); for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0; }
     CHECK(any, "typed syllable is audible within 25 ms");
 
+    /* Play mode: a held letter sustains, a released one stops, chords ring. */
+    CHECK(mumble_register(&mumble_cast[0].voice) == -1, "HERO plays an octave down (%d)", mumble_register(&mumble_cast[0].voice));
+    CHECK(mumble_register(&mumble_cast[3].voice) == 0, "KID plays at pitch (%d)", mumble_register(&mumble_cast[3].voice));
+    for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    float window[3] = {0};
+    const unsigned spans[3][2] = {{430, 470}, {1030, 1070}, {1400, 1440}}; /* blocks: 1.25 s held, 3 s held, after release */
+    mumble_press(1, 53, 0, &mumble_cast[0].voice); /* b at F3 */
+    for (unsigned b = 0; b < 1440; ++b) {
+        if (b == 1100) mumble_release(1);
+        memset(z, 0, sizeof z); mumble_render(z);
+        for (unsigned w = 0; w < 3; ++w)
+            if (b >= spans[w][0] && b < spans[w][1])
+                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) { float x = z[i] / 8388608.0f; window[w] += x * x; }
+    }
+    printf("held letter rms: %.4f at 1.3 s, %.4f at 3 s, %.5f after release\n",
+           sqrt(window[0] / 5120), sqrt(window[1] / 5120), sqrt(window[2] / 5120));
+    CHECK(window[0] > 0.0001f * 5120 && window[1] > 0.5f * window[0], "held letter sustains");
+    CHECK(window[2] < 1e-9f, "released letter falls silent");
+    mumble_press(0, 60, 0, &mumble_cast[0].voice);
+    mumble_press(4, 64, 0, &mumble_cast[0].voice);
+    mumble_press(7, 67, 0, &mumble_cast[0].voice);
+    for (unsigned b = 0; b < 300; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    struct mumble_status chord; mumble_status(&chord);
+    CHECK(chord.vowel < MUMBLE_VOWELS, "chord still sounding after 0.9 s");
+    mumble_stop();
+    for (unsigned b = 0; b < 100; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    any = 0;
+    for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0;
+    CHECK(!any, "stop releases held letters");
+
     if (failures) { printf("%d failure(s)\n", failures); return 1; }
     printf("mumble: ok\n");
     return 0;

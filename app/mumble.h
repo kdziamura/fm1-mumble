@@ -39,9 +39,11 @@ struct mumble_syllable {
     uint8_t vowel, locus; /* locus: consonant F2 start / 10 Hz, 0 = none */
     uint8_t gain;       /* 64 = unity */
     uint8_t flags;      /* MUMBLE_SHOUT, MUMBLE_HUM */
-    uint8_t index;      /* character that starts it */
+    uint8_t index;      /* character that starts it; with MUMBLE_HOLD, the letter */
+    uint8_t gen;        /* with MUMBLE_HOLD: the press it belongs to */
 };
-enum { MUMBLE_SHOUT = 1, MUMBLE_HUM = 2 };
+enum { MUMBLE_SHOUT = 1, MUMBLE_HUM = 2, MUMBLE_HOLD = 4 };
+enum { MUMBLE_LETTERS = 27 }; /* a..z, then a closed hum */
 
 /* Pure text analysis, usable anywhere. open=1 treats the last word as still
  * being typed. char_ms (optional) receives each character's reveal time.
@@ -58,7 +60,18 @@ int mumble_aside(const char *text, unsigned length, const struct mumble_voice *v
 /* Live typing: text already ends with the new character. Speaks its syllable
  * if that character starts one. Returns 1 when a syllable was queued. */
 int mumble_type(const char *text, unsigned length, const struct mumble_voice *voice);
+/* Stop speaking and release every held letter. */
 void mumble_stop(void);
+
+/* Play mode: sing a letter's name ("bee", "kay", "em") at MIDI note `note`,
+ * holding its last vowel until mumble_release. letter 0..25 is a..z and 26
+ * a closed hum. Each press replaces whatever line is speaking; letters
+ * already sounding keep ringing, so chords work. 0, or -1 invalid. */
+int mumble_press(unsigned letter, unsigned note, unsigned shout, const struct mumble_voice *voice);
+void mumble_release(unsigned letter);
+/* Octaves to shift the keyboard so its middle F (MIDI 65) sits nearest the voice. */
+int mumble_register(const struct mumble_voice *voice);
+extern const char *const mumble_letter_names[MUMBLE_LETTERS];
 struct mumble_status {
     uint8_t speaking;  /* a line is still typing */
     uint8_t revealed;  /* characters of that line shown so far */
