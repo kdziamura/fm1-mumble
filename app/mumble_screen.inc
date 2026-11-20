@@ -339,13 +339,13 @@ static int voice_wave(unsigned period, int amp, unsigned phase)
 struct voice_rig { uint8_t mouth_y; uint8_t eyes[2][4]; };
 static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
     {14, {{8, 10, 1, 2}, {15, 10, 1, 2}}},  /* HERO */
-    {15, {{7, 10, 3, 1}, {14, 10, 3, 1}}},  /* GUARD: visor glow; the visor opens to speak */
-    {14, {{0}}},                            /* SISTER: eyes closed in prayer */
-    {14, {{7, 9, 2, 3}, {14, 9, 2, 3}}},    /* KID */
-    {14, {{8, 10, 1, 2}}},                  /* PIRATE: one eye, one patch */
+    {15, {{6, 9, 4, 1}, {14, 9, 4, 1}}},    /* GUARD: slit glow; the visor opens to speak */
+    {13, {{0}}},                            /* SISTER: eyes closed in prayer */
+    {14, {{7, 9, 2, 3}, {15, 9, 2, 3}}},    /* KID */
+    {13, {{8, 9, 1, 2}}},                   /* PIRATE: one eye, one patch */
     {14, {{0}}},                            /* ELDER: spectacles */
     {13, {{7, 8, 2, 3}, {14, 8, 2, 3}}},    /* BOT */
-    {14, {{7, 9, 2, 3}, {15, 9, 2, 3}}},    /* GHOST */
+    {14, {{7, 8, 2, 3}, {15, 8, 2, 3}}},    /* GHOST */
 };
 enum { CAST_GUARD = 1, CAST_KID = 3, CAST_ELDER = 5, CAST_BOT = 6, CAST_GHOST = 7 };
 /* Mouth size per vowel when fully open (icon pixels). */
