@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     mumble_init();
     const char *dir = argc > 1 ? argv[1] : NULL;
     for (unsigned c = 0; c < MUMBLE_CAST; ++c) {
-        mumble_say(line, (unsigned)strlen(line), &mumble_cast[c].voice);
+        mumble_say(c, line, (unsigned)strlen(line), &mumble_cast[c].voice);
         unsigned blocks = (unsigned)((end / 1000.0f / (mumble_cast[c].voice.value[MUMBLE_SPEED] / 100.0f) + 0.5f) * FM1_SAMPLE_RATE / FM1_BLOCK_FRAMES);
         float *pcm = calloc((size_t)blocks * FM1_BLOCK_FRAMES, sizeof *pcm);
         double sum = 0; float peak = 0; unsigned shown = 0, sounding = 0;
@@ -115,8 +115,8 @@ int main(int argc, char **argv)
     /* Live typing: a vowel speaks at once, a consonant does not. */
     mumble_stop();
     for (unsigned b = 0; b < 200; ++b) { int32_t z[FM1_BLOCK_WORDS] = {0}; mumble_render(z); }
-    CHECK(mumble_type("h", 1, &mumble_cast[0].voice) == 0, "consonant is silent");
-    CHECK(mumble_type("ha", 2, &mumble_cast[0].voice) == 1, "vowel speaks");
+    CHECK(mumble_type(0, "h", 1, &mumble_cast[0].voice) == 0, "consonant is silent");
+    CHECK(mumble_type(0, "ha", 2, &mumble_cast[0].voice) == 1, "vowel speaks");
     int32_t z[FM1_BLOCK_WORDS] = {0};
     int any = 0;
     for (unsigned b = 0; b < 8; ++b) { memset(z, 0, sizeof z); mumble_render(z); for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0; }
@@ -128,7 +128,8 @@ int main(int argc, char **argv)
     for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     float window[3] = {0};
     const unsigned spans[3][2] = {{430, 470}, {1030, 1070}, {1400, 1440}}; /* blocks: 1.25 s held, 3 s held, after release */
-    mumble_press(1, 53, 0, &mumble_cast[0].voice); /* b at F3 */
+    struct mumble_singer solo = {&mumble_cast[0].voice, 0, 53};
+    mumble_press(1, &solo, 1, 0); /* b at F3 */
     for (unsigned b = 0; b < 1440; ++b) {
         if (b == 1100) mumble_release(1);
         memset(z, 0, sizeof z); mumble_render(z);
@@ -139,10 +140,12 @@ int main(int argc, char **argv)
     printf("held letter rms: %.4f at 1.3 s, %.4f at 3 s, %.5f after release\n",
            sqrt(window[0] / 5120), sqrt(window[1] / 5120), sqrt(window[2] / 5120));
     CHECK(window[0] > 0.0001f * 5120 && window[1] > 0.5f * window[0], "held letter sustains");
-    CHECK(window[2] < 1e-9f, "released letter falls silent");
-    mumble_press(0, 60, 0, &mumble_cast[0].voice);
-    mumble_press(4, 64, 0, &mumble_cast[0].voice);
-    mumble_press(7, 67, 0, &mumble_cast[0].voice);
+    CHECK(window[2] < 2.5e-4f * window[1], "released letter falls silent (only a faint room tail)");
+    const unsigned triad[3] = {60, 64, 67};
+    for (unsigned k = 0; k < 3; ++k) {
+        struct mumble_singer one = {&mumble_cast[0].voice, 0, (uint8_t)triad[k]};
+        mumble_press(k * 4, &one, 1, 0);
+    }
     for (unsigned b = 0; b < 300; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     struct mumble_status chord; mumble_status(&chord);
     CHECK(chord.vowel < MUMBLE_VOWELS, "chord still sounding after 0.9 s");
@@ -150,7 +153,50 @@ int main(int argc, char **argv)
     for (unsigned b = 0; b < 100; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     any = 0;
     for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0;
-    CHECK(!any, "stop releases held letters");
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    any = 0;
+    for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0;
+    CHECK(!any, "stop releases held letters and the tails die out");
+
+    /* Choir: two tracks speak together, each with its own voice. */
+    struct mumble_part parts[MUMBLE_CAST] = {{0}};
+    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice};
+    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice};
+    mumble_choir(parts, 3);
+    unsigned both = 0, kid_shown = 0;
+    for (unsigned b = 0; b < 600; ++b) {
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        both |= st.track_level[1] && st.track_level[3];
+        if (st.revealed > kid_shown) kid_shown = st.revealed;
+    }
+    CHECK(both, "choir: GUARD and KID sound at the same time");
+    CHECK(kid_shown == 17, "choir reveals the reveal track's line (%u)", kid_shown);
+
+    /* Effects: a GHOST echo rings on after the line; BOT's crush is stepped. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    mumble_say(7, "Whooo...", 8, &mumble_cast[7].voice);
+    double late = 0;
+    for (unsigned b = 0; b < 700; ++b) {
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        if (b > 450 && st.vowel == MUMBLE_VOWELS)
+            for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) late += fabs(z[i] / 8388608.0);
+    }
+    CHECK(late > 1.0, "GHOST echo and room ring after the voice stops (%.2f)", late);
+    struct mumble_voice crushed = mumble_cast[6].voice, clean = mumble_cast[6].voice;
+    clean.value[MUMBLE_CRUSH] = clean.value[MUMBLE_RADIO] = 0;
+    unsigned steps[2] = {0, 0};
+    for (unsigned v = 0; v < 2; ++v) {
+        mumble_init(); /* no effect residue */
+        mumble_say(6, "beep", 4, v ? &crushed : &clean);
+        for (unsigned b = 0; b < 100; ++b) {
+            memset(z, 0, sizeof z); mumble_render(z);
+            for (unsigned i = 2; i < FM1_BLOCK_WORDS; i += 2) steps[v] += z[i] == z[i - 2];
+        }
+    }
+    CHECK(steps[1] > steps[0] + 3000, "crush holds samples (%u vs %u repeats)", steps[1], steps[0]);
 
     if (failures) { printf("%d failure(s)\n", failures); return 1; }
     printf("mumble: ok\n");

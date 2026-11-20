@@ -8,18 +8,19 @@
 
 const struct mumble_param_info mumble_params[MUMBLE_PARAMS] = {
     {"PITCH", 60, 420}, {"TUBE", 75, 145}, {"MOUTH", 30, 130}, {"AIR", 0, 100},
-    {"SPEED", 50, 200}, {"WOBBLE", 0, 150}, {"JITTER", 0, 100}, {"TUNE", 0, 160}};
+    {"SPEED", 50, 200}, {"WOBBLE", 0, 150}, {"JITTER", 0, 100}, {"TUNE", 0, 160},
+    {"CRUSH", 0, 100}, {"RADIO", 0, 100}, {"ECHO", 0, 100}, {"ROOM", 0, 100}};
 
-/*                                            pitch tube mouth air speed wob jit tune */
+/*                                     pitch tube mouth air speed wob jit tune crush radio echo room */
 const struct mumble_character mumble_cast[MUMBLE_CAST] = {
-    {"HERO",   0x3c9f, {{135, 100, 100, 22, 100,  0, 50, 100}}},
-    {"GUARD",  0x9cd3, {{ 92,  86,  90, 18,  82,  0, 35,  60}}},
-    {"SISTER", 0xfb25, {{215, 118, 100, 32, 100,  0, 45, 115}}},
-    {"KID",    0x2dad, {{300, 134, 110, 20, 120,  0, 60, 140}}},
-    {"PIRATE", 0xbb07, {{108,  92,  45, 38,  92, 10, 80,  80}}},
-    {"ELDER",  0x9bfa, {{150,  97,  80, 50,  75, 90, 45,  90}}},
-    {"BOT",    0x9d14, {{120, 100, 100,  0, 110,  0,  0,   0}}},
-    {"GHOST",  0x5e5c, {{175, 110,  70, 95,  70, 50, 30, 120}}}};
+    {"HERO",   0x3c9f, {{135, 100, 100, 22, 100,  0, 50, 100,  0,  0, 10, 20}}},
+    {"GUARD",  0x9cd3, {{ 92,  86,  90, 18,  82,  0, 35,  60,  0,  0,  0, 55}}},
+    {"SISTER", 0xfb25, {{215, 118, 100, 32, 100,  0, 45, 115,  0,  0, 15, 70}}},
+    {"KID",    0x2dad, {{300, 134, 110, 20, 120,  0, 60, 140,  0,  0,  0, 10}}},
+    {"PIRATE", 0xbb07, {{108,  92,  45, 38,  92, 10, 80,  80, 12,  0, 25,  0}}},
+    {"ELDER",  0x9bfa, {{150,  97,  80, 50,  75, 90, 45,  90,  0,  0,  0, 40}}},
+    {"BOT",    0x9d14, {{120, 100, 100,  0, 110,  0,  0,   0, 55, 45,  0,  0}}},
+    {"GHOST",  0x5e5c, {{175, 110,  70, 95,  70, 50, 30, 120,  0, 20, 50, 85}}}};
 
 const char *const mumble_vowel_names[MUMBLE_VOWELS] = {"AH", "EH", "EE", "AW", "OO", "UH"};
 
@@ -250,26 +251,31 @@ unsigned mumble_plan(const char *text, unsigned length, const struct mumble_voic
     return n;
 }
 
+
 /* ------------------------------------------------------------------------
  * Shared control → audio script. Three slots: the one audio plays (ack),
- * the newest request, and a free one control can always write.
+ * the newest request, and a free one control can always write. A script
+ * holds every track's syllables, merged in time order.
  * ---------------------------------------------------------------------- */
+enum { SCRIPT_SYLLABLES = 160 };
 struct script {
-    uint8_t count, line, length;
+    uint8_t count, line, length, reveal;
     uint16_t end_ms;
-    struct mumble_voice voice;
-    struct mumble_syllable syllable[MUMBLE_SYLLABLES];
+    struct mumble_voice voice[MUMBLE_CAST];
+    struct mumble_syllable syllable[SCRIPT_SYLLABLES];
     uint16_t char_ms[MUMBLE_TEXT];
 };
-enum { VOICES = 4, SUB = 32, GLOTTAL = 256 };
+enum { VOICES = 8, SUB = 32, GLOTTAL = 256 };
 struct hum {
     int32_t pos;                 /* <0: not yet started */
     uint32_t frames, dur, attack, release, glide;
     float inv_dur, inv_attack, inv_release, inv_glide, wobble_phase, phase, inc, period, amp, semis, gain, air, jitter, wobble, pitch;
     float fall, fade;            /* per frame: pitch fall (semitones) and level fade */
     float start[4], target[4], radius[4], y1[4], y2[4], a[4], b[4], c[4], last;
+    /* Effects: crush (hold + quantise), radio (band-pass + drive), sends. */
+    float levels, crushed, radio, hp_a, lp_a, hp, lp, drive, echo, room;
     uint32_t noise;
-    uint8_t active, vowel;
+    uint8_t active, vowel, track, crush_hold, crush_count;
     uint8_t tag, gen, hold;      /* held letter + 1 (0 = not held), its press, sustains */
 };
 static struct script scripts[3];
@@ -279,13 +285,25 @@ static volatile uint32_t clock_frames;          /* frames since the playing scri
 /* Bumped by every press and release of a letter; a held hum lets go when its
  * letter's count moves past the press it started from. */
 static volatile uint8_t held_gen[MUMBLE_LETTERS];
-static volatile uint8_t status_vowel = MUMBLE_VOWELS, status_level, status_line;
+static volatile uint8_t status_vowel = MUMBLE_VOWELS, status_level, status_line, status_track;
+static volatile uint8_t status_track_vowel[MUMBLE_CAST], status_track_level[MUMBLE_CAST];
 static volatile int16_t status_cents;
 static struct hum hums[VOICES];
 static unsigned next_syllable, line_playing;
 static float wobble_phase; /* shared 2 Hz wobble, so overlapping hums agree */
 static float glottal_flow[GLOTTAL + 1], glottal_slope[GLOTTAL + 1];
-static float mix[FM1_BLOCK_FRAMES];
+static float mix[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK_FRAMES], room_send[FM1_BLOCK_FRAMES];
+
+/* Shared effects run at half rate (22.05 kHz) on 16-bit lines: a dark,
+ * lo-fi echo and a small Schroeder room, about 16 KB together. */
+enum { ECHO_LENGTH = 5513 };                     /* 250 ms */
+static const uint16_t comb_length[4] FM1_AUDIO_DATA = {557, 593, 641, 677};
+static const uint16_t allpass_length[2] FM1_AUDIO_DATA = {277, 211};
+static int16_t echo_line[ECHO_LENGTH];
+static int16_t comb_line[557 + 593 + 641 + 677], allpass_line[277 + 211];
+static unsigned echo_at, comb_at[4], allpass_at[2];
+static float echo_tone, comb_tone[4], wet_last;
+static uint32_t tail_frames;                     /* effect tail still ringing */
 
 void mumble_init(void)
 {
@@ -307,6 +325,12 @@ void mumble_init(void)
     }
     memset(scripts, 0, sizeof scripts);
     memset(hums, 0, sizeof hums);
+    memset(echo_line, 0, sizeof echo_line);
+    memset(comb_line, 0, sizeof comb_line);
+    memset(allpass_line, 0, sizeof allpass_line);
+    echo_at = 0; echo_tone = wet_last = 0.0f; tail_frames = 0;
+    for (unsigned i = 0; i < 4; ++i) { comb_at[i] = 0; comb_tone[i] = 0.0f; }
+    allpass_at[0] = allpass_at[1] = 0;
     request = ack = 0;
     enabled = 1;
 }
@@ -320,27 +344,67 @@ static struct script *free_slot(void)
 }
 static void publish(struct script *s) { request = (uint8_t)(s - scripts); }
 
-static int say(const char *text, unsigned length, const struct mumble_voice *voice, unsigned line)
+/* Stable insertion sort by start time: audio walks syllables in order. */
+static void sort_syllables(struct mumble_syllable *s, unsigned n)
 {
-    if (!text || !voice) return -1;
+    for (unsigned i = 1; i < n; ++i) {
+        struct mumble_syllable x = s[i];
+        unsigned j = i;
+        while (j > 0 && s[j - 1].ms > x.ms) { s[j] = s[j - 1]; --j; }
+        s[j] = x;
+    }
+}
+
+static int choir(const struct mumble_part parts[MUMBLE_CAST], unsigned reveal, unsigned line)
+{
+    if (!parts) return -1;
     struct script *s = free_slot();
-    if (length > MUMBLE_TEXT) length = MUMBLE_TEXT;
-    s->voice = *voice;
+    unsigned n = 0;
+    uint16_t end = 0;
+    s->length = 0;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        const struct mumble_part *p = &parts[t];
+        if (!p->text || !p->voice || !p->length) continue;
+        unsigned length = p->length > MUMBLE_TEXT ? MUMBLE_TEXT : p->length, capacity = SCRIPT_SYLLABLES - n;
+        if (capacity > MUMBLE_SYLLABLES) capacity = MUMBLE_SYLLABLES;
+        uint16_t e = 0;
+        s->voice[t] = *p->voice;
+        unsigned got = mumble_plan(p->text, length, p->voice, 0, s->syllable + n, capacity,
+                                   t == reveal ? s->char_ms : NULL, &e);
+        for (unsigned i = n; i < n + got; ++i) s->syllable[i].track = (uint8_t)t;
+        n += got;
+        if (e > end) end = e;
+        if (t == reveal) s->length = (uint8_t)length;
+    }
+    sort_syllables(s->syllable, n);
+    s->count = (uint8_t)n;
+    s->end_ms = end;
     s->line = (uint8_t)line;
-    s->length = (uint8_t)length;
-    s->count = (uint8_t)mumble_plan(text, length, voice, 0, s->syllable, MUMBLE_SYLLABLES,
-                                    s->char_ms, &s->end_ms);
+    s->reveal = (uint8_t)reveal;
     publish(s);
     return 0;
 }
-int mumble_say(const char *text, unsigned length, const struct mumble_voice *voice)
-{ return say(text, length, voice, 1); }
-int mumble_aside(const char *text, unsigned length, const struct mumble_voice *voice)
-{ return say(text, length, voice, 0); }
+int mumble_choir(const struct mumble_part parts[MUMBLE_CAST], unsigned reveal)
+{ return choir(parts, reveal, 1); }
 
-int mumble_type(const char *text, unsigned length, const struct mumble_voice *voice)
+static int say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice, unsigned line)
 {
-    if (!text || !voice || !length) return -1;
+    if (!text || !voice || track >= MUMBLE_CAST) return -1;
+    struct mumble_part parts[MUMBLE_CAST];
+    memset(parts, 0, sizeof parts);
+    parts[track].text = text;
+    parts[track].length = length;
+    parts[track].voice = voice;
+    return choir(parts, track, line);
+}
+int mumble_say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
+{ return say(track, text, length, voice, 1); }
+int mumble_aside(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
+{ return say(track, text, length, voice, 0); }
+
+int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
+{
+    if (!text || !voice || !length || track >= MUMBLE_CAST) return -1;
     struct script *s = free_slot();
     if (length > MUMBLE_TEXT) { text += length - MUMBLE_TEXT; length = MUMBLE_TEXT; }
     unsigned n = mumble_plan(text, length, voice, 1, s->syllable, MUMBLE_SYLLABLES, NULL, NULL);
@@ -365,12 +429,14 @@ int mumble_type(const char *text, unsigned length, const struct mumble_voice *vo
     last.cents = (int16_t)(semis * 100.0f);
     last.gain = last.flags & MUMBLE_SHOUT ? 83 : 64;
     last.dur_ms = (uint16_t)(120.0f + 50.0f * 100.0f / (float)(voice->value[MUMBLE_SPEED] ? voice->value[MUMBLE_SPEED] : 100));
+    last.track = (uint8_t)track;
     s->syllable[0] = last;
     s->count = 1;
     s->line = 0;
     s->length = 0;
     s->end_ms = 0;
-    s->voice = *voice;
+    s->reveal = (uint8_t)track;
+    s->voice[track] = *voice;
     publish(s);
     return 1;
 }
@@ -403,13 +469,13 @@ static const uint8_t letter_sound[MUMBLE_LETTERS][3][3] = {
     {{MUMBLE_E, 0, 0}, {MUMBLE_I, PALATE, 0}},         /* h  aych */
     {{MUMBLE_A, 0, 0}, {MUMBLE_I, 0, 0}},              /* i  eye  */
     {{MUMBLE_E, PALATE, 0}, {MUMBLE_I, 0, 0}},         /* j  jay  */
-    {{MUMBLE_E, VELUM, 0}, {MUMBLE_I, 0, 0}},           /* k  kay  */
+    {{MUMBLE_E, VELUM, 0}, {MUMBLE_I, 0, 0}},          /* k  kay  */
     {{MUMBLE_E, 0, 0}, {MUMBLE_U, TIP, MUMBLE_HUM}},   /* l  el   */
     {{MUMBLE_E, 0, 0}, {MUMBLE_U, LIP, MUMBLE_HUM}},   /* m  em   */
     {{MUMBLE_E, 0, 0}, {MUMBLE_U, TIP, MUMBLE_HUM}},   /* n  en   */
     {{MUMBLE_O, 0, 0}, {MUMBLE_OO, 0, 0}},             /* o  oh   */
     {{MUMBLE_I, LIP, 0}},                              /* p  pee  */
-    {{MUMBLE_OO, VELUM, 0}},                            /* q  kyoo */
+    {{MUMBLE_OO, VELUM, 0}},                           /* q  kyoo */
     {{MUMBLE_A, 0, 0}, {MUMBLE_U, TIP, MUMBLE_HUM}},   /* r  ar   */
     {{MUMBLE_E, 0, 0}},                                /* s  es   */
     {{MUMBLE_I, TIP, 0}},                              /* t  tee  */
@@ -441,32 +507,40 @@ int mumble_register(const struct mumble_voice *voice)
     return from_f4 >= 0 ? (from_f4 + 600) / 1200 : -((-from_f4 + 600) / 1200);
 }
 
-int mumble_press(unsigned letter, unsigned note, unsigned shout, const struct mumble_voice *voice)
+int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout)
 {
-    if (letter >= MUMBLE_LETTERS || note > 127U || !voice) return -1;
+    if (letter >= MUMBLE_LETTERS || !singers || !count || count > MUMBLE_CAST) return -1;
     struct script *s = free_slot();
-    int cents = ((int)note - 69) * 100 - cents_from_a4((float)voice->value[MUMBLE_PITCH]);
-    unsigned speed = voice->value[MUMBLE_SPEED] ? voice->value[MUMBLE_SPEED] : 100U;
     uint8_t gen = (uint8_t)(held_gen[letter] + 1U);
-    held_gen[letter] = gen;
+    unsigned syllables = 0;
+    while (syllables < 3 && (syllables == 0 || letter_sound[letter][syllables][0] || letter_sound[letter][syllables][1]))
+        ++syllables;
     unsigned n = 0;
-    while (n < 3 && (n == 0 || letter_sound[letter][n][0] || letter_sound[letter][n][1])) ++n;
-    for (unsigned i = 0; i < n; ++i) {
-        struct mumble_syllable *y = &s->syllable[i];
-        const uint8_t *sound = letter_sound[letter][i];
-        y->ms = (uint16_t)(i * 9000U / speed);              /* 90 ms apart at 100% */
-        y->dur_ms = (uint16_t)(i + 1 < n ? 14000U / speed : 8000U);
-        y->cents = (int16_t)cents;
-        y->vowel = sound[0];
-        y->locus = (uint8_t)(sound[1] * 10U);
-        y->gain = shout ? 83 : 64;
-        y->flags = (uint8_t)(sound[2] | (shout ? MUMBLE_SHOUT : 0) | (i + 1 == n ? MUMBLE_HOLD : 0));
-        y->index = (uint8_t)letter;
-        y->gen = gen;
+    for (unsigned j = 0; j < count; ++j) {
+        const struct mumble_singer *who = &singers[j];
+        if (!who->voice || who->track >= MUMBLE_CAST || who->note > 127U) return -1;
+        int cents = ((int)who->note - 69) * 100 - cents_from_a4((float)who->voice->value[MUMBLE_PITCH]);
+        unsigned speed = who->voice->value[MUMBLE_SPEED] ? who->voice->value[MUMBLE_SPEED] : 100U;
+        s->voice[who->track] = *who->voice;
+        for (unsigned i = 0; i < syllables; ++i, ++n) {
+            struct mumble_syllable *y = &s->syllable[n];
+            const uint8_t *sound = letter_sound[letter][i];
+            y->ms = (uint16_t)(i * 9000U / speed);              /* 90 ms apart at 100% */
+            y->dur_ms = (uint16_t)(i + 1 < syllables ? 14000U / speed : 8000U);
+            y->cents = (int16_t)cents;
+            y->vowel = sound[0];
+            y->locus = (uint8_t)(sound[1] * 10U);
+            y->gain = shout ? 83 : 64;
+            y->flags = (uint8_t)(sound[2] | (shout ? MUMBLE_SHOUT : 0) | (i + 1 == syllables ? MUMBLE_HOLD : 0));
+            y->index = (uint8_t)letter;
+            y->gen = gen;
+            y->track = who->track;
+        }
     }
+    sort_syllables(s->syllable, n);
     s->count = (uint8_t)n;
-    s->line = 0; s->length = 0; s->end_ms = 0;
-    s->voice = *voice;
+    s->line = 0; s->length = 0; s->end_ms = 0; s->reveal = singers[0].track;
+    held_gen[letter] = gen;
     publish(s);
     return 0;
 }
@@ -488,6 +562,11 @@ void mumble_status(struct mumble_status *status)
     status->vowel = status_vowel;
     status->level = status_level;
     status->cents = status_cents;
+    status->track = status_track;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        status->track_vowel[t] = status_track_vowel[t];
+        status->track_level[t] = status_track_level[t];
+    }
 }
 
 /* ------------------------------------------------------------------------
@@ -546,9 +625,24 @@ static FM1_AUDIO_CODE void hum_start(const struct mumble_syllable *s, const stru
     h->gain = (float)s->gain * (0.5f / 64.0f);
     h->jitter = (float)v->value[MUMBLE_JITTER] * 0.01f;
     h->wobble = (float)v->value[MUMBLE_WOBBLE] * 0.01f;
+    /* CRUSH: hold each sample 1..9 frames and quantise to 12..3 bits. */
+    unsigned crush = v->value[MUMBLE_CRUSH];
+    h->crush_hold = (uint8_t)(1U + crush / 12U);
+    h->crush_count = 0;
+    h->levels = crush ? exp2_approx(12.0f - 0.09f * (float)crush) : 0.0f;
+    h->crushed = 0.0f;
+    /* RADIO: a narrowing band (300 Hz..900 Hz up to 3.5 kHz..1.5 kHz), driven. */
+    h->radio = (float)v->value[MUMBLE_RADIO] * 0.01f;
+    h->hp_a = 2.0f * PI * (300.0f + 600.0f * h->radio) / RATE;
+    h->lp_a = 2.0f * PI * (3500.0f - 2000.0f * h->radio) / RATE;
+    h->drive = 1.0f + 3.0f * h->radio;
+    h->hp = h->lp = 0.0f;
+    h->echo = (float)v->value[MUMBLE_ECHO] * 0.01f;
+    h->room = (float)v->value[MUMBLE_ROOM] * 0.01f;
     h->phase = 0.0f; h->period = 1.0f; h->amp = 1.0f; h->last = 0.0f;
     h->noise = seed | 1U;
     h->vowel = s->vowel;
+    h->track = s->track < MUMBLE_CAST ? s->track : 0U;
     h->pos = -delay;
     h->active = 1;
 }
@@ -562,8 +656,13 @@ static inline __attribute__((always_inline)) float gauss(uint32_t *state)
 {
     return (noise(state) + noise(state) + noise(state)) * 0.66f;
 }
+/* Rounds to the nearest integer without libm. */
+static inline __attribute__((always_inline)) float round_float(float x)
+{
+    return (float)(int32_t)(x + (x >= 0.0f ? 0.5f : -0.5f));
+}
 
-static FM1_AUDIO_CODE void hum_render(struct hum *h, float *out, unsigned frames)
+static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
 {
     unsigned i = 0;
     if (h->pos < 0) {
@@ -616,6 +715,13 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, float *out, unsigned frames
             /* Gentle pre-emphasis keeps the upper formants audible. */
             float bright = y - 0.82f * h->last;
             h->last = y;
+            if (h->radio > 0.0f) {
+                h->hp += h->hp_a * (bright - h->hp);
+                h->lp += h->lp_a * ((bright - h->hp) - h->lp);
+                float d = h->lp * h->drive;
+                if (d > 1.5f) d = 1.5f; else if (d < -1.5f) d = -1.5f;
+                bright = d - d * d * d * (4.0f / 27.0f);
+            }
             /* A voice swells, holds and lets go; it is not struck. */
             float env;
             if (pos < h->attack) env = smooth((float)pos * h->inv_attack);
@@ -623,9 +729,55 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, float *out, unsigned frames
             else if (pos < h->dur) env = 1.0f - smooth((float)(pos + h->release - h->dur) * h->inv_release);
             else env = 0.0f;
             env *= 1.0f - h->fade * (float)pos;
-            out[i] += bright * env * h->gain;
+            float out = bright * env * h->gain;
+            if (h->levels > 0.0f) {
+                if (h->crush_count == 0) h->crushed = round_float(out * h->levels) / h->levels;
+                if (++h->crush_count >= h->crush_hold) h->crush_count = 0;
+                out = h->crushed;
+            }
+            mix[i] += out;
+            echo_send[i] += out * h->echo;
+            room_send[i] += out * h->room;
         }
     }
+}
+
+static inline __attribute__((always_inline)) int16_t to_line(float x)
+{
+    float s = x * 32767.0f;
+    return (int16_t)(s > 32767.0f ? 32767.0f : s < -32767.0f ? -32767.0f : s);
+}
+
+/* One half-rate step of the shared echo and room; returns the wet sample. */
+static FM1_AUDIO_CODE float effects_step(float echo_in, float room_in)
+{
+    /* Echo: 250 ms, darkening repeats. */
+    float back = (float)echo_line[echo_at] * (1.0f / 32768.0f);
+    echo_tone += 0.45f * (back - echo_tone);
+    echo_line[echo_at] = to_line(echo_in + 0.42f * echo_tone);
+    if (++echo_at == ECHO_LENGTH) echo_at = 0;
+    /* Room: four damped combs into two allpasses. */
+    float x = room_in * 0.35f, room = 0.0f;
+    unsigned base = 0;
+    for (unsigned c = 0; c < 4; ++c) {
+        int16_t *line = comb_line + base;
+        float y = (float)line[comb_at[c]] * (1.0f / 32768.0f);
+        comb_tone[c] = y * 0.7f + comb_tone[c] * 0.3f;
+        line[comb_at[c]] = to_line(x + 0.8f * comb_tone[c]);
+        if (++comb_at[c] == comb_length[c]) comb_at[c] = 0;
+        room += y;
+        base += comb_length[c];
+    }
+    base = 0;
+    for (unsigned a = 0; a < 2; ++a) {
+        int16_t *line = allpass_line + base;
+        float b = (float)line[allpass_at[a]] * (1.0f / 32768.0f);
+        line[allpass_at[a]] = to_line(room + 0.5f * b);
+        room = b - room;
+        if (++allpass_at[a] == allpass_length[a]) allpass_at[a] = 0;
+        base += allpass_length[a];
+    }
+    return back + room * 0.3f;
 }
 
 FM1_AUDIO_CODE void mumble_render(int32_t *output)
@@ -646,7 +798,7 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
             const struct mumble_syllable *y = &s->syllable[next_syllable];
             uint32_t at = (uint32_t)y->ms * (FM1_SAMPLE_RATE / 100U) / 10U;
             if (at >= now + FM1_BLOCK_FRAMES) break;
-            hum_start(y, &s->voice, at > now ? (int32_t)(at - now) : 0,
+            hum_start(y, &s->voice[y->track < MUMBLE_CAST ? y->track : 0], at > now ? (int32_t)(at - now) : 0,
                       (uint32_t)(ack * 977U + next_syllable * 7919U) ^ (now * 2654435761U));
             ++next_syllable;
         }
@@ -670,35 +822,53 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
             h->tag = 0;
         }
     }
+    wobble_phase += (float)FM1_BLOCK_FRAMES * (2.0f / RATE);
+    if (wobble_phase >= 1.0f) wobble_phase -= 1.0f;
+    if (any) tail_frames = FM1_SAMPLE_RATE * 3U;  /* longest echo/room tail */
+    else if (tail_frames > FM1_BLOCK_FRAMES) tail_frames -= FM1_BLOCK_FRAMES;
+    else tail_frames = 0;
     if (!any) {
         status_vowel = MUMBLE_VOWELS; status_level = 0;
-        wobble_phase += (float)FM1_BLOCK_FRAMES * (2.0f / RATE);
-        if (wobble_phase >= 1.0f) wobble_phase -= 1.0f;
-        return;
+        for (unsigned t = 0; t < MUMBLE_CAST; ++t) { status_track_vowel[t] = MUMBLE_VOWELS; status_track_level[t] = 0; }
+        if (!tail_frames) return;
     }
-    /* volatile keeps this a loop: no libc memset from audio code. */
-    volatile float *clear = mix;
-    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) clear[i] = 0.0f;
+    /* volatile keeps these loops: no libc memset from audio code. */
+    volatile float *dry = mix, *echo = echo_send, *room = room_send;
+    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) dry[i] = echo[i] = room[i] = 0.0f;
     unsigned loudest = VOICES;
-    float loud = 0.0f;
+    float loud = 0.0f, track_loud[MUMBLE_CAST];
+    uint8_t track_vowel[MUMBLE_CAST];
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) { track_loud[t] = 0.0f; track_vowel[t] = MUMBLE_VOWELS; }
     for (unsigned v = 0; v < VOICES; ++v) {
         struct hum *h = &hums[v];
         if (!h->active) continue;
-        hum_render(h, mix, FM1_BLOCK_FRAMES);
+        hum_render(h, FM1_BLOCK_FRAMES);
         if (h->pos > 0 && (uint32_t)h->pos < h->dur) {
-            float x = (float)h->pos * h->inv_dur, e = h->hold ? 0.5f : x < 0.5f ? x : 1.0f - x;
-            if (e * h->gain > loud) { loud = e * h->gain; loudest = v; }
+            float x = (float)h->pos * h->inv_dur, e = (h->hold ? 0.5f : x < 0.5f ? x : 1.0f - x) * h->gain;
+            if (e > loud) { loud = e; loudest = v; }
+            if (e > track_loud[h->track]) { track_loud[h->track] = e; track_vowel[h->track] = h->vowel; }
         }
     }
-    wobble_phase += (float)FM1_BLOCK_FRAMES * (2.0f / RATE);
-    if (wobble_phase >= 1.0f) wobble_phase -= 1.0f;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        float level = track_loud[t] * 1600.0f;
+        status_track_vowel[t] = track_vowel[t];
+        status_track_level[t] = (uint8_t)(level > 255.0f ? 255.0f : level);
+    }
     if (loudest < VOICES) {
         status_vowel = hums[loudest].vowel;
         float level = loud * 1600.0f;
         status_level = (uint8_t)(level > 255.0f ? 255.0f : level);
         status_cents = (int16_t)(hums[loudest].semis * 100.0f);
+        status_track = hums[loudest].track;
     } else {
         status_vowel = MUMBLE_VOWELS; status_level = 0;
+    }
+    /* Effects at half rate; the wet signal steps between pairs. */
+    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; i += 2) {
+        float wet = effects_step(0.5f * (echo_send[i] + echo_send[i + 1]), 0.5f * (room_send[i] + room_send[i + 1]));
+        mix[i] += 0.5f * (wet_last + wet);
+        mix[i + 1] += wet;
+        wet_last = wet;
     }
     /* Soft clip (rational tanh), then mix at -2 dB under full scale. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
