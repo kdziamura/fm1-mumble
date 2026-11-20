@@ -84,7 +84,7 @@ int main(int argc, char **argv)
         mumble_say(c, line, (unsigned)strlen(line), &mumble_cast[c].voice);
         unsigned blocks = (unsigned)((end / 1000.0f / (mumble_cast[c].voice.value[MUMBLE_SPEED] / 100.0f) + 0.5f) * FM1_SAMPLE_RATE / FM1_BLOCK_FRAMES);
         float *pcm = calloc((size_t)blocks * FM1_BLOCK_FRAMES, sizeof *pcm);
-        double sum = 0; float peak = 0; unsigned shown = 0, sounding = 0;
+        double sum = 0; float peak = 0; int32_t reached = -1; unsigned sounding = 0;
         for (unsigned b = 0; b < blocks; ++b) {
             int32_t block[FM1_BLOCK_WORDS] = {0};
             mumble_render(block);
@@ -95,15 +95,16 @@ int main(int argc, char **argv)
                 sum += x * x; if (fabsf(x) > peak) peak = fabsf(x);
             }
             struct mumble_status st; mumble_status(&st);
-            if (st.revealed > shown) shown = st.revealed;
+            if (st.song_ms > reached) reached = st.song_ms;
             sounding += st.vowel < MUMBLE_VOWELS;
         }
         unsigned frames = blocks * FM1_BLOCK_FRAMES;
         float rms = (float)sqrt(sum / frames);
-        printf("%-7s peak %.2f rms %.3f  %.2fs  text %u/%u  voiced blocks %u\n", mumble_cast[c].name, peak, rms,
-               (float)frames / FM1_SAMPLE_RATE, shown, (unsigned)strlen(line), sounding);
+        printf("%-7s peak %.2f rms %.3f  %.2fs  song reached %d ms  voiced blocks %u\n", mumble_cast[c].name, peak, rms,
+               (float)frames / FM1_SAMPLE_RATE, (int)reached, sounding);
         CHECK(peak > 0.1f && peak < 0.8f, "%s peak %.2f", mumble_cast[c].name, peak);
-        CHECK(shown == strlen(line), "%s reveals the whole line", mumble_cast[c].name);
+        int32_t expected = (int32_t)(end * 100U / mumble_cast[c].voice.value[MUMBLE_SPEED]);
+        CHECK(reached > expected - 150, "%s: the song clock runs through the line (%d of %d ms)", mumble_cast[c].name, (int)reached, (int)expected);
         if (dir) {
             char path[512];
             snprintf(path, sizeof path, "%s/%s.wav", dir, mumble_cast[c].name);
@@ -160,18 +161,60 @@ int main(int argc, char **argv)
 
     /* Choir: two tracks speak together, each with its own voice. */
     struct mumble_part parts[MUMBLE_CAST] = {{0}};
-    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice};
-    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice};
-    mumble_choir(parts, 3);
-    unsigned both = 0, kid_shown = 0;
+    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice, 0, 100};
+    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice, 0, 100};
+    mumble_song(parts, 0, 1, 0);
+    unsigned both = 0;
+    int32_t last_ms = -1;
     for (unsigned b = 0; b < 600; ++b) {
         memset(z, 0, sizeof z); mumble_render(z);
         struct mumble_status st; mumble_status(&st);
         both |= st.track_level[1] && st.track_level[3];
-        if (st.revealed > kid_shown) kid_shown = st.revealed;
+        last_ms = st.song_ms;
     }
     CHECK(both, "choir: GUARD and KID sound at the same time");
-    CHECK(kid_shown == 17, "choir reveals the reveal track's line (%u)", kid_shown);
+    CHECK(last_ms == -1, "a song played once ends (%d)", (int)last_ms);
+
+    /* Looper: KID from 0 ms and GUARD from 500 ms in a 1 s loop, three passes. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    memset(parts, 0, sizeof parts);
+    parts[3] = (struct mumble_part){"ha", 2, &mumble_cast[3].voice, 0, 100};
+    parts[1] = (struct mumble_part){"ho", 2, &mumble_cast[1].voice, 500, 100};
+    mumble_song(parts, 1000, 1, 0);
+    unsigned guard_first = 0, kid_onsets = 0, kid_was = 0, wraps = 0;
+    int32_t previous = 0;
+    for (unsigned b = 0; b < 1020; ++b) { /* 2.96 s */
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        unsigned ms = b * FM1_BLOCK_FRAMES * 1000U / FM1_SAMPLE_RATE;
+        if (!guard_first && st.track_level[1]) guard_first = ms;
+        kid_onsets += st.track_level[3] && !kid_was;
+        kid_was = st.track_level[3] != 0;
+        wraps += st.song_ms < previous;
+        previous = st.song_ms;
+    }
+    CHECK(guard_first >= 500 && guard_first < 560, "a track starts at its offset (%u ms)", guard_first);
+    CHECK(kid_onsets == 3, "a looping track repeats every pass (%u onsets in 3 s)", kid_onsets);
+    CHECK(wraps == 2 && previous >= 0 && previous < 1000, "the song clock wraps per pass (%u, now %d)", wraps, (int)previous);
+
+    /* Editing a looping song keeps its phase; the live lane plays over it. */
+    int32_t before = mumble_song_position();
+    parts[3].text = "hee"; parts[3].length = 3;
+    mumble_song(parts, 1000, 0, 0);
+    mumble_aside(5, "hmm", 3, &mumble_cast[5].voice);
+    for (unsigned b = 0; b < 4; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    int32_t after = mumble_song_position();
+    CHECK(after >= before && after - before < 30, "an edit keeps the loop's phase (%d -> %d ms)", (int)before, (int)after);
+    unsigned elder = 0, guard_again = 0;
+    for (unsigned b = 0; b < 400; ++b) {
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        elder |= st.track_level[5] != 0;
+        guard_again |= st.track_level[1] != 0;
+    }
+    CHECK(elder && guard_again, "the live lane plays over the song without stopping it");
+    mumble_stop();
 
     /* Effects: a GHOST echo rings on after the line; BOT's crush is stepped. */
     mumble_stop();

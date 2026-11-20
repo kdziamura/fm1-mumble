@@ -253,17 +253,29 @@ unsigned mumble_plan(const char *text, unsigned length, const struct mumble_voic
 
 
 /* ------------------------------------------------------------------------
- * Shared control → audio script. Three slots: the one audio plays (ack),
- * the newest request, and a free one control can always write. A script
- * holds every track's syllables, merged in time order.
+ * Control -> audio handoff. Two streams, each a three-slot mailbox (the slot
+ * audio plays, the newest request, and a free one control can always write):
+ *   the SONG: every track's line on one shared clock, once or looping, each
+ *     track from its own offset. Its timing is absolute (audio frames), so
+ *     republishing an edited song keeps the loop's phase;
+ *   the LIVE lane: typing, greetings and sung letters, started at once and
+ *     never cutting the song.
  * ---------------------------------------------------------------------- */
-enum { SCRIPT_SYLLABLES = 160 };
-struct script {
-    uint8_t count, line, length, reveal;
-    uint16_t end_ms;
+enum { SONG_SYLLABLES = 160, LIVE_SYLLABLES = MUMBLE_CAST * 3 };
+struct song {
+    uint8_t count, restart;
+    uint8_t first[MUMBLE_CAST + 1];      /* track t owns syllables first[t]..first[t+1]-1, in time order */
+    uint32_t period;                     /* loop length in frames; 0 plays once */
+    uint32_t phase;                      /* on restart: frames already into the loop */
+    uint32_t length;                     /* once: frames until the last track has finished */
+    uint32_t start[MUMBLE_CAST];         /* each track's offset into the loop, frames */
     struct mumble_voice voice[MUMBLE_CAST];
-    struct mumble_syllable syllable[SCRIPT_SYLLABLES];
-    uint16_t char_ms[MUMBLE_TEXT];
+    struct mumble_syllable syllable[SONG_SYLLABLES];
+};
+struct live {
+    uint8_t count;
+    struct mumble_voice voice[MUMBLE_CAST];
+    struct mumble_syllable syllable[LIVE_SYLLABLES];
 };
 enum { VOICES = 8, SUB = 32, GLOTTAL = 256 };
 struct hum {
@@ -278,18 +290,25 @@ struct hum {
     uint8_t active, vowel, track, crush_hold, crush_count;
     uint8_t tag, gen, hold;      /* held letter + 1 (0 = not held), its press, sustains */
 };
-static struct script scripts[3];
-static volatile uint8_t request, ack;
+static struct song songs[3];
+static struct live lives[3];
+static volatile uint8_t song_request, song_ack, live_request, live_ack;
 static volatile uint8_t enabled;
-static volatile uint32_t clock_frames;          /* frames since the playing script began */
+static volatile uint32_t now_frames;            /* the audio clock */
+static volatile uint32_t song_origin;           /* start of the current loop cycle */
+static volatile uint8_t song_running;
+static volatile uint32_t song_period;           /* loop length of the playing song */
+static uint8_t song_cursor[MUMBLE_CAST];
+static uint32_t song_cycle[MUMBLE_CAST];        /* where this cycle starts for each track */
+static uint32_t live_origin;
+static uint8_t live_next;
 /* Bumped by every press and release of a letter; a held hum lets go when its
  * letter's count moves past the press it started from. */
 static volatile uint8_t held_gen[MUMBLE_LETTERS];
-static volatile uint8_t status_vowel = MUMBLE_VOWELS, status_level, status_line, status_track;
+static volatile uint8_t status_vowel = MUMBLE_VOWELS, status_level, status_track;
 static volatile uint8_t status_track_vowel[MUMBLE_CAST], status_track_level[MUMBLE_CAST];
 static volatile int16_t status_cents;
 static struct hum hums[VOICES];
-static unsigned next_syllable, line_playing;
 static float wobble_phase; /* shared 2 Hz wobble, so overlapping hums agree */
 static float glottal_flow[GLOTTAL + 1], glottal_slope[GLOTTAL + 1];
 static float mix[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK_FRAMES], room_send[FM1_BLOCK_FRAMES];
@@ -323,7 +342,8 @@ void mumble_init(void)
         glottal_flow[i] = flow;
         glottal_slope[i] = slope;
     }
-    memset(scripts, 0, sizeof scripts);
+    memset(songs, 0, sizeof songs);
+    memset(lives, 0, sizeof lives);
     memset(hums, 0, sizeof hums);
     memset(echo_line, 0, sizeof echo_line);
     memset(comb_line, 0, sizeof comb_line);
@@ -331,18 +351,18 @@ void mumble_init(void)
     echo_at = 0; echo_tone = wet_last = 0.0f; tail_frames = 0;
     for (unsigned i = 0; i < 4; ++i) { comb_at[i] = 0; comb_tone[i] = 0.0f; }
     allpass_at[0] = allpass_at[1] = 0;
-    request = ack = 0;
+    song_request = song_ack = live_request = live_ack = 0;
+    song_running = 0;
     enabled = 1;
 }
 
-static struct script *free_slot(void)
+static unsigned free_index(unsigned ack, unsigned request)
 {
-    unsigned a = ack, r = request;
     for (unsigned i = 0; i < 3; ++i)
-        if (i != a && i != r) return &scripts[i];
-    return &scripts[(a + 1) % 3];
+        if (i != ack && i != request) return i;
+    return (ack + 1U) % 3U;
 }
-static void publish(struct script *s) { request = (uint8_t)(s - scripts); }
+static uint32_t ms_frames(uint32_t ms) { return (uint32_t)((uint64_t)ms * FM1_SAMPLE_RATE / 1000U); }
 
 /* Stable insertion sort by start time: audio walks syllables in order. */
 static void sort_syllables(struct mumble_syllable *s, unsigned n)
@@ -355,66 +375,98 @@ static void sort_syllables(struct mumble_syllable *s, unsigned n)
     }
 }
 
-static int choir(const struct mumble_part parts[MUMBLE_CAST], unsigned reveal, unsigned line)
+int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t loop_ms, unsigned restart, uint32_t phase_ms)
 {
     if (!parts) return -1;
-    struct script *s = free_slot();
+    unsigned slot = free_index(song_ack, song_request);
+    struct song *s = &songs[slot];
     unsigned n = 0;
-    uint16_t end = 0;
-    s->length = 0;
+    uint32_t longest = 0;
+    s->period = ms_frames(loop_ms);
     for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
         const struct mumble_part *p = &parts[t];
+        s->first[t] = (uint8_t)n;
+        s->start[t] = 0;
         if (!p->text || !p->voice || !p->length) continue;
-        unsigned length = p->length > MUMBLE_TEXT ? MUMBLE_TEXT : p->length, capacity = SCRIPT_SYLLABLES - n;
+        unsigned length = p->length > MUMBLE_TEXT ? MUMBLE_TEXT : p->length, capacity = SONG_SYLLABLES - n;
         if (capacity > MUMBLE_SYLLABLES) capacity = MUMBLE_SYLLABLES;
-        uint16_t e = 0;
+        uint16_t end = 0;
+        unsigned got = mumble_plan(p->text, length, p->voice, 0, s->syllable + n, capacity, NULL, &end);
+        unsigned level = p->level > 100U ? 100U : p->level;
+        for (unsigned i = n; i < n + got; ++i) {
+            s->syllable[i].track = (uint8_t)t;
+            s->syllable[i].gain = (uint8_t)(s->syllable[i].gain * level / 100U);
+        }
         s->voice[t] = *p->voice;
-        unsigned got = mumble_plan(p->text, length, p->voice, 0, s->syllable + n, capacity,
-                                   t == reveal ? s->char_ms : NULL, &e);
-        for (unsigned i = n; i < n + got; ++i) s->syllable[i].track = (uint8_t)t;
+        s->start[t] = ms_frames(p->start_ms);
+        if (s->period) s->start[t] %= s->period;
+        if (s->start[t] + ms_frames(end) > longest) longest = s->start[t] + ms_frames(end);
         n += got;
-        if (e > end) end = e;
-        if (t == reveal) s->length = (uint8_t)length;
     }
-    sort_syllables(s->syllable, n);
+    s->first[MUMBLE_CAST] = (uint8_t)n;
     s->count = (uint8_t)n;
-    s->end_ms = end;
-    s->line = (uint8_t)line;
-    s->reveal = (uint8_t)reveal;
-    publish(s);
+    s->length = longest;
+    s->restart = (uint8_t)(restart != 0);
+    s->phase = s->period ? ms_frames(phase_ms) % s->period : 0;
+    song_request = (uint8_t)slot;
     return 0;
 }
-int mumble_choir(const struct mumble_part parts[MUMBLE_CAST], unsigned reveal)
-{ return choir(parts, reveal, 1); }
-
-static int say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice, unsigned line)
+int mumble_say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
 {
     if (!text || !voice || track >= MUMBLE_CAST) return -1;
     struct mumble_part parts[MUMBLE_CAST];
     memset(parts, 0, sizeof parts);
-    parts[track].text = text;
-    parts[track].length = length;
-    parts[track].voice = voice;
-    return choir(parts, track, line);
+    parts[track] = (struct mumble_part){text, length, voice, 0, 100};
+    return mumble_song(parts, 0, 1, 0);
 }
-int mumble_say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
-{ return say(track, text, length, voice, 1); }
+void mumble_song_stop(void)
+{
+    unsigned slot = free_index(song_ack, song_request);
+    songs[slot].count = 0;
+    songs[slot].period = songs[slot].length = 0;
+    songs[slot].restart = 1;
+    for (unsigned t = 0; t <= MUMBLE_CAST; ++t) songs[slot].first[t] = 0;
+    song_request = (uint8_t)slot;
+}
+int32_t mumble_song_position(void)
+{
+    if (!song_running) return -1;
+    uint32_t frames = now_frames - song_origin, period = song_period;
+    if (period) while (frames >= period) frames -= period;   /* the origin moves on at the next block */
+    return (int32_t)((uint64_t)frames * 1000U / FM1_SAMPLE_RATE);
+}
+
+static struct live *live_slot(unsigned *slot)
+{
+    *slot = free_index(live_ack, live_request);
+    return &lives[*slot];
+}
 int mumble_aside(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
-{ return say(track, text, length, voice, 0); }
+{
+    if (!text || !voice || track >= MUMBLE_CAST) return -1;
+    unsigned slot;
+    struct live *s = live_slot(&slot);
+    unsigned n = mumble_plan(text, length, voice, 0, s->syllable, LIVE_SYLLABLES, NULL, NULL);
+    for (unsigned i = 0; i < n; ++i) s->syllable[i].track = (uint8_t)track;
+    s->voice[track] = *voice;
+    s->count = (uint8_t)n;
+    live_request = (uint8_t)slot;
+    return 0;
+}
 
 int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
 {
     if (!text || !voice || !length || track >= MUMBLE_CAST) return -1;
-    struct script *s = free_slot();
     if (length > MUMBLE_TEXT) { text += length - MUMBLE_TEXT; length = MUMBLE_TEXT; }
-    unsigned n = mumble_plan(text, length, voice, 1, s->syllable, MUMBLE_SYLLABLES, NULL, NULL);
-    if (!n || s->syllable[n - 1].index != length - 1) return 0;
-    struct mumble_syllable last = s->syllable[n - 1];
+    struct mumble_syllable planned[MUMBLE_SYLLABLES];
+    unsigned n = mumble_plan(text, length, voice, 1, planned, MUMBLE_SYLLABLES, NULL, NULL);
+    if (!n || planned[n - 1].index != length - 1) return 0;
+    struct mumble_syllable last = planned[n - 1];
     /* Typing has no future: the pitch falls with each syllable of the phrase. */
     unsigned k = 0;
     for (unsigned i = n - 1; i > 0; --i) {
         unsigned split = 0;
-        for (unsigned c = s->syllable[i - 1].index; c < s->syllable[i].index; ++c)
+        for (unsigned c = planned[i - 1].index; c < planned[i].index; ++c)
             split |= ends_phrase(text[c]);
         if (split) break;
         ++k;
@@ -430,22 +482,22 @@ int mumble_type(unsigned track, const char *text, unsigned length, const struct 
     last.gain = last.flags & MUMBLE_SHOUT ? 83 : 64;
     last.dur_ms = (uint16_t)(120.0f + 50.0f * 100.0f / (float)(voice->value[MUMBLE_SPEED] ? voice->value[MUMBLE_SPEED] : 100));
     last.track = (uint8_t)track;
+    unsigned slot;
+    struct live *s = live_slot(&slot);
     s->syllable[0] = last;
     s->count = 1;
-    s->line = 0;
-    s->length = 0;
-    s->end_ms = 0;
-    s->reveal = (uint8_t)track;
     s->voice[track] = *voice;
-    publish(s);
+    live_request = (uint8_t)slot;
     return 1;
 }
 
 void mumble_stop(void)
 {
-    struct script *s = free_slot();
-    s->count = 0; s->line = 0; s->length = 0; s->end_ms = 0;
-    publish(s);
+    mumble_song_stop();
+    unsigned slot;
+    struct live *s = live_slot(&slot);
+    s->count = 0;
+    live_request = (uint8_t)slot;
     for (unsigned i = 0; i < MUMBLE_LETTERS; ++i) held_gen[i] = (uint8_t)(held_gen[i] + 2U);
 }
 
@@ -510,7 +562,8 @@ int mumble_register(const struct mumble_voice *voice)
 int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout)
 {
     if (letter >= MUMBLE_LETTERS || !singers || !count || count > MUMBLE_CAST) return -1;
-    struct script *s = free_slot();
+    unsigned slot;
+    struct live *s = live_slot(&slot);
     uint8_t gen = (uint8_t)(held_gen[letter] + 1U);
     unsigned syllables = 0;
     while (syllables < 3 && (syllables == 0 || letter_sound[letter][syllables][0] || letter_sound[letter][syllables][1]))
@@ -539,9 +592,8 @@ int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned 
     }
     sort_syllables(s->syllable, n);
     s->count = (uint8_t)n;
-    s->line = 0; s->length = 0; s->end_ms = 0; s->reveal = singers[0].track;
     held_gen[letter] = gen;
-    publish(s);
+    live_request = (uint8_t)slot;
     return 0;
 }
 
@@ -553,12 +605,7 @@ void mumble_release(unsigned letter)
 void mumble_status(struct mumble_status *status)
 {
     if (!status) return;
-    const struct script *s = &scripts[ack];
-    uint32_t ms = (uint32_t)((uint64_t)clock_frames * 1000U / FM1_SAMPLE_RATE);
-    unsigned shown = 0;
-    if (s->line) while (shown < s->length && s->char_ms[shown] <= ms) ++shown;
-    status->speaking = (uint8_t)(status_line && s->line && ms < s->end_ms);
-    status->revealed = (uint8_t)(s->line ? shown : 0);
+    status->song_ms = mumble_song_position();
     status->vowel = status_vowel;
     status->level = status_level;
     status->cents = status_cents;
@@ -780,32 +827,81 @@ static FM1_AUDIO_CODE float effects_step(float echo_in, float room_in)
     return back + room * 0.3f;
 }
 
+static inline __attribute__((always_inline)) uint32_t syllable_frames(const struct mumble_syllable *y)
+{
+    return (uint32_t)y->ms * (FM1_SAMPLE_RATE / 100U) / 10U;
+}
+
+/* A new song: keep the loop's phase unless it restarts, then put every
+ * track's cursor at its first syllable still to come in its current cycle. */
+static FM1_AUDIO_CODE void song_adopt(const struct song *s, uint32_t now)
+{
+    song_period = s->period;
+    if (s->restart) song_origin = now - s->phase;
+    else if (s->period)
+        while ((int32_t)(now - song_origin) >= (int32_t)s->period) song_origin += s->period;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        uint32_t cycle = song_origin + s->start[t];
+        if (s->period && (int32_t)(cycle - now) > 0) cycle -= s->period;   /* still in the last pass */
+        unsigned i = s->first[t];
+        while (i < s->first[t + 1] && (int32_t)(cycle + syllable_frames(&s->syllable[i]) - now) < 0) ++i;
+        song_cycle[t] = cycle;
+        song_cursor[t] = (uint8_t)i;
+    }
+}
+
+static FM1_AUDIO_CODE void song_tick(const struct song *s, uint32_t now)
+{
+    uint32_t end = now + FM1_BLOCK_FRAMES;
+    if (s->period)
+        while ((int32_t)(now - song_origin) >= (int32_t)s->period) song_origin += s->period;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        unsigned first = s->first[t], last = s->first[t + 1];
+        if (first == last) continue;
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            while (song_cursor[t] < last) {
+                const struct mumble_syllable *y = &s->syllable[song_cursor[t]];
+                uint32_t at = song_cycle[t] + syllable_frames(y);
+                if ((int32_t)(at - end) >= 0) break;
+                int32_t delay = (int32_t)(at - now);
+                hum_start(y, &s->voice[t], delay > 0 ? delay : 0,
+                          (uint32_t)(song_ack * 977U + song_cursor[t] * 7919U) ^ (at * 2654435761U));
+                ++song_cursor[t];
+            }
+            /* A loop jumps to its next pass on time, cutting a line too long for it. */
+            if (!s->period || (int32_t)(song_cycle[t] + s->period - end) >= 0) break;
+            song_cycle[t] += s->period;
+            song_cursor[t] = (uint8_t)first;
+        }
+    }
+    song_running = s->count && (s->period || (int32_t)(now - song_origin) < (int32_t)s->length);
+}
+
+static FM1_AUDIO_CODE void live_tick(const struct live *s, uint32_t now)
+{
+    uint32_t end = now + FM1_BLOCK_FRAMES;
+    while (live_next < s->count) {
+        const struct mumble_syllable *y = &s->syllable[live_next];
+        uint32_t at = live_origin + syllable_frames(y);
+        if ((int32_t)(at - end) >= 0) break;
+        int32_t delay = (int32_t)(at - now);
+        hum_start(y, &s->voice[y->track < MUMBLE_CAST ? y->track : 0], delay > 0 ? delay : 0,
+                  (uint32_t)(live_ack * 131U + live_next * 7919U) ^ (now * 2654435761U));
+        ++live_next;
+    }
+}
+
 FM1_AUDIO_CODE void mumble_render(int32_t *output)
 {
     if (!enabled || !output) return;
-    uint8_t wanted = request;
-    if (wanted != ack) {
-        ack = wanted;
-        next_syllable = 0;
-        clock_frames = 0;
-        line_playing = 1;
-        status_line = scripts[wanted].line;
-    }
-    const struct script *s = &scripts[ack];
-    uint32_t now = clock_frames;
-    if (line_playing) {
-        while (next_syllable < s->count) {
-            const struct mumble_syllable *y = &s->syllable[next_syllable];
-            uint32_t at = (uint32_t)y->ms * (FM1_SAMPLE_RATE / 100U) / 10U;
-            if (at >= now + FM1_BLOCK_FRAMES) break;
-            hum_start(y, &s->voice[y->track < MUMBLE_CAST ? y->track : 0], at > now ? (int32_t)(at - now) : 0,
-                      (uint32_t)(ack * 977U + next_syllable * 7919U) ^ (now * 2654435761U));
-            ++next_syllable;
-        }
-        if (next_syllable >= s->count &&
-            now >= (uint32_t)s->end_ms * (FM1_SAMPLE_RATE / 100U) / 10U) line_playing = 0;
-    }
-    clock_frames = now + FM1_BLOCK_FRAMES;
+    uint32_t now = now_frames;
+    uint8_t wanted = song_request;
+    if (wanted != song_ack) { song_ack = wanted; song_adopt(&songs[wanted], now); }
+    wanted = live_request;
+    if (wanted != live_ack) { live_ack = wanted; live_origin = now; live_next = 0; }
+    song_tick(&songs[song_ack], now);
+    live_tick(&lives[live_ack], now);
+    now_frames = now + FM1_BLOCK_FRAMES;
 
     unsigned any = 0;
     for (unsigned v = 0; v < VOICES; ++v) {

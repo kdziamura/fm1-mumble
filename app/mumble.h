@@ -6,13 +6,15 @@
  * Punctuation sets the rhythm (pauses) and the tune (phrase declination,
  * question rise, exclamation lift, ellipsis fade, CAPS shout).
  *
- * Every character of the cast is a track: lines of several tracks can be
- * spoken (or letters sung) together as a choir, each through its own voice
- * and effects (crush, radio, echo send, room send).
+ * Every character of the cast is a track. A song puts several tracks' lines
+ * on one shared clock, once or looping, each from its own offset and at its
+ * own level, through its own voice and effects (crush, radio, echo send,
+ * room send). A separate live lane plays typing, greetings and sung letters
+ * at once without disturbing the song.
  *
- * Control task: mumble_choir / mumble_say / mumble_type / mumble_press /
- * mumble_stop / mumble_status. Audio ISR: mumble_render mixes into the
- * finished instrument block. */
+ * Control task: mumble_song / mumble_say / mumble_aside / mumble_type /
+ * mumble_press / mumble_stop / mumble_status. Audio ISR: mumble_render mixes
+ * into the finished instrument block. */
 #ifndef FM1_MUMBLE_H
 #define FM1_MUMBLE_H
 #include "fm1.h"
@@ -65,24 +67,36 @@ unsigned mumble_plan(const char *text, unsigned length, const struct mumble_voic
 
 void mumble_init(void);
 
-/* One track's part of a choir; length 0 leaves the track silent. */
-struct mumble_part { const char *text; unsigned length; const struct mumble_voice *voice; };
-/* Speak every part together, replacing anything in progress. The `reveal`
- * track's line drives mumble_status().revealed. 0, or -1 invalid. */
-int mumble_choir(const struct mumble_part parts[MUMBLE_CAST], unsigned reveal);
-/* One track speaks a line (mumble_say) or a line without reveal (an aside). */
+/* One track's part of a song; length 0 leaves the track silent. start_ms is
+ * its offset into the loop, level its volume in percent (100 = as planned). */
+struct mumble_part {
+    const char *text; unsigned length; const struct mumble_voice *voice;
+    uint16_t start_ms; uint8_t level;
+};
+/* Play every part on one clock: once (loop_ms 0) or looping every loop_ms,
+ * cutting a line that outlasts the loop. restart=1 starts the clock phase_ms
+ * into the loop; restart=0 swaps in edited parts and keeps the running phase.
+ * Timing is sample-accurate. 0, or -1 invalid. */
+int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t loop_ms, unsigned restart, uint32_t phase_ms);
+void mumble_song_stop(void);
+/* Milliseconds into the song (into the current pass when looping), -1 when
+ * it is not playing. */
+int32_t mumble_song_position(void);
+/* One track speaks a line once (a one-track song). */
 int mumble_say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice);
+/* A line on the live lane (a greeting): it never stops the song. */
 int mumble_aside(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice);
 /* Live typing: text already ends with the new character. Speaks its syllable
- * if that character starts one. Returns 1 when a syllable was queued. */
+ * on the live lane if that character starts one. Returns 1 when queued. */
 int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice);
-/* Stop speaking and release every held letter. Effect tails ring out. */
+/* Stop the song and the live lane and release every held letter. Effect
+ * tails ring out. */
 void mumble_stop(void);
 
 /* Play mode: sing a letter's name ("bee", "kay", "em"), holding its last
  * vowel until mumble_release. letter 0..25 is a..z and 26 a closed hum.
- * Every singer sings it at once at their own MIDI note: a choir. Each press
- * replaces whatever line is speaking; letters already sounding keep ringing,
+ * Every singer sings it at once at their own MIDI note: a choir. It plays on
+ * the live lane, over a running song; letters already sounding keep ringing,
  * so chords work. 0, or -1 invalid. */
 struct mumble_singer { const struct mumble_voice *voice; uint8_t track, note; };
 int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout);
@@ -92,8 +106,7 @@ int mumble_register(const struct mumble_voice *voice);
 extern const char *const mumble_letter_names[MUMBLE_LETTERS];
 
 struct mumble_status {
-    uint8_t speaking;  /* a line is still typing */
-    uint8_t revealed;  /* characters of the reveal track's line shown so far */
+    int32_t song_ms;   /* mumble_song_position() */
     uint8_t vowel;     /* loudest sounding vowel, MUMBLE_VOWELS when silent */
     uint8_t level;     /* 0..255 envelope of that vowel */
     int16_t cents;     /* its pitch offset */
