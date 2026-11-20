@@ -23,21 +23,9 @@
 
 enum { VOICE_TRACE = 21, VOICE_ROWS = 3, VOICE_COLUMNS = 18 };
 #define RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
-enum {
-    WHITE = 0xffff,
-    SKIN = RGB(250, 196, 150),
-    CHEEK = RGB(240, 110, 120),
-    GOLD = RGB(255, 200, 40),
-    STEEL = RGB(70, 80, 96),
-    INK = RGB(20, 18, 30),
-    HAIR = RGB(120, 70, 40),
-    PLUME = RGB(220, 40, 50),
-    EMBER = RGB(255, 60, 40),
-};
+enum { WHITE = 0xffff };
 static const uint16_t voice_knob_colors[4] = {0x2b7b, 0x2d8d, 0xf7be, 0xf325};
 static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf7be, 0xb47f, 0xfe87};
-/* Mouth half-width/half-height per vowel, fully open. */
-static const uint8_t vowel_mouth[MUMBLE_VOWELS][2] = {{7, 6}, {8, 4}, {9, 2}, {5, 6}, {3, 4}, {6, 4}};
 static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX"};
 static const char *const voice_greetings[MUMBLE_CAST] = {
     "Hey there!", "Halt.", "Bless you, child.", "Hiya! Hiya!", "Arr...", "Hmm, yes... yes.",
@@ -318,9 +306,13 @@ static void voice_frame(uint32_t now)
 }
 
 /* ------------------------------------------------------------------------
- * Drawing primitives clipped to a box, so a character never spills into
- * the neighbouring cached areas.
+ * The cast: hand-drawn pixel-art busts (mumble_sprites.inc) drawn at 3x on
+ * whole sprite pixels, console style. Mouths, blinks and the shout mark are
+ * pixel overlays on a working copy of the sprite.
  * ---------------------------------------------------------------------- */
+#include "mumble_sprites.inc"
+
+enum { SPRITE = 24, SPRITE_SCALE = 3 };
 static int clip_x0, clip_y0, clip_x1, clip_y1;
 static void voice_clip(int x0, int y0, int x1, int y1) { clip_x0 = x0; clip_y0 = y0; clip_x1 = x1; clip_y1 = y1; }
 static void vfill(int x, int y, int w, int h, uint16_t color)
@@ -331,53 +323,9 @@ static void vfill(int x, int y, int w, int h, uint16_t color)
     if (y + h > clip_y1) h = clip_y1 - y;
     if (w > 0 && h > 0) paint_fill((unsigned)x, (unsigned)y, (unsigned)w, (unsigned)h, color);
 }
-static unsigned isqrt(unsigned v)
-{
-    unsigned r = 0;
-    while ((r + 1) * (r + 1) <= v) ++r;
-    return r;
-}
-static void vellipse(int cx, int cy, int rx, int ry, uint16_t color)
-{
-    if (rx < 0 || ry < 0) return;
-    if (!ry) { vfill(cx - rx, cy, 2 * rx + 1, 1, color); return; }
-    for (int dy = -ry; dy <= ry; ++dy) {
-        int hw = (int)isqrt((unsigned)(rx * rx) * ((unsigned)(ry * ry - dy * dy) + (unsigned)ry / 2U) / (unsigned)(ry * ry));
-        if (hw > rx) hw = rx;
-        vfill(cx - hw, cy + dy, 2 * hw + 1, 1, color);
-    }
-}
-static void vtri(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color)
-{
-    int t;
-#define VSWAP(a, b) (t = (a), (a) = (b), (b) = t)
-    if (y1 < y0) { VSWAP(x0, x1); VSWAP(y0, y1); }
-    if (y2 < y0) { VSWAP(x0, x2); VSWAP(y0, y2); }
-    if (y2 < y1) { VSWAP(x1, x2); VSWAP(y1, y2); }
-#undef VSWAP
-    for (int y = y0; y <= y2; ++y) {
-        int a = y2 > y0 ? x0 + (x2 - x0) * (y - y0) / (y2 - y0) : x0, b;
-        if (y < y1) b = x0 + (x1 - x0) * (y - y0) / (y1 - y0);
-        else if (y2 > y1) b = x1 + (x2 - x1) * (y - y1) / (y2 - y1);
-        else b = x1;
-        if (a > b) { int s = a; a = b; b = s; }
-        vfill(a, y, b - a + 1, 1, color);
-    }
-}
-static void vline(int x0, int y0, int x1, int y1, uint16_t color)
-{
-    int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
-    int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1, err = dx + dy;
-    for (;;) {
-        vfill(x0, y0, 1, 1, color);
-        if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
-    }
-}
 static uint16_t dim(uint16_t c) { return (uint16_t)((c >> 1) & 0x7befU); }
 static uint16_t dimmer(uint16_t c) { return (uint16_t)((c >> 2) & 0x39e7U); }
+static uint16_t dimmest(uint16_t c) { return (uint16_t)((c >> 3) & 0x18e3U); }
 /* Triangle wave in -amp..amp over `period` ms, offset by `phase` ms. */
 static int voice_wave(unsigned period, int amp, unsigned phase)
 {
@@ -386,184 +334,98 @@ static int voice_wave(unsigned period, int amp, unsigned phase)
     return x < 2 * amp ? x - amp : 3 * amp - x;
 }
 
-/* ------------------------------------------------------------------------
- * The cast. Flat shapes on black, OP-1 style; bold silhouettes and
- * expressive eyes after Hollow Knight, Undertale and Animal Well.
- * ---------------------------------------------------------------------- */
-struct pose {
-    int x, y;            /* head centre */
-    unsigned open;       /* mouth 0..4 */
-    unsigned vowel, blink, shout;
-    uint16_t color;
+/* Where each face moves: the mouth row and the eyes a blink closes
+ * (x, y, w, h in sprite pixels) with the colour of the lid. */
+struct voice_rig { uint8_t mouth_y; char lid; uint8_t eyes[4][4]; };
+static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
+    {15, 's', {{7, 11, 2, 2}, {15, 11, 2, 2}}},                              /* HERO */
+    {15, 'k', {{7, 11, 1, 1}, {16, 11, 1, 1}}},                              /* GUARD: visor glow */
+    {15, 0, {{0}}},                                                          /* SISTER: eyes closed */
+    {16, 's', {{8, 11, 2, 3}, {14, 11, 2, 3}}},                              /* KID */
+    {16, 's', {{6, 10, 3, 3}}},                                              /* PIRATE */
+    {15, 0, {{0}}},                                                          /* ELDER: spectacles */
+    {14, 'C', {{8, 10, 1, 1}, {8, 12, 1, 1}, {15, 10, 1, 1}, {15, 12, 1, 1}}}, /* BOT */
+    {14, 'w', {{7, 10, 2, 3}, {15, 10, 2, 3}}},                              /* GHOST */
 };
-static void mouth(const struct pose *p, int x, int y, unsigned scale, uint16_t color)
+enum { CAST_GUARD = 1, CAST_KID = 3, CAST_ELDER = 5, CAST_BOT = 6, CAST_GHOST = 7 };
+/* Mouth size per vowel when fully open (sprite pixels). */
+static const uint8_t vowel_mouth[MUMBLE_VOWELS][2] = {{4, 3}, {4, 2}, {4, 2}, {3, 3}, {2, 2}, {3, 2}};
+
+static char voice_grid[SPRITE][SPRITE + 1];
+static void grid_set(int x, int y, char c)
 {
-    if (!p->open) { vfill(x - (int)scale * 2, y, (int)scale * 4 + 1, 1, color); return; }
-    const uint8_t *m = vowel_mouth[p->vowel < MUMBLE_VOWELS ? p->vowel : MUMBLE_U];
-    vellipse(x, y, (int)(m[0] * scale / 2U), (int)(m[1] * scale * p->open / 8U) + 1, color);
+    if (x >= 0 && x < SPRITE && y >= 0 && y < SPRITE) voice_grid[y][x] = c;
+}
+static void grid_rect(int x, int y, int w, int h, char c)
+{
+    for (int j = 0; j < h; ++j)
+        for (int i = 0; i < w; ++i) grid_set(x + i, y + j, c);
 }
 
-static void draw_hero(const struct pose *p)
+struct pose { unsigned cast, open, vowel, blink, shout, tick; };
+static void voice_pose(const struct pose *p)
 {
-    vellipse(p->x, p->y + 34, 24, 14, p->color);                   /* cloak */
-    vtri(p->x - 8, p->y + 18, p->x + 8, p->y + 18, p->x, p->y + 30, dim(p->color));
-    for (int s = -1; s <= 1; s += 2) {                               /* horns */
-        vtri(p->x + s * 6, p->y - 12, p->x + s * 15, p->y - 10, p->x + s * 19, p->y - 36, WHITE);
-        vtri(p->x + s * 19, p->y - 36, p->x + s * 21, p->y - 34, p->x + s * 15, p->y - 22, WHITE);
-    }
-    vellipse(p->x, p->y, 20, 17, WHITE);                             /* mask */
-    for (int s = -1; s <= 1; s += 2) {
-        if (p->blink) vfill(p->x + s * 8 - 3, p->y + 1, 7, 2, INK);
-        else {
-            vellipse(p->x + s * 8, p->y + 1, 4, p->shout ? 5 : 7, INK);
-            vfill(p->x + s * 8 - 1, p->y - 3, 1, 2, STEEL);
+    memcpy(voice_grid, voice_sprites[p->cast], sizeof voice_grid);
+    const struct voice_rig *rig = &voice_rigs[p->cast];
+    if (p->blink && rig->lid)
+        for (unsigned e = 0; e < 4 && rig->eyes[e][2]; ++e) {
+            const uint8_t *eye = rig->eyes[e];
+            grid_rect(eye[0], eye[1], eye[2], eye[3], rig->lid);
+            if (rig->lid == 's' || rig->lid == 'w') grid_rect(eye[0], eye[1] + eye[3] - 1, eye[2], 1, 'k');
         }
-    }
-    if (p->open) mouth(p, p->x, p->y + 12, 1, INK);
-}
-
-static void draw_guard(const struct pose *p)
-{
-    for (int s = -1; s <= 1; s += 2) vellipse(p->x + s * 22, p->y + 30, 12, 9, STEEL); /* pauldrons */
-    vfill(p->x - 14, p->y + 22, 28, 20, dim(p->color));
-    vtri(p->x - 2, p->y - 22, p->x + 4, p->y - 22, p->x + 24, p->y - 40, PLUME);
-    vellipse(p->x + 14, p->y - 32, 8, 5, PLUME);
-    vellipse(p->x, p->y - 2, 21, 23, p->color);                      /* helm */
-    vfill(p->x - 21, p->y + 10, 43, 8, p->color);
-    vfill(p->x - 16, p->y - 5, 33, 6, INK);                          /* visor */
-    if (!p->blink)
-        for (int s = -1; s <= 1; s += 2) vfill(p->x + s * 8 - 2, p->y - 3, 5, 2, p->shout ? EMBER : GOLD);
-    vfill(p->x - 1, p->y - 5, 3, 15, dim(p->color));                 /* nose guard */
-    for (int i = 0; i < 3; ++i) vfill(p->x - 10 + i * 8, p->y + 12, 4, 1, dim(p->color)); /* vents */
-    if (p->open) vfill(p->x - 6, p->y + 14, 13, (int)p->open + 1, INK);
-}
-
-static void draw_sister(const struct pose *p)
-{
-    vellipse(p->x, p->y - 32, 13, 3, GOLD);                          /* halo */
-    vellipse(p->x, p->y - 32, 10, 1, BACK);
-    vtri(p->x - 30, p->y + 44, p->x + 30, p->y + 44, p->x, p->y - 10, p->color); /* veil drape */
-    vellipse(p->x, p->y - 2, 25, 25, p->color);
-    vellipse(p->x, p->y + 2, 18, 20, WHITE);                         /* wimple */
-    vellipse(p->x, p->y + 1, 13, 15, SKIN);
-    for (int s = -1; s <= 1; s += 2) {
-        int ex = p->x + s * 6;
-        if (p->shout && !p->blink) vellipse(ex, p->y - 1, 2, 2, INK);
-        else {                                                       /* serene, closed */
-            vfill(ex - 2, p->y - 1, 5, 1, INK);
-            vfill(ex - 3, p->y - 2, 1, 1, INK);
-            vfill(ex + 3, p->y - 2, 1, 1, INK);
+    int y = rig->mouth_y;
+    if (p->cast == CAST_BOT) {
+        /* An equaliser on its screen for a mouth; the antenna lamp blinks. */
+        for (int b = 0; b < 4; ++b) {
+            int h = p->open ? 1 + (int)((p->open * (2U + (unsigned)(b * 3 + (int)p->tick) % 3U)) / 4U) : 0;
+            if (h > 3) h = 3;
+            grid_rect(9 + b * 2, y + 1 - h, 1, h, 'c');
         }
-        vfill(p->x + s * 9 - 1, p->y + 4, 3, 2, CHEEK);
+        if (p->tick & 8U) { grid_set(11, 1, 'R'); grid_set(12, 1, 'R'); }
+    } else if (p->open) {
+        unsigned v = p->vowel < MUMBLE_VOWELS ? p->vowel : MUMBLE_U;
+        int w = vowel_mouth[v][0], h = (int)((vowel_mouth[v][1] * p->open + 3U) / 4U);
+        int x = 12 - (w + 1) / 2;
+        grid_rect(x, y, w, h, 'k');
+        if (h >= 2 && w >= 3) grid_rect(x + 1, y + 1, w - 2, h - 1, 'R');   /* tongue */
+        if (v == MUMBLE_I && h >= 2) grid_rect(x + 1, y, w - 2, 1, 'w');      /* teeth */
+    } else if (p->cast != CAST_GUARD) {
+        grid_rect(11, y, 2, 1, 'k');
     }
-    mouth(p, p->x, p->y + 9, 1, RGB(150, 40, 50));
+    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(14, 5, 'w');      /* the star twinkles */
+    if (p->shout) {                                                          /* "!" */
+        grid_rect(21, 1, 1, 3, 'y');
+        grid_set(21, 5, 'y');
+    }
 }
-
-static void draw_kid(const struct pose *p)
+/* Run-length rows of the working grid at any scale; faded for the choir strip. */
+static void voice_sprite(int ox, int oy, int scale, unsigned faded)
 {
-    vellipse(p->x, p->y + 34, 18, 12, p->color);                     /* shirt */
-    vellipse(p->x, p->y, 24, 22, SKIN);                              /* head */
-    vellipse(p->x, p->y - 13, 24, 11, p->color);                     /* cap */
-    vfill(p->x - 24, p->y - 13, 49, 4, p->color);
-    vfill(p->x + 12, p->y - 10, 18, 4, dim(p->color));               /* brim */
-    vtri(p->x - 6, p->y - 22, p->x + 2, p->y - 22, p->x - 10, p->y - 32, HAIR); /* cowlick */
-    for (int s = -1; s <= 1; s += 2) {
-        int ex = p->x + s * 9;
-        if (p->blink) vfill(ex - 5, p->y + 1, 11, 2, INK);
-        else {
-            vellipse(ex, p->y + 1, 6, 7, WHITE);
-            vellipse(ex + 1, p->y + 2, 3, p->shout ? 2 : 4, INK);
-            vfill(ex - 1, p->y - 1, 2, 2, WHITE);
+    for (int y = 0; y < SPRITE; ++y)
+        for (int x = 0; x < SPRITE;) {
+            char c = voice_grid[y][x];
+            int run = 1;
+            while (x + run < SPRITE && voice_grid[y][x + run] == c) ++run;
+            if (c != '.') {
+                uint16_t color = voice_palette(c);
+                vfill(ox + x * scale, oy + y * scale, run * scale, scale, faded ? dimmer(color) : color);
+            }
+            x += run;
         }
-        for (int f = 0; f < 3; ++f) vfill(ex + s * 4 + f * 2 - 3, p->y + 10 + (f & 1), 1, 1, HAIR);
-    }
-    mouth(p, p->x, p->y + 14, 2, INK);
 }
-
-static void draw_pirate(const struct pose *p)
+/* Half size for the strip: each 2x2 block keeps its lower-right pixel, or any
+ * pixel at all, so the silhouette survives. */
+static void voice_sprite_small(unsigned cast, int ox, int oy, unsigned faded)
 {
-    vellipse(p->x, p->y + 36, 24, 14, p->color);                     /* coat */
-    vellipse(p->x, p->y + 2, 20, 20, SKIN);
-    vellipse(p->x, p->y + 15, 20, 13, HAIR);                         /* beard */
-    vellipse(p->x, p->y + 9, 9, 3, HAIR);                            /* moustache */
-    int tilt = voice_wave(1600, 1, 0);
-    vtri(p->x - 30, p->y - 10 + tilt, p->x + 30, p->y - 10 - tilt, p->x, p->y - 36, INK); /* tricorn */
-    vfill(p->x - 22, p->y - 13, 45, 4, RGB(150, 30, 40));
-    vellipse(p->x, p->y - 22, 3, 3, WHITE);                          /* skull */
-    vfill(p->x - 1, p->y - 23, 1, 1, INK);
-    vfill(p->x + 1, p->y - 23, 1, 1, INK);
-    vline(p->x - 19, p->y - 7, p->x + 19, p->y + 4, INK);            /* patch strap */
-    vellipse(p->x + 8, p->y, 5, 4, INK);                             /* patch */
-    if (p->blink) vfill(p->x - 11, p->y, 7, 1, INK);
-    else { vellipse(p->x - 8, p->y, 2, 3, INK); vfill(p->x - 9, p->y - 2, 1, 1, WHITE); }
-    if (p->open) {
-        mouth(p, p->x, p->y + 14, 2, INK);
-        vfill(p->x + 2, p->y + 13, 2, 2, GOLD);                      /* gold tooth */
-    } else vfill(p->x - 4, p->y + 14, 9, 1, INK);
-}
-
-static void draw_elder(const struct pose *p, int sway)
-{
-    vellipse(p->x, p->y + 38, 26, 14, p->color);                     /* robe */
-    vellipse(p->x, p->y + 2, 16, 16, SKIN);
-    vtri(p->x - 16, p->y + 6, p->x + 16, p->y + 6, p->x + sway, p->y + 44, WHITE); /* beard */
-    vellipse(p->x, p->y + 8, 13, 5, WHITE);
-    vtri(p->x - 26, p->y - 8, p->x + 26, p->y - 8, p->x + 8 + sway, p->y - 46, p->color); /* hat */
-    vellipse(p->x, p->y - 8, 28, 4, p->color);
-    vfill(p->x + 1, p->y - 26, 3, 1, GOLD);                          /* star */
-    vfill(p->x + 2, p->y - 27, 1, 3, GOLD);
-    for (int s = -1; s <= 1; s += 2) {
-        vfill(p->x + s * 6 - 4, p->y - 3, 9, 3, WHITE);              /* brows */
-        if (!p->blink) vfill(p->x + s * 6, p->y + 1, 2, 2, INK);
-    }
-    if (p->open) mouth(p, p->x, p->y + 11, 1, INK);
-}
-
-static void draw_bot(const struct pose *p)
-{
-    unsigned lamp = (frame_time / 450U) & 1U;
-    vline(p->x, p->y - 20, p->x, p->y - 30, p->color);               /* antenna */
-    vellipse(p->x, p->y - 32, 2, 2, lamp ? EMBER : dim(EMBER));
-    vfill(p->x - 10, p->y + 18, 20, 4, dim(p->color));               /* neck */
-    vfill(p->x - 22, p->y + 22, 44, 30, p->color);                   /* body */
-    vfill(p->x - 6, p->y + 28, 12, 4, INK);
-    vfill(p->x - 22, p->y - 19, 44, 38, p->color);                   /* head */
-    vfill(p->x - 22, p->y - 19, 2, 2, BACK);
-    vfill(p->x + 20, p->y - 19, 2, 2, BACK);
-    vfill(p->x - 26, p->y - 4, 4, 8, dim(p->color));                 /* bolts */
-    vfill(p->x + 22, p->y - 4, 4, 8, dim(p->color));
-    vfill(p->x - 17, p->y - 14, 34, 28, INK);                        /* screen */
-    for (int s = -1; s <= 1; s += 2)
-        vfill(p->x + s * 7 - 3, p->y - 8, 6, p->blink ? 1 : 6, p->shout ? EMBER : ACCENT);
-    /* An equaliser for a mouth. */
-    for (int b = 0; b < 5; ++b) {
-        int h = p->open ? 1 + (int)(p->open * (unsigned)(3 + (b * 5 + (int)(frame_time / 60U)) % 4) / 3U) : 1;
-        if (h > 9) h = 9;
-        vfill(p->x - 12 + b * 5, p->y + 10 - h, 3, h, p->open ? ACCENT : dim(ACCENT));
-    }
-}
-
-static void draw_ghost(const struct pose *p)
-{
-    uint16_t glow = dimmer(p->color);
-    vellipse(p->x, p->y + 2, 28, 30, glow);                          /* aura */
-    vellipse(p->x, p->y - 4, 20, 20, p->color);
-    vfill(p->x - 20, p->y - 4, 41, 26, p->color);
-    int shift = (int)((frame_time / 120U) % 10U);                    /* drifting hem */
-    for (int k = -1; k < 5; ++k) {
-        int hx = p->x - 20 + k * 10 + shift;
-        if (hx >= p->x - 22 && hx <= p->x + 22) vellipse(hx, p->y + 22, 5, 4, p->color);
-        if (hx + 5 >= p->x - 20 && hx + 5 <= p->x + 20) vellipse(hx + 5, p->y + 23, 3, 3, glow);
-    }
-    for (int s = -1; s <= 1; s += 2) {
-        if (p->blink) vfill(p->x + s * 7 - 3, p->y - 4, 7, 1, INK);
-        else vellipse(p->x + s * 7, p->y - 4, 3, 5, INK);
-    }
-    if (p->open) vellipse(p->x, p->y + 9, 3 + (int)p->open, 2 + (int)p->open * 2, INK);
-    else vellipse(p->x, p->y + 8, 2, 2, INK);
-    int twinkle = (int)((frame_time / 300U) % 4U);                   /* sparkles */
-    vfill(p->x - 26 + twinkle * 3, p->y - 22, 1, 1, WHITE);
-    vfill(p->x + 24, p->y - 10 + twinkle * 2, 1, 1, twinkle & 1 ? WHITE : glow);
+    for (int y = 0; y < SPRITE / 2; ++y)
+        for (int x = 0; x < SPRITE / 2; ++x) {
+            const char *top = voice_sprites[cast][2 * y], *bottom = voice_sprites[cast][2 * y + 1];
+            char c = bottom[2 * x + 1];
+            if (c == '.') c = bottom[2 * x] != '.' ? bottom[2 * x] : top[2 * x + 1] != '.' ? top[2 * x + 1] : top[2 * x];
+            if (c == '.') continue;
+            uint16_t color = voice_palette(c);
+            vfill(ox + x, oy + y, 1, 1, faded ? dimmer(color) : color);
+        }
 }
 
 /* Layout: header 0..27, stage 30..103 (portrait 4..101, pitch roll 106..235),
@@ -599,38 +461,34 @@ static void voice_face(void)
     if (paint_rendering && (paint_top >= STAGE_BOTTOM || paint_top + PAINT_ROWS <= STAGE_TOP)) return;
     unsigned vowel = voice_now.track_vowel[voice_cast], level = voice_now.track_level[voice_cast];
     struct pose p;
+    p.cast = voice_cast;
     p.vowel = vowel;
     p.open = vowel < MUMBLE_VOWELS ? (level > 180U ? 4U : level / 45U) : 0U;
-    p.blink = ((frame_time + voice_cast * 977U) % 3700U) < 120U;
+    p.blink = ((frame_time + voice_cast * 977U) % 3700U) < 140U;
     p.shout = voice_caps;
-    p.color = mumble_cast[voice_cast].color;
-    p.x = 53;
-    p.y = 66;
-    /* Breathing when idle, a bob on every syllable; the kid bounces, the
-     * ghost floats and the elder's beard sways with his wobble. */
-    int breathe = voice_wave(2400, 1, voice_cast * 300U), sway = 0;
-    if (voice_cast == 3) breathe = voice_wave(900, 2, 0);
-    if (voice_cast == 7) breathe = voice_wave(2000, 3, 0);
-    if (voice_cast == 5) sway = voice_wave(2000, 2 + (int)(voice_track()->sound.value[MUMBLE_WOBBLE] / 40U), 0);
-    p.y += breathe - (p.open ? 2 : 0);
-    struct { int y, sway; unsigned open, vowel, blink, shout, cast, anim; } sig_in = {
-        p.y, sway, p.open, vowel, p.blink, p.shout, voice_cast,
-        voice_cast == 6 ? frame_time / 60U : voice_cast == 7 ? frame_time / 120U : voice_cast == 4 ? frame_time / 400U : 0U};
+    p.tick = frame_time / 60U;
+    /* Motion snaps to sprite pixels: a hop on every syllable, the kid
+     * bounces; only the ghost floats smoothly. */
+    int lift = p.open ? SPRITE_SCALE : 0;
+    if (voice_cast == CAST_KID && ((frame_time / 450U) & 1U)) lift = SPRITE_SCALE;
+    if (voice_cast == CAST_GHOST) lift = 3 + voice_wave(2000, 3, 0);
+    if (voice_cast != CAST_BOT && voice_cast != CAST_ELDER) p.tick = 0;
+    struct { int lift; unsigned open, vowel, blink, shout, cast, tick; } sig_in = {
+        lift, p.open, vowel, p.blink, p.shout, voice_cast, p.tick & 24U};
     uint32_t sig = signature(0x0FACE, &sig_in, sizeof sig_in);
     if (cache->voice_cache[1] == sig) return;
     cache->voice_cache[1] = sig;
+    /* A portrait card in the character's colour, with faint scanlines. */
+    const int x0 = 10, x1 = 96, y0 = STAGE_TOP, y1 = STAGE_BOTTOM;
+    uint16_t color = mumble_cast[voice_cast].color;
     voice_clip(4, STAGE_TOP, PORTRAIT_X1, STAGE_BOTTOM);
-    vfill(4, STAGE_TOP, PORTRAIT_X1 - 4, STAGE_BOTTOM - STAGE_TOP, BACK);
-    switch (voice_cast) {
-    case 0: draw_hero(&p); break;
-    case 1: draw_guard(&p); break;
-    case 2: draw_sister(&p); break;
-    case 3: draw_kid(&p); break;
-    case 4: draw_pirate(&p); break;
-    case 5: draw_elder(&p, sway); break;
-    case 6: draw_bot(&p); break;
-    default: draw_ghost(&p); break;
-    }
+    vfill(4, y0, PORTRAIT_X1 - 4, y1 - y0, BACK);
+    vfill(x0 + 1, y0, x1 - x0 - 2, y1 - y0, dimmer(color));
+    vfill(x0, y0 + 1, x1 - x0, y1 - y0 - 1, dimmer(color));
+    for (int y = y0 + 3; y < y1; y += 4) vfill(x0 + 1, y, x1 - x0 - 2, 1, dimmest(color));
+    voice_clip(x0, y0, x1, y1);
+    voice_pose(&p);
+    voice_sprite(53 - SPRITE * SPRITE_SCALE / 2, y1 - SPRITE * SPRITE_SCALE - lift + SPRITE_SCALE, SPRITE_SCALE, 0);
 }
 
 static void voice_roll(void)
@@ -660,40 +518,25 @@ static void voice_roll(void)
         text(x0 + w - 16, y0 + h - 9, mumble_vowel_names[voice_now.vowel], 1, vowel_colors[voice_now.vowel], BACK);
 }
 
-/* Little heads of the whole cast: bright in the choir, underlined when selected. */
+/* The whole cast at half size: bright in the choir, underlined when
+ * selected, hopping while they sound. */
 static void voice_choir_strip(void)
 {
     if (paint_rendering && (paint_top >= STRIP_BOTTOM || paint_top + PAINT_ROWS <= STRIP_TOP)) return;
     uint8_t state[MUMBLE_CAST];
     for (unsigned i = 0; i < MUMBLE_CAST; ++i)
-        state[i] = (uint8_t)((voice_now.track_level[i] / 64U) | (voice_tracks[i].choir << 2) |
+        state[i] = (uint8_t)((voice_now.track_level[i] > 40U) | (voice_tracks[i].choir << 2) |
                              ((i == voice_cast) << 3) | ((voice_tracks[i].length != 0) << 4));
-    uint32_t sig = signature(0xC401, state, sizeof state);
+    uint32_t sig = signature(0xC402, state, sizeof state);
     if (cache->voice_cache[7] == sig) return;
     cache->voice_cache[7] = sig;
     voice_clip(0, STRIP_TOP, 240, STRIP_BOTTOM);
     vfill(0, STRIP_TOP, 240, STRIP_BOTTOM - STRIP_TOP, BACK);
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
-        int x = 22 + (int)i * 28, y = STRIP_TOP + 7;
-        unsigned on = voice_in_choir(i);
-        uint16_t c = on ? mumble_cast[i].color : dimmer(mumble_cast[i].color);
-        switch (i) { /* one detail each, so they read at 11 px */
-        case 0: vfill(x - 5, y - 8, 1, 3, on ? WHITE : DIM); vfill(x + 5, y - 8, 1, 3, on ? WHITE : DIM); break;
-        case 1: vfill(x + 1, y - 8, 4, 2, on ? PLUME : DIM); break;
-        case 2: vfill(x - 4, y - 8, 9, 1, on ? GOLD : DIM); break;
-        case 4: vfill(x - 6, y - 7, 13, 2, on ? INK : DIM); break;
-        case 5: vtri(x - 4, y - 4, x + 4, y - 4, x + 2, y - 8, c); break;
-        case 6: vfill(x, y - 8, 1, 3, c); break;
-        default: break;
-        }
-        if (i == 6) vfill(x - 5, y - 5, 11, 10, c);
-        else vellipse(x, y, 5, 5, c);
-        vfill(x - 2, y - 1, 1, 2, INK);
-        vfill(x + 2, y - 1, 1, 2, INK);
-        unsigned open = voice_now.track_level[i] / 64U;
-        vfill(x - 1, y + 2, 3, open ? (int)open : 1, INK);
-        if (i == voice_cast) vfill(x - 6, STRIP_BOTTOM - 2, 13, 2, WHITE);
-        if (voice_tracks[i].length) vfill(x + 7, y - 6, 2, 2, on ? TEXT : DIM);
+        int x = 16 + (int)i * 28, hop = voice_now.track_level[i] > 40U;
+        voice_sprite_small(i, x, STRIP_TOP + 1 - hop, !voice_in_choir(i));
+        if (i == voice_cast) vfill(x, STRIP_BOTTOM - 1, 12, 1, WHITE);
+        if (voice_tracks[i].length) vfill(x + 13, STRIP_TOP + 2, 2, 2, voice_in_choir(i) ? TEXT : DIM);
     }
 }
 
