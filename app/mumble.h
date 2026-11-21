@@ -88,9 +88,12 @@ void mumble_init(void);
 
 /* One track's part of a song; length 0 leaves the track silent. start_ms is
  * its offset into the loop, level its volume in percent (100 = as planned). */
+/* A syllable's sound, as mumble_plan gives it: vowel, consonant locus, MUMBLE_HUM/MUMBLE_SHOUT. */
+struct mumble_sound { uint8_t vowel, locus, flags; };
 /* A letter sung for len_ms from ms into the part, at MIDI note: a PLAY-mode
- * take, played back as mumble_press would sing it. */
-struct mumble_note { uint16_t ms, len_ms; uint8_t letter, note, shout; };
+ * take, played back as mumble_press would sing it, or (syllable 1, LINE mode)
+ * its sound held as mumble_press_sound would. letter is the key it was on. */
+struct mumble_note { uint16_t ms, len_ms; uint8_t letter, note, shout, syllable; struct mumble_sound sound; };
 struct mumble_part {
     const char *text; unsigned length; const struct mumble_voice *voice;
     uint16_t start_ms; uint8_t level;
@@ -129,6 +132,10 @@ void mumble_stop(void);
  * so chords work. 0, or -1 invalid. */
 struct mumble_singer { const struct mumble_voice *voice; uint8_t track, note; };
 int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout);
+/* LINE mode: a key (0..26) sings one syllable's sound, held until
+ * mumble_release(key), as mumble_press does a letter's name. */
+int mumble_press_sound(unsigned key, const struct mumble_sound *sound, const struct mumble_singer *singers,
+                       unsigned count, unsigned shout);
 void mumble_release(unsigned letter);
 /* Octaves to shift the keyboard so its middle F (MIDI 65) sits nearest the voice. */
 int mumble_register(const struct mumble_voice *voice);

@@ -419,12 +419,16 @@ CONTROL static void sort_syllables(struct mumble_syllable *s, unsigned n)
 
 CONTROL static unsigned letter_syllables(unsigned letter, unsigned note, const struct mumble_voice *voice,
                                          unsigned shout, struct mumble_syllable *out);
-/* A recorded note on a track: its letter's syllables from note->ms, the last
- * one sustained until the key went up (then its 120 ms release). */
+CONTROL static unsigned sound_syllable(unsigned key, const struct mumble_sound *sound, unsigned note,
+                                       const struct mumble_voice *voice, unsigned shout, struct mumble_syllable *out);
+/* A recorded note on a track: its letter's syllables (or its one syllable's
+ * sound) from note->ms, the last sustained until the key went up (then its
+ * 120 ms release). */
 CONTROL static unsigned note_syllables(const struct mumble_note *note, const struct mumble_voice *voice,
                                        struct mumble_syllable *out)
 {
-    unsigned got = letter_syllables(note->letter, note->note, voice, note->shout, out);
+    unsigned got = note->syllable ? sound_syllable(note->letter, &note->sound, note->note, voice, note->shout, out)
+                                  : letter_syllables(note->letter, note->note, voice, note->shout, out);
     for (unsigned i = 0; i < got; ++i) {
         struct mumble_syllable *y = &out[i];
         uint32_t offset = y->ms, at = (uint32_t)note->ms + offset;
@@ -682,7 +686,38 @@ CONTROL static unsigned letter_syllables(unsigned letter, unsigned note, const s
     return syllables;
 }
 
+/* One syllable's sound sung at a MIDI note from ms 0, held (MUMBLE_HOLD) on
+ * the key for 8 s at most. */
+CONTROL static unsigned sound_syllable(unsigned key, const struct mumble_sound *sound, unsigned note,
+                                       const struct mumble_voice *voice, unsigned shout, struct mumble_syllable *out)
+{
+    unsigned loud = shout || (sound->flags & MUMBLE_SHOUT);
+    out->ms = 0;
+    out->dur_ms = 8000U;
+    out->cents = (int16_t)(((int)note - 69) * 100 - cents_from_a4((float)voice->value[MUMBLE_PITCH]));
+    out->vowel = sound->vowel < MUMBLE_VOWELS ? sound->vowel : (uint8_t)MUMBLE_U;
+    out->locus = sound->locus;
+    out->gain = loud ? 83 : 64;
+    out->flags = (uint8_t)((sound->flags & MUMBLE_HUM) | (loud ? MUMBLE_SHOUT : 0) | MUMBLE_HOLD);
+    out->index = (uint8_t)key;
+    out->gen = 0;
+    out->track = 0;
+    return 1;
+}
+
+static int press(unsigned letter, const struct mumble_sound *sound, const struct mumble_singer *singers,
+                 unsigned count, unsigned shout);
 CONTROL int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout)
+{
+    return press(letter, NULL, singers, count, shout);
+}
+CONTROL int mumble_press_sound(unsigned key, const struct mumble_sound *sound, const struct mumble_singer *singers,
+                               unsigned count, unsigned shout)
+{
+    return sound ? press(key, sound, singers, count, shout) : -1;
+}
+CONTROL static int press(unsigned letter, const struct mumble_sound *sound, const struct mumble_singer *singers,
+                         unsigned count, unsigned shout)
 {
     if (letter >= MUMBLE_LETTERS || !singers || !count || count > MUMBLE_CAST) return -1;
     for (unsigned j = 0; j < count; ++j)
@@ -712,7 +747,8 @@ CONTROL int mumble_press(unsigned letter, const struct mumble_singer *singers, u
     for (unsigned j = 0; j < count && n + 3U <= LIVE_SYLLABLES; ++j) {
         const struct mumble_singer *who = &singers[j];
         s->voice[who->track] = *who->voice;
-        unsigned got = letter_syllables(letter, who->note, who->voice, shout, s->syllable + n);
+        unsigned got = sound ? sound_syllable(letter, sound, who->note, who->voice, shout, s->syllable + n)
+                             : letter_syllables(letter, who->note, who->voice, shout, s->syllable + n);
         for (unsigned i = 0; i < got; ++i, ++n) {
             s->syllable[n].gen = gen;
             s->syllable[n].track = who->track;

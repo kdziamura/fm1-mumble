@@ -258,7 +258,7 @@ int main(int argc, char **argv)
     mumble_stop();
     for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     memset(parts, 0, sizeof parts);
-    const struct mumble_note take[1] = {{300, 400, 1, 60, 0}};
+    const struct mumble_note take[1] = {{300, 400, 1, 60, 0, 0, {0, 0, 0}}};
     parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, take, 1};
     mumble_song(parts, 1000, 1, 0);
     unsigned take_onsets = 0, take_was = 0, take_first = 0, held_blocks = 0, late_blocks = 0;
@@ -277,9 +277,43 @@ int main(int argc, char **argv)
     CHECK(take_onsets == 3, "a take plays once a pass (%u onsets in 3 s)", take_onsets);
     CHECK(!held_blocks, "a take's note sustains for as long as it was held (%u silent blocks)", held_blocks);
     CHECK(!late_blocks, "a take's note lets go when its key did (%u blocks sounding)", late_blocks);
+    /* LINE mode: a syllable's sound held on a key sustains until let go, and a
+     * take's syllable note plays back as long as it was held. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    struct mumble_syllable heh[MUMBLE_SYLLABLES];
+    unsigned heh_n = plan("Hello", 0, heh);
+    CHECK(heh_n >= 2, "Hello has syllables (%u)", heh_n);
+    const struct mumble_sound lo = {heh[1].vowel, heh[1].locus, heh[1].flags};
+    struct mumble_singer sister = {&mumble_cast[2].voice, 2, 62};
+    CHECK(!mumble_press_sound(5, &lo, &sister, 1, 0), "a syllable is pressed");
+    for (unsigned b = 0; b < 520; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 1.5 s */
+    struct mumble_status syl_held; mumble_status(&syl_held);
+    mumble_release(5);
+    for (unsigned b = 0; b < 100; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    struct mumble_status syl_gone; mumble_status(&syl_gone);
+    CHECK(syl_held.track_level[2] && syl_held.track_vowel[2] == lo.vowel && !syl_gone.track_level[2],
+          "a held syllable sustains its vowel until its key is let go");
+    const struct mumble_note syl_take[1] = {{200, 600, 5, 62, 0, 1, {lo.vowel, lo.locus, lo.flags}}};
+    memset(parts, 0, sizeof parts);
+    parts[2] = (struct mumble_part){NULL, 0, &mumble_cast[2].voice, 0, 100, syl_take, 1};
+    mumble_song(parts, 1000, 1, 0);
+    unsigned syl_mid = 0, syl_after = 0;
+    for (unsigned b = 0; b < 344; ++b) {
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        unsigned ms = b * FM1_BLOCK_FRAMES * 1000U / FM1_SAMPLE_RATE;
+        if (ms >= 450 && ms < 750) syl_mid += st.track_level[2] && st.track_vowel[2] == lo.vowel;
+        if (ms >= 950) syl_after += st.track_level[2] != 0;
+    }
+    CHECK(syl_mid > 90 && !syl_after, "a take's syllable plays its vowel while held, then lets go (%u, %u)", syl_mid,
+          syl_after);
+    mumble_song_stop();
+
     /* Stopping the song lets a sustained note go at once (PLAY, a panic). */
-    const struct mumble_note long_take[1] = {{100, 5000, 14, 60, 0}};
-    parts[0].notes = long_take;
+    const struct mumble_note long_take[1] = {{100, 5000, 14, 60, 0, 0, {0, 0, 0}}};
+    memset(parts, 0, sizeof parts);
+    parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, long_take, 1};
     mumble_song(parts, 8000, 1, 0);
     for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 0.58 s: into the note */
     struct mumble_status held_note; mumble_status(&held_note);
