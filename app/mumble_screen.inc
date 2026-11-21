@@ -648,8 +648,11 @@ static void voice_face(void)
     if (who == CAST_KID && ((frame_time / 450U) & 1U)) lift = SPRITE_SCALE;
     if (who == CAST_GHOST) lift = 1 + voice_wave(2000, 1, 0);
     if (who != CAST_BOT && who != CAST_ELDER) p.tick = 0;
+    /* What of the tick shows: the lamp's and the star's bits, and the bot's
+     * equaliser while it talks (its bars step with tick % 3). */
+    unsigned tick_shown = (p.tick & 24U) | (who == CAST_BOT && p.open ? p.tick % 3U : 0U);
     struct { int lift; unsigned open, vowel, blink, shout, cast, tick; } sig_in = {
-        lift, p.open, vowel, p.blink, p.shout, who, p.tick & 24U};
+        lift, p.open, vowel, p.blink, p.shout, who, tick_shown};
     uint32_t sig = signature(0x0FACE, &sig_in, sizeof sig_in);
     if (cache->voice_cache[1] == sig) return;
     cache->voice_cache[1] = sig;
