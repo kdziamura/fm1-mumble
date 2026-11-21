@@ -10,10 +10,11 @@
  *   PLAY  keys sing their letter's name ("bee", "kay", "em") at the key's
  *         pitch for as long as they are held; SPACE hums. The choir sings
  *         along, each member in their own register.
- *   SAMPLE every key is a pad holding a character's line. Holding a pad
- *         speaks its line in that character's voice; letting go, or another
- *         pad, cuts it. Hold SAVE and tap a key to put the selected
- *         track's line on it; hold EDIT and tap a key to clear it.
+ *   SAMPLE every key is a pad. Each starts with a word of its letter
+ *         ("Aha!", "Bye!", ... "Zzz..."), said by the selected character.
+ *         Holding a pad speaks it; letting go, or another pad, cuts it.
+ *         Hold SAVE and tap a key to put the selected track's line on it;
+ *         hold EDIT and tap a key to give it back its word.
  *
  *   PLAY speak (choir) / stop  OCT- delete       OCT+ CAPS (shout)
  *   FX ,  SCL .  ENV ?  LFO !  EDIT clear line, again on an empty line: all
@@ -53,9 +54,16 @@ static const char *const voice_hints[] = {
     "SELECT WHO  K1 PAGE  PRESETS LINES",
     "K1 TO LOOP: START LEVEL BARS BPM"};
 static const char *const voice_sample_hints[] = {
-    "HOLD A KEY: ITS LINE SPEAKS",
+    "HOLD A KEY: ITS WORD SPEAKS",
     "SAVE+KEY: PUT THE LINE ON A KEY",
-    "EDIT+KEY: CLEAR A KEY  GLO TYPE"};
+    "EDIT+KEY: BACK TO ITS WORD  GLO TYPE"};
+/* SAMPLE mode's built-in pads: a word per key that starts with (or sounds
+ * like) its letter, spoken by the selected character. SPACE muses. */
+static const char *const voice_pad_words[] = {
+    "Aha!", "Bye!", "Come on!", "Danger!", "Eh?", "Follow me!", "Go!", "Hey!", "I see.",
+    "Jump!", "Kaboom!", "Look!", "Mmm...", "No!", "Oh!", "Please?", "Quiet!", "Run!",
+    "Sorry.", "Thanks!", "Uh-oh.", "Very good!", "What?", "Excuse me.", "Yes!", "Zzz...", "Hmm..."};
+_Static_assert(sizeof voice_pad_words / sizeof voice_pad_words[0] == MUMBLE_LETTERS, "a word per key");
 static const char *const voice_play_hints[] = {
     "HOLD KEYS TO SING  GLO TYPE MODE",
     "OCT- OCT+ OCTAVE  SELECT WHO",
@@ -86,12 +94,22 @@ static uint32_t voice_keys_lit;
 static unsigned voice_play, voice_sung = MUMBLE_LETTERS, voice_sung_note;
 static int voice_octave;
 static uint32_t voice_held;
-/* SAMPLE mode: a pad per key holds a copy of a track's line and sound. */
+/* SAMPLE mode: a pad per key holds a copy of a track's line and sound;
+ * an empty pad (length 0) speaks its built-in word instead. */
 struct voice_pad { uint8_t cast, length; char text[MUMBLE_TEXT]; struct mumble_voice sound; };
 static struct voice_pad voice_pads[MUMBLE_LETTERS];
 static unsigned voice_sample, voice_pad_on = MUMBLE_LETTERS, voice_pad_last = MUMBLE_LETTERS;
 
 static struct voice_track *voice_track(void) { return &voice_tracks[voice_cast]; }
+/* What a pad says and who says it: its own line, or its word by the selected character. */
+static unsigned voice_pad_says(unsigned key, const char **text, unsigned *cast)
+{
+    const struct voice_pad *pad = &voice_pads[key];
+    if (pad->length) { *text = pad->text; *cast = pad->cast; return pad->length; }
+    *text = voice_pad_words[key];
+    *cast = voice_cast;
+    return (unsigned)strlen(voice_pad_words[key]);
+}
 static unsigned voice_in_choir(unsigned i) { return i == voice_cast || voice_tracks[i].choir; }
 /* Something about this track changed: replan it and refresh a playing song. */
 static void voice_touch(struct voice_track *t)
@@ -277,8 +295,8 @@ static void voice_notice(const char *message)
     notice = message;
     notice_until = frame_time + 1500U;
 }
-/* SAMPLE mode: SAVE+key fills a pad, EDIT+key empties it, a key alone
- * speaks its pad until it is let go or another pad starts. */
+/* SAMPLE mode: SAVE+key fills a pad, EDIT+key puts its word back, a key
+ * alone speaks its pad until it is let go or another pad starts. */
 static void voice_sampler(const struct fm1_controls *c, uint32_t down)
 {
     if (voice_pad_on < MUMBLE_LETTERS && !(c->keys & (1U << voice_pad_on))) {
@@ -299,10 +317,12 @@ static void voice_sampler(const struct fm1_controls *c, uint32_t down)
             voice_notice("LINE PUT ON THE KEY");
         } else if (c->buttons & BUTTON(EDIT)) {
             pad->length = 0;
-            voice_notice("KEY CLEARED");
-        } else if (pad->length) {
+            voice_notice("KEY BACK TO ITS WORD");
+        } else {
+            const char *line;
+            unsigned cast, length = voice_pad_says(key, &line, &cast);
             mumble_cut();
-            mumble_aside(pad->cast, pad->text, pad->length, &pad->sound);
+            mumble_aside(cast, line, length, pad->length ? &pad->sound : &t->sound);
             voice_pad_on = key;
         }
     }
@@ -320,7 +340,7 @@ static void voice_mode_next(void)
 static unsigned voice_stage_cast(void)
 {
     if (voice_sample && voice_pad_last < MUMBLE_LETTERS && voice_pads[voice_pad_last].length)
-        return voice_pads[voice_pad_last].cast;
+        return voice_pads[voice_pad_last].cast;   /* a word pad is the selected character's */
     return voice_cast;
 }
 
@@ -811,18 +831,20 @@ static void voice_play_draw(void)
     }
 }
 
-/* SAMPLE mode: the 27 pads as three rows of nine keys, each lit in its
- * character's colour, the sounding one filled; then the last pad's line. */
+/* SAMPLE mode: the 27 pads as three rows of nine keys, the ones holding a
+ * line marked in their character's colour, the sounding one filled; then
+ * who says the last pad and what. */
 static void voice_sample_draw(void)
 {
     if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
-    uint8_t state[MUMBLE_LETTERS + 2];
+    uint8_t state[MUMBLE_LETTERS + 3];
     for (unsigned key = 0; key < MUMBLE_LETTERS; ++key)
         state[key] = voice_pads[key].length ? (uint8_t)(1U + voice_pads[key].cast) : 0U;
     state[MUMBLE_LETTERS] = (uint8_t)voice_pad_on;
     state[MUMBLE_LETTERS + 1] = (uint8_t)voice_pad_last;
+    state[MUMBLE_LETTERS + 2] = (uint8_t)voice_cast;
     uint32_t sig = signature(0x5A3D1E, state, sizeof state);
-    if (voice_pad_last < MUMBLE_LETTERS)
+    if (voice_pad_last < MUMBLE_LETTERS && voice_pads[voice_pad_last].length)
         sig = signature(sig, voice_pads[voice_pad_last].text, voice_pads[voice_pad_last].length);
     cache->voice_cache[4] = cache->voice_cache[5] = 0xfffffffeU;   /* the TYPE rows redraw on return */
     if (cache->voice_cache[3] == sig) return;
@@ -831,9 +853,11 @@ static void voice_sample_draw(void)
     for (unsigned key = 0; key < MUMBLE_LETTERS; ++key) {
         const struct voice_pad *pad = &voice_pads[key];
         unsigned x = 10U + (key % 9U) * 25U, y = 127U + (key / 9U) * 15U;
-        uint16_t color = pad->length ? mumble_cast[pad->cast].color : DIM;
+        unsigned cast = pad->length ? pad->cast : voice_cast;
+        uint16_t color = pad->length ? mumble_cast[cast].color : TEXT;
         char letter[2] = {key < 26 ? (char)('A' + key) : '~', 0};
         if (key == voice_pad_on) {
+            color = mumble_cast[cast].color;
             paint_fill(x, y, 21, 12, color);
             text(x + 3, y + 3, letter, 1, BACK, color);
         } else {
@@ -842,17 +866,18 @@ static void voice_sample_draw(void)
             if (key == voice_pad_last) paint_fill(x, y + 11, 21, 1, TEXT);
         }
     }
-    if (voice_pad_last < MUMBLE_LETTERS && voice_pads[voice_pad_last].length) {
-        const struct voice_pad *pad = &voice_pads[voice_pad_last];
+    if (voice_pad_last < MUMBLE_LETTERS) {
+        const char *says;
+        unsigned cast, said = voice_pad_says(voice_pad_last, &says, &cast);
         char line[38];
-        unsigned n = (unsigned)strlen(mumble_cast[pad->cast].name);
-        text(10, 174, mumble_cast[pad->cast].name, 1, mumble_cast[pad->cast].color, BACK);
-        unsigned room = 36U - n, length = pad->length < room ? pad->length : room;
-        memcpy(line, pad->text, length);
+        unsigned n = (unsigned)strlen(mumble_cast[cast].name);
+        text(10, 174, mumble_cast[cast].name, 1, mumble_cast[cast].color, BACK);
+        unsigned room = 36U - n, length = said < room ? said : room;
+        memcpy(line, says, length);
         line[length] = 0;
         text(10U + (n + 1U) * 6U, 174, line, 1, TEXT, BACK);
     } else {
-        text(10, 174, "SAVE+KEY PUTS THE LINE ON A KEY", 1, DIM, BACK);
+        text(10, 174, "HOLD A KEY  SAVE+KEY PUTS THE LINE ON", 1, DIM, BACK);
     }
 }
 
