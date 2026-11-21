@@ -19,6 +19,17 @@
  *       rewrite the flash under a voice);
  *   P7  a draw pass changes what it draws (the same state, two different
  *       screens) or the same input plays differently twice.
+ * And on the page's state, every frame:
+ *   S1  every field is in its range and agrees with the others and with the
+ *       lights (one mode at a time, letters held only while their keys are,
+ *       printable lines of their length, sound parameters in range ...);
+ *   S2  the frame did what a model of the controls says: REC flips the loop,
+ *       GLO goes on to the next mode, PLAY starts or stops the song, SELECT
+ *       and ALGO move by their detents, a knob moves its parameter of the
+ *       selected sound by the accelerated amount; with nothing pressed or
+ *       turned no setting changes, TYPE adds exactly the keys' letters, PLAY
+ *       holds exactly the letters still down and the new ones, and only SAVE/EDIT+key in SAMPLE touch
+ *       a pad.
  * And once, at start-up, every button combination survives the panel's
  * button-order mapping both ways.
  *
@@ -148,6 +159,177 @@ static void render_block(void)
     }
     audio_sum = sum(audio, sizeof audio) ^ (audio_sum * 31u);
 }
+/* ------------------------------------------------- the state --- */
+/* S1: after every frame, every field of the page's state is in its range and
+ * the fields agree with each other and with the lights. */
+static void check_text(const char *text, unsigned length, unsigned terminated, const char *what)
+{
+    if (length > MUMBLE_TEXT) fail(what);
+    for (unsigned i = 0; i < length; ++i)
+        if ((unsigned char)text[i] < 32u || (unsigned char)text[i] > 126u) fail(what);
+    if (terminated && text[length]) fail(what);
+}
+static void check_sound(const struct mumble_voice *v, const char *what)
+{
+    for (unsigned p = 0; p < MUMBLE_PARAMS; ++p)
+        if (v->value[p] < mumble_params[p].min || v->value[p] > mumble_params[p].max) fail(what);
+}
+static void check_state(void)
+{
+    if (!voice_ready) fail("S1 the page is not open");
+    if (voice_cast >= MUMBLE_CAST) fail("S1 cast out of range");
+    if (voice_page >= VOICE_PAGES) fail("S1 page out of range");
+    if (voice_caps > 1 || voice_loop > 1 || voice_play > 1 || voice_sample > 1 || voice_song_dirty > 1 ||
+        voice_talking > 1)
+        fail("S1 a flag is not 0 or 1");
+    if (voice_play && voice_sample) fail("S1 PLAY and SAMPLE at once");
+    if (voice_song > 2) fail("S1 song state out of range");
+    if (voice_demo >= VOICE_LINES) fail("S1 demo line out of range");
+    if (voice_bars != 1 && voice_bars != 2 && voice_bars != 4 && voice_bars != 8) fail("S1 bars not 1, 2, 4 or 8");
+    if (voice_bpm < 40 || voice_bpm > 240) fail("S1 BPM out of 40..240");
+    if (voice_octave < -2 || voice_octave > 2) fail("S1 octave out of -2..2");
+    if (voice_held & ~held_keys) fail("S1 a letter held whose key is up");
+    if (!voice_play && voice_held) fail("S1 letters held outside PLAY");
+    if (voice_sung > MUMBLE_LETTERS || voice_pad_last > MUMBLE_LETTERS || voice_pad_on > MUMBLE_LETTERS)
+        fail("S1 a key index out of range");
+    if (voice_pad_on < MUMBLE_LETTERS && (!voice_sample || !(held_keys & (1u << voice_pad_on))))
+        fail("S1 a pad speaking whose key is up (or outside SAMPLE)");
+    if (voice_shown > voice_track()->length) fail("S1 more of the line shown than there is");
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
+        const struct voice_track *t = &voice_tracks[i];
+        check_text(t->text, t->length, 1, "S1 a line is not printable text of its length");
+        if (t->choir > 1) fail("S1 choir not 0 or 1");
+        if (t->start >= voice_steps()) fail("S1 a track starts after the loop's end");
+        if (t->level > 100) fail("S1 a track level over 100");
+        check_sound(&t->sound, "S1 a sound parameter out of its range");
+        if (t->planned && t->syllables > MUMBLE_SYLLABLES) fail("S1 too many syllables planned");
+    }
+    for (unsigned k = 0; k < MUMBLE_LETTERS; ++k) {
+        const struct voice_pad *pad = &voice_pads[k];
+        check_text(pad->text, pad->length, 0, "S1 a pad's line is not printable text of its length");
+        if (pad->length && pad->cast >= MUMBLE_CAST) fail("S1 a pad's character out of range");
+        if (pad->length) check_sound(&pad->sound, "S1 a pad's sound out of range");
+    }
+    if (voice_now.vowel > MUMBLE_VOWELS || voice_now.track >= MUMBLE_CAST) fail("S1 the engine's status out of range");
+    /* The lights tell the state. */
+    if (!!(lit_buttons & (1u << B_PLAY)) != (voice_song != 0)) fail("S1 PLAY's light disagrees with the song");
+    if (!!(lit_buttons & (1u << B_REC)) != voice_loop) fail("S1 REC's light disagrees with the loop");
+    if (!!(lit_buttons & (1u << B_SAVE)) != voice_track()->choir) fail("S1 SAVE's light disagrees with the choir");
+    if (!!(lit_buttons & (1u << B_GLO)) != (voice_play | voice_sample)) fail("S1 GLO's light disagrees with the mode");
+}
+
+/* S2: a model of each frame. Before it, what the frame will be given; after
+ * it, what must have become of the state. */
+static struct {
+    struct voice_track tracks[MUMBLE_CAST];
+    struct voice_pad pads[MUMBLE_LETTERS];
+    unsigned cast, page, caps, loop, play, sample, bars, bpm, demo, song;
+    int octave;
+    uint32_t pressed, held, key_down, keys, letters;
+    int32_t turned[7];
+} before;
+static void step_before(void)
+{
+    memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
+    memcpy(before.pads, voice_pads, sizeof voice_pads);
+    before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps, before.loop = voice_loop;
+    before.play = voice_play, before.sample = voice_sample, before.bars = voice_bars, before.bpm = voice_bpm;
+    before.demo = voice_demo, before.song = voice_song, before.octave = voice_octave, before.letters = voice_held;
+    /* As app.c's input() will read them (HOME never reaches the page). */
+    before.held = panel_buttons(held_buttons);
+    before.pressed = before.held & ~buttons_before & ~BUTTON(HOME);
+    before.keys = held_keys & ((1u << NKEYS) - 1u);
+    before.key_down = before.keys & ~keys_before;
+    for (unsigned i = 0; i < 7; ++i) before.turned[i] = clamp(turned[encoder_of[i]], -127, 127);
+}
+static int same_text(const struct voice_track *a, const struct voice_track *b)
+{
+    return a->length == b->length && !memcmp(a->text, b->text, a->length);
+}
+static void step_after(void)
+{
+    uint32_t pressed = before.pressed;
+    unsigned turned_any = 0;
+    for (unsigned i = 0; i < 7; ++i) turned_any |= before.turned[i] != 0;
+    /* One control at a time, as each does. */
+    if (pressed == BUTTON(REC) && !turned_any && voice_loop != !before.loop) fail("S2 REC did not flip the loop");
+    if (pressed == BUTTON(GLO) && !turned_any) {
+        unsigned mode = before.play ? 1u : before.sample ? 2u : 0u, now = voice_play ? 1u : voice_sample ? 2u : 0u;
+        if (now != (mode + 1u) % 3u) fail("S2 GLO did not go on to the next mode");
+    }
+    if (pressed == BUTTON(PLAY) && !turned_any && !before.key_down) {
+        if (before.song && voice_song) fail("S2 PLAY did not stop the song");
+        if (!before.song && !voice_song) fail("S2 PLAY did not start the song");
+    }
+    if (pressed == 0 && before.turned[0] && !before.turned[6]) {
+        int n = before.turned[0] % (int)MUMBLE_CAST;
+        if (voice_cast != (unsigned)(((int)before.cast + n + (int)MUMBLE_CAST) % (int)MUMBLE_CAST))
+            fail("S2 SELECT did not move the cast by its detents");
+    }
+    if (!(pressed & BUTTON(SEQ)) && before.turned[1] &&
+        voice_page != (unsigned)(((int)before.page + before.turned[1] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
+        fail("S2 ALGO did not move the page by its detents");
+    /* The knobs on a sound page: the selected sound, those parameters, by the accelerated amount, kept in range. */
+    if (!pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && before.page != LOOP_PAGE) {
+        struct mumble_voice want = before.tracks[before.cast].sound;
+        for (unsigned c = 0; c < 4; ++c) {
+            int v = before.turned[2 + c];
+            if (!v) continue;
+            int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
+            unsigned p = before.page * 4u + c;
+            want.value[p] = (uint16_t)clamp((int)want.value[p] + v * gain, mumble_params[p].min, mumble_params[p].max);
+        }
+        if (memcmp(&want, &voice_tracks[before.cast].sound, sizeof want)) fail("S2 a knob moved the sound wrongly");
+    }
+    if (pressed || turned_any) return;
+
+    /* Nothing pressed or turned: only the keys act, and only as the mode says. */
+    if (voice_cast != before.cast || voice_page != before.page || voice_caps != before.caps ||
+        voice_loop != before.loop || voice_play != before.play || voice_sample != before.sample ||
+        voice_bars != before.bars || voice_bpm != before.bpm || voice_demo != before.demo ||
+        voice_octave != before.octave)
+        fail("S2 a setting changed with nothing pressed or turned");
+    if (!before.song && voice_song) fail("S2 a song started with nothing pressed");
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
+        const struct voice_track *was = &before.tracks[i], *now = &voice_tracks[i];
+        if (was->choir != now->choir || was->start != now->start || was->level != now->level ||
+            memcmp(&was->sound, &now->sound, sizeof was->sound))
+            fail("S2 a track's settings changed with nothing pressed or turned");
+        if (i == before.cast && !before.play && !before.sample) {
+            /* TYPE: each key down adds its letter (in key order), the oldest falling off a full line. */
+            char want[MUMBLE_TEXT + 1];
+            unsigned n = was->length;
+            memcpy(want, was->text, n);
+            for (unsigned k = 0; k < 27; ++k) {
+                if (!(before.key_down & (1u << k))) continue;
+                if (n >= MUMBLE_TEXT) { memmove(want, want + 1, MUMBLE_TEXT - 1); n = MUMBLE_TEXT - 1; }
+                want[n++] = k == 26 ? ' ' : (char)((before.caps ? 'A' : 'a') + k);
+            }
+            if (now->length != n || memcmp(now->text, want, n)) fail("S2 typing did not add exactly the keys' letters");
+        } else if (!same_text(was, now))
+            fail("S2 a line changed with nothing pressed or turned");
+    }
+    /* (A key already down when PLAY began sings once pressed again.) */
+    if (before.play && voice_held != ((before.letters & before.keys) | before.key_down))
+        fail("S2 PLAY does not hold exactly the letters still down and the new ones");
+    for (unsigned k = 0; k < MUMBLE_LETTERS; ++k) {
+        const struct voice_pad *was = &before.pads[k], *now = &voice_pads[k];
+        unsigned hit = before.sample && (before.key_down & (1u << k));
+        const struct voice_track *t = &before.tracks[before.cast];
+        if (hit && (before.held & BUTTON(SAVE))) {
+            if (t->length && (now->length != t->length || now->cast != before.cast || memcmp(now->text, t->text, t->length) ||
+                              memcmp(&now->sound, &t->sound, sizeof t->sound)))
+                fail("S2 SAVE+key did not put the line on the pad");
+            if (!t->length && (now->length != was->length || memcmp(now->text, was->text, was->length)))
+                fail("S2 SAVE+key with no line changed the pad");
+        } else if (hit && (before.held & BUTTON(EDIT))) {
+            if (now->length) fail("S2 EDIT+key did not put the pad back to its word");
+        } else if (now->length != was->length || memcmp(now->text, was->text, was->length) ||
+                   (was->length && (now->cast != was->cast || memcmp(&now->sound, &was->sound, sizeof was->sound))))
+            fail("S2 a pad changed without SAVE or EDIT and its key in SAMPLE");
+    }
+}
+
 /* One UI frame (16 ms) and the audio blocks that fall due meanwhile. */
 static void frame(void)
 {
@@ -157,8 +339,11 @@ static void frame(void)
         audio_debt -= APP_BLOCK * 1000u;
         render_block();
     }
+    step_before();
     app_frame();
     if (page != VOICE) fail("P5 the page left MUMBLE");
+    check_state();
+    step_after();
 }
 /* MUMBLE_FUZZ_SCREEN=DIR: a P3 failure leaves both screens there as PPMs. */
 static void save_screen(const char *name, const uint16_t *px)

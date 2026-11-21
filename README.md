@@ -44,7 +44,11 @@ platform and plays each fuzz input as a performance from a fresh boot (the app's
 a crash file replays alone: `app/build/fuzz/mumble-fuzz CRASHFILE`). Besides memory errors and undefined behaviour it
 fails when a blit leaves the screen or its band buffer, a band buffer changes while its DMA is still sending it, the
 incremental redraw differs from a full repaint, an LED names a control the FM-1 lacks, HOME leaves the page, sound
-outlasts a panic by 3 s, or the same input plays differently twice. Putting the state back needs the app's globals in
+outlasts a panic by 3 s, or the same input plays differently twice. After every frame it also checks the page's
+state: each field in its range and agreeing with the others and the lights (S1), and the frame's change against a
+model of the controls (S2: REC flips the loop, GLO steps the mode, SELECT and ALGO move by their detents, a knob moves
+its parameter by the accelerated amount, typing adds exactly the keys' letters, only SAVE/EDIT+key touch a pad, and
+with nothing pressed or turned no setting changes). Putting the state back needs the app's globals in
 sections of their own, which ASan does not guard, so `tests/fuzz.sh --replay` also runs each seed and corpus input
 alone in a build whose globals it does guard. CI runs the seeds, two minutes of fuzzing and that replay.
 
