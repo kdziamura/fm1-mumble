@@ -102,15 +102,21 @@ static uint32_t voice_keys_lit;
 static unsigned voice_play, voice_sung = MUMBLE_LETTERS, voice_sung_note;
 static int voice_octave;
 static uint32_t voice_held;
-/* PLAY mode's REC: letters played go into the selected track's take, on the
- * loop, pass over pass. A letter held: where it began and when. */
+/* PLAY mode: every character sings one letter at a time. The keys held are
+ * shared out among the choir (the selected character first); each singer's
+ * key + 1 (0: silent) and when it began, and when each key went down. */
+static uint8_t voice_sings[MUMBLE_CAST];
+static uint32_t voice_sing_order[MUMBLE_CAST], voice_key_order[MUMBLE_LETTERS], voice_order;
+/* PLAY mode's REC: what each character sings goes into its own take, on the
+ * loop, pass over pass. A singer being recorded: where its letter began, when,
+ * which and at what note. */
 static unsigned voice_recording;
-static uint32_t voice_rec_held, voice_rec_since[MUMBLE_LETTERS];
-static uint16_t voice_rec_at[MUMBLE_LETTERS];
-static uint8_t voice_rec_note[MUMBLE_LETTERS];
-/* A pass is open once a letter of it reached the take; the loop's wrap, a
- * new recording or another character starts the next. The metronome's
- * beats, as last set. */
+static uint32_t voice_rec_held, voice_rec_since[MUMBLE_CAST];
+static uint16_t voice_rec_at[MUMBLE_CAST];
+static uint8_t voice_rec_letter[MUMBLE_CAST], voice_rec_note[MUMBLE_CAST];
+/* A pass is open (a bit per track) once a letter of it reached the take; the
+ * loop's wrap, a new recording or another character starts the next. The
+ * metronome's beats, as last set. */
 static unsigned voice_pass_open, voice_click;
 static int32_t voice_rec_last_ms;
 static void voice_rec_stop(void);
@@ -201,6 +207,7 @@ static void voice_stop(void)
 {
     voice_rec_stop();
     mumble_stop();
+    memset(voice_sings, 0, sizeof voice_sings);
     voice_song = 0;
     voice_held = 0;
 }
@@ -236,6 +243,7 @@ static void voice_close(void)
 {
     if (voice_ready) mumble_stop(); /* also releases held letters */
     voice_rec_stop();
+    memset(voice_sings, 0, sizeof voice_sings);
     voice_held = 0;
     voice_song = 0;
 }
@@ -280,59 +288,78 @@ static unsigned voice_edited(void)
 {
     return memcmp(&voice_track()->sound, &mumble_cast[voice_cast].voice, sizeof(struct mumble_voice)) != 0;
 }
-/* The take: where the loop is now, from the selected track's start; -1 when
- * the loop is not running. */
-static int32_t voice_rec_position(void)
+/* A take: where the loop is now, from its track's start; -1 when the loop
+ * is not running. */
+static int32_t voice_rec_position(unsigned track)
 {
     int32_t at = mumble_song_position();
     if (at < 0 || !voice_loop) return -1;
     uint32_t loop = voice_loop_ms();
-    return (int32_t)(((uint32_t)at + loop - voice_step_ms(voice_track()->start) % loop) % loop);
+    return (int32_t)(((uint32_t)at + loop - voice_step_ms(voice_tracks[track].start) % loop) % loop);
 }
-static void voice_rec_press(unsigned key, unsigned note)
+static void voice_rec_press(unsigned who, unsigned key, unsigned note)
 {
-    int32_t at = voice_rec_position();
+    int32_t at = voice_rec_position(who);
     if (at < 0 || at > 0xFFFF) return;
-    voice_rec_held |= 1U << key;
-    voice_rec_at[key] = (uint16_t)at;
-    voice_rec_since[key] = frame_time;
-    voice_rec_note[key] = (uint8_t)note;
+    voice_rec_held |= 1U << who;
+    voice_rec_at[who] = (uint16_t)at;
+    voice_rec_since[who] = frame_time;
+    voice_rec_letter[who] = (uint8_t)key;
+    voice_rec_note[who] = (uint8_t)note;
 }
-/* A recorded letter let go: into the take, which the loop plays from its next pass. */
-static void voice_rec_release(unsigned key)
+/* A recorded letter ended (let go, or its singer moved on): into the
+ * singer's take, which the loop plays from its next pass. */
+static void voice_rec_release(unsigned who)
 {
-    if (!(voice_rec_held & (1U << key))) return;
-    voice_rec_held &= ~(1U << key);
-    struct voice_track *t = voice_track();
+    if (!(voice_rec_held & (1U << who))) return;
+    voice_rec_held &= ~(1U << who);
+    struct voice_track *t = &voice_tracks[who];
     if (t->notes >= VOICE_TAKE) { voice_notice("THE TAKE IS FULL"); return; }
-    uint32_t len = frame_time - voice_rec_since[key], loop = voice_loop_ms();
+    uint32_t len = frame_time - voice_rec_since[who], loop = voice_loop_ms();
     if (len < 30U) len = 30U;
     if (len >= loop) len = loop - 1U;
     if (len > 0xFFFFU) len = 0xFFFFU;
-    if (!voice_pass_open) {
+    if (!(voice_pass_open & (1U << who))) {
         if (t->passes == VOICE_PASSES) {        /* the oldest two passes become one */
             memmove(t->pass_at + 1, t->pass_at + 2, VOICE_PASSES - 2);
             --t->passes;
         }
         t->pass_at[t->passes++] = t->notes;
-        voice_pass_open = 1;
+        voice_pass_open |= 1U << who;
     }
-    t->take[t->notes++] = (struct mumble_note){voice_rec_at[key], (uint16_t)len, (uint8_t)key, voice_rec_note[key],
-                                                (uint8_t)voice_caps};
+    t->take[t->notes++] = (struct mumble_note){voice_rec_at[who], (uint16_t)len, voice_rec_letter[who],
+                                                voice_rec_note[who], (uint8_t)voice_caps};
     ++voice_lanes_version;
     if (voice_song) voice_song_dirty = 1;
 }
+/* A character stops singing its letter, or starts one (at its own register). */
+static void voice_note_off(unsigned who)
+{
+    if (!voice_sings[who]) return;
+    mumble_release(voice_sings[who] - 1U);
+    voice_rec_release(who);
+    voice_sings[who] = 0;
+}
+static void voice_note_on(unsigned who, unsigned key)
+{
+    const struct mumble_voice *v = &voice_tracks[who].sound;
+    int pitch = clamp(53 + (int)key + 12 * (voice_octave + mumble_register(v)), 0, 127);   /* lowest key is F3 */
+    struct mumble_singer one = {v, (uint8_t)who, (uint8_t)pitch};
+    mumble_press(key, &one, 1, voice_caps);
+    voice_sings[who] = (uint8_t)(key + 1U);
+    voice_sing_order[who] = ++voice_order;
+    if (voice_recording) voice_rec_press(who, key, (unsigned)pitch);
+    voice_sung = key;
+    voice_sung_note = (unsigned)pitch;
+}
 static void voice_release_all(void)
 {
-    for (unsigned key = 0; key < MUMBLE_LETTERS; ++key) {
-        if (voice_held & (1U << key)) mumble_release(key);
-        voice_rec_release(key);
-    }
+    for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_note_off(who);
     voice_held = 0;
 }
 static void voice_rec_stop(void)
 {
-    for (unsigned key = 0; key < MUMBLE_LETTERS; ++key) voice_rec_release(key);
+    for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_rec_release(who);
     voice_recording = 0;
     if (voice_click) { voice_click = 0; mumble_metronome(0, 0); }
 }
@@ -360,34 +387,50 @@ static void voice_take_clear(struct voice_track *t)
     if (voice_song) voice_song_dirty = 1;
 }
 /* PLAY mode: the selected track and the choir sing each pressed key. */
+/* PLAY mode: a key let go frees its singer, who takes up the latest key still
+ * held that nobody sings (one character alone: a mono synth's last note). */
+static void voice_take_up(unsigned who)
+{
+    if (!voice_in_choir(who)) return;
+    unsigned best = MUMBLE_LETTERS;
+    for (unsigned key = 0; key < MUMBLE_LETTERS; ++key) {
+        if (!(voice_held & (1U << key))) continue;
+        unsigned sung = 0;
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i) sung |= voice_sings[i] == key + 1U;
+        if (!sung && (best == MUMBLE_LETTERS || voice_key_order[key] > voice_key_order[best])) best = key;
+    }
+    if (best < MUMBLE_LETTERS) voice_note_on(who, best);
+}
+/* A key pressed goes to a choir member singing nothing (the selected one
+ * first), else to the one singing the oldest letter. */
 static void voice_sing(const struct fm1_controls *c, uint32_t down)
 {
     uint32_t up = voice_held & ~c->keys;
-    for (unsigned key = 0; key < MUMBLE_LETTERS; ++key)
-        if (up & (1U << key)) { mumble_release(key); voice_rec_release(key); }
     voice_held &= c->keys;
+    for (unsigned who = 0; who < MUMBLE_CAST; ++who)
+        if (voice_sings[who] && (up & (1U << (voice_sings[who] - 1U)))) {
+            voice_note_off(who);
+            voice_take_up(who);
+        }
     for (unsigned key = 0; key < MUMBLE_LETTERS; ++key) {
         if (!(down & (1U << key))) continue;
-        struct mumble_singer singers[MUMBLE_CAST];
-        unsigned n = 0;
-        int note = 0;
-        for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
-            /* The selected voice leads. */
+        voice_held |= 1U << key;
+        voice_key_order[key] = ++voice_order;
+        unsigned free = MUMBLE_CAST, oldest = MUMBLE_CAST;
+        for (unsigned i = 0; i < MUMBLE_CAST && free == MUMBLE_CAST; ++i) {
             unsigned who = (voice_cast + i) % MUMBLE_CAST;
             if (!voice_in_choir(who)) continue;
-            const struct mumble_voice *v = &voice_tracks[who].sound;
-            int pitch = clamp(53 + (int)key + 12 * (voice_octave + mumble_register(v)), 0, 127); /* lowest key is F3 */
-            if (!n) note = pitch;
-            singers[n].voice = v;
-            singers[n].track = (uint8_t)who;
-            singers[n].note = (uint8_t)pitch;
-            ++n;
+            if (!voice_sings[who]) free = who;
+            else if (oldest == MUMBLE_CAST || voice_sing_order[who] < voice_sing_order[oldest]) oldest = who;
         }
-        mumble_press(key, singers, n, voice_caps);
-        if (voice_recording) voice_rec_press(key, (unsigned)note);
-        voice_held |= 1U << key;
-        voice_sung = key;
-        voice_sung_note = (unsigned)note;
+        unsigned who = free < MUMBLE_CAST ? free : oldest;
+        voice_note_off(who);
+        voice_note_on(who, key);
+    }
+    /* A choir member free (just joined, say) takes up a key nobody sings. */
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
+        unsigned who = (voice_cast + i) % MUMBLE_CAST;
+        if (!voice_sings[who]) voice_take_up(who);
     }
 }
 

@@ -173,6 +173,12 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "recording")) *got = (int)voice_recording;
     else if (!strcmp(what, "passes")) *got = t->passes;
     else if (!strcmp(what, "metronome")) *got = (int)voice_click;
+    else if (!strcmp(what, "sung")) *got = (int)voice_sung;
+    else if (!strcmp(what, "singing") || !strcmp(what, "takes")) {
+        *got = 0;
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i)
+            *got += what[0] == 's' ? voice_sings[i] != 0 : voice_tracks[i].notes;
+    }
     else return 0;
     return 1;
 }
