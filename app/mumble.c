@@ -272,7 +272,7 @@ CONTROL unsigned mumble_plan(const char *text, unsigned length, const struct mum
  *   the LIVE lane: typing, greetings and sung letters, started at once and
  *     never cutting the song.
  * ---------------------------------------------------------------------- */
-enum { SONG_SYLLABLES = 240, LIVE_SYLLABLES = MUMBLE_CAST * 3 };   /* (counts are uint8_t) */
+enum { SONG_SYLLABLES = 240, LIVE_SYLLABLES = 48 };   /* (counts are uint8_t) */
 struct song {
     uint8_t count, restart;
     uint8_t first[MUMBLE_CAST + 1];      /* track t owns syllables first[t]..first[t+1]-1, in time order */
@@ -305,6 +305,15 @@ struct hum {
 };
 static struct song songs[3];
 static struct live lives[3];
+/* The presses' syllables last put on the live lane, and when (the audio
+ * clock): a new press keeps those not yet started, so chords and quick runs
+ * keep every letter's held syllable. Anything else on the live lane drops them. */
+static struct {
+    uint8_t count;
+    uint32_t origin;
+    struct mumble_syllable syllable[LIVE_SYLLABLES];
+    struct mumble_voice voice[MUMBLE_CAST];
+} pressed;
 static volatile uint8_t song_request, song_ack, live_request, live_ack;
 static volatile uint8_t enabled;
 static volatile uint32_t now_frames;            /* the audio clock */
@@ -340,6 +349,13 @@ static int16_t comb_line[557 + 593 + 641 + 677], allpass_line[277 + 211];
 static unsigned echo_at, comb_at[4], allpass_at[2];
 static float echo_tone, comb_tone[4], wet_last;
 static uint32_t tail_frames;                     /* effect tail still ringing */
+/* The metronome: beats a loop and each beat's frames (set by the control
+ * task), and the click ringing: a damped sine, y = k1 y1 - k2 y2. */
+static volatile uint8_t click_beats;
+static volatile uint32_t click_beat_frames;
+static uint32_t click_left;
+static float click_y1, click_y2, click_k1, click_k2;
+static float click_coef[2][3];                   /* plain, accented: k1, k2, first sample */
 
 CONTROL void mumble_init(void)
 {
@@ -361,11 +377,20 @@ CONTROL void mumble_init(void)
     }
     memset(songs, 0, sizeof songs);
     memset(lives, 0, sizeof lives);
+    pressed.count = 0;
     memset(hums, 0, sizeof hums);
     memset(echo_line, 0, sizeof echo_line);
     memset(comb_line, 0, sizeof comb_line);
     memset(allpass_line, 0, sizeof allpass_line);
     echo_at = 0; echo_tone = wet_last = 0.0f; tail_frames = 0;
+    /* Clicks: 1.5 kHz, accented 2.2 kHz, fading by 60 dB in about 25 ms. */
+    for (unsigned a = 0; a < 2; ++a) {
+        float w = 2.0f * PI * (a ? 2200.0f : 1500.0f) / RATE, r = 0.9937f;
+        click_coef[a][0] = 2.0f * r * cos_approx(w);
+        click_coef[a][1] = r * r;
+        click_coef[a][2] = (a ? 0.16f : 0.10f) * cos_approx(w - 0.5f * PI);   /* amplitude * sin(w) */
+    }
+    click_beats = 0; click_left = 0; click_y1 = click_y2 = 0.0f;
     for (unsigned i = 0; i < 4; ++i) { comb_at[i] = 0; comb_tone[i] = 0.0f; }
     allpass_at[0] = allpass_at[1] = 0;
     song_request = song_ack = live_request = live_ack = 0;
@@ -470,6 +495,15 @@ CONTROL int mumble_say(unsigned track, const char *text, unsigned length, const 
     parts[track] = (struct mumble_part){text, length, voice, 0, 100, NULL, 0};
     return mumble_song(parts, 0, 1, 0);
 }
+CONTROL void mumble_metronome(unsigned beats, uint32_t loop_ms)
+{
+    uint32_t period = ms_frames(loop_ms);
+    if (beats > 64U || !period) beats = 0;
+    click_beats = 0;                                /* (the audio sees no half-set pair) */
+    if (!beats) return;
+    click_beat_frames = period / beats;
+    click_beats = (uint8_t)beats;
+}
 CONTROL void mumble_song_stop(void)
 {
     song_cut = (uint8_t)(song_cut + 1U);
@@ -491,6 +525,7 @@ CONTROL int32_t mumble_song_position(void)
 CONTROL static struct live *live_slot(unsigned *slot)
 {
     *slot = free_index(live_ack, live_request);
+    pressed.count = 0;
     return &lives[*slot];
 }
 CONTROL int mumble_aside(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
@@ -650,13 +685,32 @@ CONTROL static unsigned letter_syllables(unsigned letter, unsigned note, const s
 CONTROL int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout)
 {
     if (letter >= MUMBLE_LETTERS || !singers || !count || count > MUMBLE_CAST) return -1;
+    for (unsigned j = 0; j < count; ++j)
+        if (!singers[j].voice || singers[j].track >= MUMBLE_CAST || singers[j].note > 127U) return -1;
+    /* The earlier presses' syllables still to come, re-timed from now. Not yet
+     * taken by the audio (a chord in one frame): all of them. (Should the audio
+     * take it meanwhile, a first syllable may start twice: harmless.) */
+    uint32_t now = now_frames;
+    unsigned taken = live_ack == live_request, carried = pressed.count;
+    struct mumble_syllable keep[LIVE_SYLLABLES];
+    struct mumble_voice keep_voice[MUMBLE_CAST];
+    memcpy(keep_voice, pressed.voice, sizeof keep_voice);
+    unsigned n = 0;
+    for (unsigned i = 0; i < carried; ++i) {
+        const struct mumble_syllable *y = &pressed.syllable[i];
+        int32_t left = (int32_t)(pressed.origin + (uint32_t)y->ms * (FM1_SAMPLE_RATE / 100U) / 10U - now);
+        if (taken && left <= 0) continue;               /* started already */
+        keep[n] = *y;
+        keep[n].ms = (uint16_t)(left > 0 ? (uint32_t)left * 10U / (FM1_SAMPLE_RATE / 100U) : 0U);
+        ++n;
+    }
     unsigned slot;
     struct live *s = live_slot(&slot);
+    memcpy(s->syllable, keep, n * sizeof keep[0]);
+    for (unsigned i = 0; i < n; ++i) s->voice[keep[i].track] = keep_voice[keep[i].track];
     uint8_t gen = (uint8_t)(held_gen[letter] + 1U);
-    unsigned n = 0;
-    for (unsigned j = 0; j < count; ++j) {
+    for (unsigned j = 0; j < count && n + 3U <= LIVE_SYLLABLES; ++j) {
         const struct mumble_singer *who = &singers[j];
-        if (!who->voice || who->track >= MUMBLE_CAST || who->note > 127U) return -1;
         s->voice[who->track] = *who->voice;
         unsigned got = letter_syllables(letter, who->note, who->voice, shout, s->syllable + n);
         for (unsigned i = 0; i < got; ++i, ++n) {
@@ -666,6 +720,10 @@ CONTROL int mumble_press(unsigned letter, const struct mumble_singer *singers, u
     }
     sort_syllables(s->syllable, n);
     s->count = (uint8_t)n;
+    pressed.count = (uint8_t)n;
+    pressed.origin = now;
+    memcpy(pressed.syllable, s->syllable, n * sizeof s->syllable[0]);
+    memcpy(pressed.voice, s->voice, sizeof pressed.voice);
     held_gen[letter] = gen;
     live_request = (uint8_t)slot;
     return 0;
@@ -984,6 +1042,16 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
     song_tick(&songs[song_ack], now);
     live_tick(&lives[live_ack], now);
     now_frames = now + FM1_BLOCK_FRAMES;
+    /* A beat of the loop in this block: its click starts at that frame. */
+    unsigned click_at = FM1_BLOCK_FRAMES, accent = 0, beats = click_beats;
+    if (beats && song_running && song_period) {
+        uint32_t into = now - song_origin, beat = click_beat_frames;
+        for (unsigned k = 0; k <= beats; ++k) {
+            uint32_t at = k == beats ? song_period : k * beat;
+            if (at >= into && at - into < FM1_BLOCK_FRAMES) { click_at = at - into; accent = (k % 4U) == 0; break; }
+        }
+    }
+    unsigned clicking = click_left || click_at < FM1_BLOCK_FRAMES;
 
     unsigned any = 0;
     for (unsigned v = 0; v < VOICES; ++v) {
@@ -1012,7 +1080,7 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
     if (!any) {
         status_vowel = MUMBLE_VOWELS; status_level = 0;
         for (unsigned t = 0; t < MUMBLE_CAST; ++t) { status_track_vowel[t] = MUMBLE_VOWELS; status_track_level[t] = 0; }
-        if (!tail_frames) return;
+        if (!tail_frames && !clicking) return;
     }
     /* volatile keeps these loops: no libc memset from audio code. */
     volatile float *dry = mix, *echo = echo_send, *room = room_send;
@@ -1051,6 +1119,22 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         mix[i] += 0.5f * (wet_last + wet);
         mix[i + 1] += wet;
         wet_last = wet;
+    }
+    /* The click joins the dry mix. */
+    for (unsigned i = 0; clicking && i < FM1_BLOCK_FRAMES; ++i) {
+        if (i == click_at) {
+            click_k1 = click_coef[accent][0];
+            click_k2 = click_coef[accent][1];
+            click_y2 = 0.0f;
+            click_y1 = click_coef[accent][2];
+            click_left = FM1_SAMPLE_RATE / 40U;     /* 25 ms */
+        }
+        if (!click_left) continue;
+        float y = click_k1 * click_y1 - click_k2 * click_y2;
+        click_y2 = click_y1;
+        click_y1 = y;
+        mix[i] += click_y2;
+        --click_left;
     }
     /* Soft clip (rational tanh), then mix at -2 dB under full scale. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {

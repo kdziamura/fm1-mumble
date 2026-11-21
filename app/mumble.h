@@ -102,6 +102,9 @@ struct mumble_part {
  * Timing is sample-accurate. 0, or -1 invalid. */
 int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t loop_ms, unsigned restart, uint32_t phase_ms);
 void mumble_song_stop(void);
+/* A click on each of beats beats of a loop_ms loop while a looping song runs
+ * (the first of every four accented), to play in time to: beats 0 is off. */
+void mumble_metronome(unsigned beats, uint32_t loop_ms);
 /* Milliseconds into the song (into the current pass when looping), -1 when
  * it is not playing. */
 int32_t mumble_song_position(void);

@@ -150,6 +150,26 @@ int main(int argc, char **argv)
     for (unsigned b = 0; b < 300; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     struct mumble_status chord; mumble_status(&chord);
     CHECK(chord.vowel < MUMBLE_VOWELS, "chord still sounding after 0.9 s");
+    /* Chords of two-syllable letters (A "ay", M "em"): pressed in one frame,
+     * or rolled 30 ms apart, every letter reaches its held syllable. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    for (unsigned roll = 0; roll < 2; ++roll) {
+        struct mumble_singer hero = {&mumble_cast[0].voice, 0, 57}, kid = {&mumble_cast[3].voice, 3, 64},
+                             elder = {&mumble_cast[5].voice, 5, 60};
+        mumble_press(0, &hero, 1, 0);                                        /* A */
+        if (roll) for (unsigned b = 0; b < 10; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+        mumble_press(12, &kid, 1, 0);                                        /* M */
+        if (roll) for (unsigned b = 0; b < 10; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+        mumble_press(8, &elder, 1, 0);                                       /* I */
+        for (unsigned b = 0; b < 300; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 0.87 s */
+        struct mumble_status st; mumble_status(&st);
+        CHECK(st.track_level[0] && st.track_level[3] && st.track_level[5],
+              "a %s chord holds every letter (%u %u %u)", roll ? "rolled" : "one-frame", st.track_level[0],
+              st.track_level[3], st.track_level[5]);
+        mumble_stop();
+        for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    }
     mumble_stop();
     for (unsigned b = 0; b < 100; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     any = 0;
@@ -267,6 +287,36 @@ int main(int argc, char **argv)
     for (unsigned b = 0; b < 100; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 0.29 s later */
     struct mumble_status stopped; mumble_status(&stopped);
     CHECK(held_note.track_level[0] && !stopped.track_level[0], "a stopped song lets its sustained note go");
+
+    /* The metronome: an empty 1 s loop (as recording starts on nothing), four
+     * beats: a click at 0, 250, 500 and 750 ms each pass, the first accented,
+     * quiet between; off, silence. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    memset(parts, 0, sizeof parts);
+    mumble_song(parts, 1000, 1, 0);
+    mumble_metronome(4, 1000);
+    float beat_energy[8] = {0}, between = 0.0f;
+    for (unsigned b = 0; b < 689; ++b) {   /* 2 s */
+        memset(z, 0, sizeof z); mumble_render(z);
+        unsigned ms = b * FM1_BLOCK_FRAMES * 1000U / FM1_SAMPLE_RATE;
+        float e = 0.0f;
+        for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) { float x = z[i] / 8388608.0f; e += x * x; }
+        unsigned beat = (ms + 125U) / 250U, off = ms % 250U, near = off < 125U ? off : 250U - off;
+        if (near < 20U && beat < 8U) beat_energy[beat] += e;
+        else if (near > 60U) between += e;
+    }
+    unsigned beats_heard = 0;
+    for (unsigned k = 0; k < 8; ++k) beats_heard += beat_energy[k] > 1e-3f;
+    CHECK(beats_heard == 8, "the metronome clicks on every beat (%u of 8)", beats_heard);
+    CHECK(between < 1e-4f * beat_energy[1], "the metronome is quiet between beats (%g vs %g)", between, beat_energy[1]);
+    CHECK(beat_energy[0] > 1.5f * beat_energy[1] && beat_energy[4] > 1.5f * beat_energy[5], "the first beat is accented");
+    mumble_metronome(0, 0);
+    mumble_song_stop();
+    for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    any = 0;
+    for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0;
+    CHECK(!any, "the metronome off: silence");
 
     /* Effects: a GHOST echo rings on after the line; BOT's crush is stepped. */
     mumble_stop();
