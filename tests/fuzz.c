@@ -30,7 +30,9 @@
  *       turned no setting changes, TYPE adds exactly the keys' letters, PLAY
  *       holds exactly the letters still down and the new ones, and only SAVE/EDIT+key in SAMPLE touch
  *       a pad; REC in PLAY flips recording (looping, the loop running), and
- *       a take grows only by the recorded letters let go, in key order;
+ *       every character sings one key at a time, the last key pressed at
+ *       once, no key held unsung while a choir member is free; a take grows
+ *       only by what its character sang while recorded;
  *       EDIT undoes the take's last pass (PLAY), else clears the line, else
  *       every line and take; the metronome runs exactly while recording.
  * And once, at start-up, every button combination survives the panel's
@@ -193,7 +195,18 @@ static void check_state(void)
     if (voice_octave < -2 || voice_octave > 2) fail("S1 octave out of -2..2");
     if (voice_held & ~held_keys) fail("S1 a letter held whose key is up");
     if (voice_recording && (!voice_play || !voice_loop)) fail("S1 recording outside PLAY or without the loop");
-    if (voice_rec_held & ~voice_held) fail("S1 a letter being recorded that is not held");
+    uint32_t singing = 0, sung_keys = 0, choir_free = 0;
+    for (unsigned who = 0; who < MUMBLE_CAST; ++who) {
+        if (voice_sings[who] > MUMBLE_LETTERS) fail("S1 a character sings a key that does not exist");
+        if (!voice_sings[who]) { choir_free |= voice_in_choir(who); continue; }
+        uint32_t key = 1u << (voice_sings[who] - 1u);
+        if (!voice_play || !(voice_held & key)) fail("S1 a character sings a key not held in PLAY");
+        if (sung_keys & key) fail("S1 two characters sing one key");
+        sung_keys |= key;
+        singing |= 1u << who;
+    }
+    if (choir_free && (voice_held & ~sung_keys)) fail("S1 a key held unsung while a choir member is free");
+    if (voice_rec_held & ~singing) fail("S1 a character recorded while it sings nothing");
     if (!voice_recording && voice_rec_held) fail("S1 letters being recorded while not recording");
     if (voice_click != (voice_recording ? voice_bars * 4u : 0u)) fail("S1 the metronome not on exactly while recording");
     if (!voice_play && voice_held) fail("S1 letters held outside PLAY");
@@ -244,6 +257,7 @@ static struct {
     unsigned cast, page, caps, loop, play, sample, bars, bpm, demo, song, recording;
     int octave;
     uint32_t pressed, held, key_down, keys, letters, rec_held;
+    uint8_t rec_letter[MUMBLE_CAST];
     int32_t turned[7];
 } before;
 static void step_before(void)
@@ -254,6 +268,7 @@ static void step_before(void)
     before.play = voice_play, before.sample = voice_sample, before.bars = voice_bars, before.bpm = voice_bpm;
     before.demo = voice_demo, before.song = voice_song, before.octave = voice_octave, before.letters = voice_held;
     before.recording = voice_recording, before.rec_held = voice_rec_held;
+    memcpy(before.rec_letter, voice_rec_letter, sizeof before.rec_letter);
     /* As app.c's input() will read them (HOME never reaches the page). */
     before.held = panel_buttons(held_buttons);
     before.pressed = before.held & ~buttons_before & ~BUTTON(HOME);
@@ -345,20 +360,24 @@ static void step_after(void)
             fail("S2 a line changed with nothing pressed or turned");
     }
     /* (A key already down when PLAY began sings once pressed again.) */
-    /* Takes: only the selected one grows, by the recorded letters let go this frame, in key order. */
+    /* Takes: each grows only while its character was being recorded, first by
+     * the letter it was singing (let go, or its singer moved on), and by at
+     * most one more (a letter taken up and moved on from at once). */
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
         const struct voice_track *was = &before.tracks[i], *now = &voice_tracks[i];
-        unsigned want = was->notes;
-        struct mumble_note added[MUMBLE_LETTERS];
-        unsigned n_added = 0;
-        if (i == before.cast && before.play && before.recording)
-            for (unsigned k = 0; k < MUMBLE_LETTERS; ++k)
-                if ((before.rec_held & ~before.keys) & (1u << k)) added[n_added++].letter = (uint8_t)k;
-        for (unsigned k = 0; k < n_added && want < VOICE_TAKE; ++k) ++want;
-        if (now->notes != want || memcmp(now->take, was->take, was->notes * sizeof was->take[0]))
-            fail("S2 a take changed other than by the recorded letters let go");
-        for (unsigned k = was->notes; k < now->notes; ++k)
-            if (now->take[k].letter != added[k - was->notes].letter) fail("S2 a take recorded the wrong letter");
+        unsigned recorded = before.play && before.recording && (before.rec_held & (1u << i));
+        if (now->notes < was->notes || memcmp(now->take, was->take, was->notes * sizeof was->take[0]))
+            fail("S2 a take lost or changed letters with nothing pressed or turned");
+        if (now->notes > was->notes && (!recorded || now->notes > was->notes + 2u))
+            fail("S2 a take grew without its character being recorded");
+        if (now->notes > was->notes && now->take[was->notes].letter != before.rec_letter[i])
+            fail("S2 a take recorded the wrong letter");
+    }
+    /* PLAY: the last key pressed is sung at once. */
+    if (before.play && voice_play && before.key_down) {
+        unsigned last = 31u - (unsigned)__builtin_clz(before.key_down), sung = 0;
+        for (unsigned who = 0; who < MUMBLE_CAST; ++who) sung |= voice_sings[who] == last + 1u;
+        if (!sung) fail("S2 the last key pressed is not sung");
     }
     if (before.play && voice_held != ((before.letters & before.keys) | before.key_down))
         fail("S2 PLAY does not hold exactly the letters still down and the new ones");
