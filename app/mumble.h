@@ -24,6 +24,17 @@
 #else
 #include "fm1.h"
 #endif
+/* FM1_MUMBLE: whether this build has MUMBLE. The browser preview and the host
+ * tests (FM1_HOST_TEST) and MUMBLE's own firmware (MUMBLE_PORT) do. FM1 Open's
+ * device build does not: stock V14 leaves at most 4 KB of the app's flash and
+ * MUMBLE needs about 33 KB, so on the FM-1 it ships as firmware/mumble-fm1. */
+#ifndef FM1_MUMBLE
+#if defined(MUMBLE_PORT) || defined(FM1_HOST_TEST)
+#define FM1_MUMBLE 1
+#else
+#define FM1_MUMBLE 0
+#endif
+#endif
 
 enum { MUMBLE_TEXT = 96, MUMBLE_SYLLABLES = 48, MUMBLE_CAST = 8 };
 enum { MUMBLE_A, MUMBLE_E, MUMBLE_I, MUMBLE_O, MUMBLE_OO, MUMBLE_U, MUMBLE_VOWELS };

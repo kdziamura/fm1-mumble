@@ -4,6 +4,7 @@
 #ifndef MUMBLE_PORT
 #include <string.h>   /* a port header declares memset itself */
 #endif
+#if FM1_MUMBLE   /* (the rest of the file) */
 
 /* Control-task code (text analysis, requests to the audio task) is built
  * for size; the audio path keeps the project's speed settings. */
@@ -1006,3 +1007,4 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         }
     }
 }
+#endif /* FM1_MUMBLE */
