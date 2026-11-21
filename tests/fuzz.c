@@ -31,7 +31,8 @@
  *       holds exactly the letters still down and the new ones, and only SAVE/EDIT+key in SAMPLE touch
  *       a pad; REC in PLAY flips recording (looping, the loop running), and
  *       a take grows only by the recorded letters let go, in key order;
- *       EDIT clears the take (PLAY), else the line, else every line and take.
+ *       EDIT undoes the take's last pass (PLAY), else clears the line, else
+ *       every line and take; the metronome runs exactly while recording.
  * And once, at start-up, every button combination survives the panel's
  * button-order mapping both ways.
  *
@@ -194,6 +195,7 @@ static void check_state(void)
     if (voice_recording && (!voice_play || !voice_loop)) fail("S1 recording outside PLAY or without the loop");
     if (voice_rec_held & ~voice_held) fail("S1 a letter being recorded that is not held");
     if (!voice_recording && voice_rec_held) fail("S1 letters being recorded while not recording");
+    if (voice_click != (voice_recording ? voice_bars * 4u : 0u)) fail("S1 the metronome not on exactly while recording");
     if (!voice_play && voice_held) fail("S1 letters held outside PLAY");
     if (voice_sung > MUMBLE_LETTERS || voice_pad_last > MUMBLE_LETTERS || voice_pad_on > MUMBLE_LETTERS)
         fail("S1 a key index out of range");
@@ -213,6 +215,11 @@ static void check_state(void)
             if (t->take[k].letter >= MUMBLE_LETTERS || t->take[k].note > 127u || t->take[k].len_ms < 30u ||
                 t->take[k].shout > 1u)
                 fail("S1 a take's note out of range");
+        if (t->passes > VOICE_PASSES || !t->notes != !t->passes || (t->passes && t->pass_at[0]))
+            fail("S1 a take's passes do not cover it from its first letter");
+        for (unsigned k = 0; k < t->passes; ++k)
+            if (t->pass_at[k] >= t->notes || (k && t->pass_at[k] <= t->pass_at[k - 1]))
+                fail("S1 a take's passes out of order");
     }
     for (unsigned k = 0; k < MUMBLE_LETTERS; ++k) {
         const struct voice_pad *pad = &voice_pads[k];
@@ -272,7 +279,9 @@ static void step_after(void)
     if (pressed == BUTTON(EDIT) && !turned_any && !before.sample && !before.key_down) {
         const struct voice_track *was = &before.tracks[before.cast], *now = &voice_tracks[before.cast];
         if (before.play && was->notes) {
-            if (now->notes || !same_text(was, now)) fail("S2 EDIT in PLAY did not clear just the take");
+            if (now->passes + 1u != was->passes || now->notes != was->pass_at[was->passes - 1] || !same_text(was, now) ||
+                memcmp(now->take, was->take, now->notes * sizeof now->take[0]))
+                fail("S2 EDIT in PLAY did not undo just the take's last pass");
         } else if (was->length) {
             if (now->length || now->notes != was->notes) fail("S2 EDIT did not clear just the line");
         } else
