@@ -67,12 +67,14 @@ struct mumble_syllable {
     int16_t cents;      /* pitch offset from the voice */
     uint8_t vowel, locus; /* locus: consonant F2 start / 10 Hz, 0 = none */
     uint8_t gain;       /* 64 = unity */
-    uint8_t flags;      /* MUMBLE_SHOUT, MUMBLE_HUM, MUMBLE_HOLD */
+    uint8_t flags;      /* MUMBLE_SHOUT, MUMBLE_HUM, MUMBLE_HOLD, MUMBLE_SUSTAIN */
     uint8_t index;      /* character that starts it; with MUMBLE_HOLD, the letter */
     uint8_t gen;        /* with MUMBLE_HOLD: the press it belongs to */
     uint8_t track;      /* cast member (track) whose voice speaks it */
 };
-enum { MUMBLE_SHOUT = 1, MUMBLE_HUM = 2, MUMBLE_HOLD = 4 };
+/* MUMBLE_HOLD: sustains until its letter is let go (mumble_release);
+ * MUMBLE_SUSTAIN: sustains as a held letter does, for its dur_ms (a recorded note). */
+enum { MUMBLE_SHOUT = 1, MUMBLE_HUM = 2, MUMBLE_HOLD = 4, MUMBLE_SUSTAIN = 8 };
 enum { MUMBLE_LETTERS = 27 }; /* a..z, then a closed hum */
 
 /* Pure text analysis, usable anywhere. open=1 treats the last word as still
@@ -86,9 +88,13 @@ void mumble_init(void);
 
 /* One track's part of a song; length 0 leaves the track silent. start_ms is
  * its offset into the loop, level its volume in percent (100 = as planned). */
+/* A letter sung for len_ms from ms into the part, at MIDI note: a PLAY-mode
+ * take, played back as mumble_press would sing it. */
+struct mumble_note { uint16_t ms, len_ms; uint8_t letter, note, shout; };
 struct mumble_part {
     const char *text; unsigned length; const struct mumble_voice *voice;
     uint16_t start_ms; uint8_t level;
+    const struct mumble_note *notes; unsigned note_count;   /* sung along with the line, in time order or not */
 };
 /* Play every part on one clock: once (loop_ms 0) or looping every loop_ms,
  * cutting a line that outlasts the loop. restart=1 starts the clock phase_ms

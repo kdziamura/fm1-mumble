@@ -17,6 +17,7 @@ loop. A change to MUMBLE shows in the browser preview and in the firmware alike.
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
 | `app/tests/basic.txt` | Host simulator script: typing, a demo line, PLAY, SAMPLE, the LOOP page; screenshots and a WAV |
+| `app/tests/record.txt` | Host simulator script: a take recorded in PLAY mode plays back on the next pass, overdub, EDIT clears it |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
 
@@ -34,6 +35,7 @@ cd firmware/mumble-fm1
 base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python   # pinned, checked downloads into base/.toolchain
 base/.venv/bin/python base/tools/build.py app --host             # the host simulator: any cc, no toolchain
 app/build/host/mumble_host app/tests/basic.txt app/build/host
+app/build/host/mumble_host app/tests/record.txt app/build/host
 base/.venv/bin/python base/tools/build.py app                    # app/build/mumble.fwsc
 ~~~
 

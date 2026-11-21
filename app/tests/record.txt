@@ -1,0 +1,41 @@
+# PLAY mode's REC: the keys played go into the selected character's take on the
+# loop (2 bars at 120 BPM: 4 s), which plays them back pass after pass.
+wait 600
+tap GLO
+expect mode 1
+# REC starts the loop and records; HERO has no line, so only the take sounds.
+tap REC
+expect recording 1
+expect loop 1
+wait 500
+key 0 down
+wait 400
+key 0 up
+wait 50
+expect take 1
+wait 600
+expect sounding 0
+shot record-play.png
+# The next pass: the note sounds again with no key held, then lets go.
+wait 3100
+expect sounding 1
+wait 900
+expect sounding 0
+# Overdub: a second letter on this pass joins the take.
+key 4 down
+wait 200
+key 4 up
+wait 50
+expect take 2
+# REC again stops recording; the take keeps playing.
+tap REC
+expect recording 0
+expect take 2
+turn ALGO 3
+shot record-lanes.png
+wait 3000
+expect take 2
+# EDIT clears the take.
+turn ALGO 1
+tap EDIT
+expect take 0

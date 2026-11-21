@@ -169,6 +169,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
     else if (!strcmp(what, "choir")) *got = t->choir;
     else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;
+    else if (!strcmp(what, "take")) *got = t->notes;
+    else if (!strcmp(what, "recording")) *got = (int)voice_recording;
     else return 0;
     return 1;
 }

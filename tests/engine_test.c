@@ -161,8 +161,8 @@ int main(int argc, char **argv)
 
     /* Choir: two tracks speak together, each with its own voice. */
     struct mumble_part parts[MUMBLE_CAST] = {{0}};
-    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice, 0, 100};
-    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice, 0, 100};
+    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice, 0, 100, NULL, 0};
+    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice, 0, 100, NULL, 0};
     mumble_song(parts, 0, 1, 0);
     unsigned both = 0;
     int32_t last_ms = -1;
@@ -179,8 +179,8 @@ int main(int argc, char **argv)
     mumble_stop();
     for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     memset(parts, 0, sizeof parts);
-    parts[3] = (struct mumble_part){"ha", 2, &mumble_cast[3].voice, 0, 100};
-    parts[1] = (struct mumble_part){"ho", 2, &mumble_cast[1].voice, 500, 100};
+    parts[3] = (struct mumble_part){"ha", 2, &mumble_cast[3].voice, 0, 100, NULL, 0};
+    parts[1] = (struct mumble_part){"ho", 2, &mumble_cast[1].voice, 500, 100, NULL, 0};
     mumble_song(parts, 1000, 1, 0);
     unsigned guard_first = 0, kid_onsets = 0, kid_was = 0, wraps = 0;
     int32_t previous = 0;
@@ -197,6 +197,7 @@ int main(int argc, char **argv)
     CHECK(guard_first >= 500 && guard_first < 560, "a track starts at its offset (%u ms)", guard_first);
     CHECK(kid_onsets == 3, "a looping track repeats every pass (%u onsets in 3 s)", kid_onsets);
     CHECK(wraps == 2 && previous >= 0 && previous < 1000, "the song clock wraps per pass (%u, now %d)", wraps, (int)previous);
+
 
     /* Editing a looping song keeps its phase; the live lane plays over it. */
     int32_t before = mumble_song_position();
@@ -231,6 +232,41 @@ int main(int argc, char **argv)
     CHECK(cut_before.track_level[5] && !cut_after, "a cut live line falls silent within 150 ms");
     CHECK(song_on && mumble_song_position() >= 0, "a cut leaves the song playing");
     mumble_stop();
+
+    /* A take: B held 400 ms from 300 ms, alone in a 1 s loop, three passes. It
+     * starts on time, sustains while it was held and is silent after its release. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    memset(parts, 0, sizeof parts);
+    const struct mumble_note take[1] = {{300, 400, 1, 60, 0}};
+    parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, take, 1};
+    mumble_song(parts, 1000, 1, 0);
+    unsigned take_onsets = 0, take_was = 0, take_first = 0, held_blocks = 0, late_blocks = 0;
+    for (unsigned b = 0; b < 1020; ++b) { /* 2.96 s */
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        unsigned ms = b * FM1_BLOCK_FRAMES * 1000U / FM1_SAMPLE_RATE, in_pass = ms % 1000U;
+        unsigned on = st.track_level[0] != 0;
+        if (on && !take_first) take_first = ms;
+        take_onsets += on && !take_was;
+        take_was = on;
+        if (in_pass >= 400 && in_pass < 680) held_blocks += !on;    /* held: never silent */
+        if (in_pass >= 900 || in_pass < 280) late_blocks += on;     /* after its release, before its start */
+    }
+    CHECK(take_first >= 290 && take_first < 360, "a take's note starts where it was played (%u ms)", take_first);
+    CHECK(take_onsets == 3, "a take plays once a pass (%u onsets in 3 s)", take_onsets);
+    CHECK(!held_blocks, "a take's note sustains for as long as it was held (%u silent blocks)", held_blocks);
+    CHECK(!late_blocks, "a take's note lets go when its key did (%u blocks sounding)", late_blocks);
+    /* Stopping the song lets a sustained note go at once (PLAY, a panic). */
+    const struct mumble_note long_take[1] = {{100, 5000, 14, 60, 0}};
+    parts[0].notes = long_take;
+    mumble_song(parts, 8000, 1, 0);
+    for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 0.58 s: into the note */
+    struct mumble_status held_note; mumble_status(&held_note);
+    mumble_song_stop();
+    for (unsigned b = 0; b < 100; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 0.29 s later */
+    struct mumble_status stopped; mumble_status(&stopped);
+    CHECK(held_note.track_level[0] && !stopped.track_level[0], "a stopped song lets its sustained note go");
 
     /* Effects: a GHOST echo rings on after the line; BOT's crush is stepped. */
     mumble_stop();
