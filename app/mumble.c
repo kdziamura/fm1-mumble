@@ -3,6 +3,14 @@
 #include "mumble.h"
 #include <string.h>
 
+/* Control-task code (text analysis, requests to the audio task) is built
+ * for size; the audio path keeps the project's speed settings. */
+#ifdef __clang__
+#define CONTROL __attribute__((cold, minsize))
+#else
+#define CONTROL __attribute__((cold))
+#endif
+
 #define RATE ((float)FM1_SAMPLE_RATE)
 #define PI 3.14159265f
 
@@ -65,12 +73,12 @@ static inline __attribute__((always_inline)) float smooth(float x)
 /* ------------------------------------------------------------------------
  * Text analysis (control side).
  * ---------------------------------------------------------------------- */
-static uint32_t hash(const char *s, unsigned n, uint32_t h)
+CONTROL static uint32_t hash(const char *s, unsigned n, uint32_t h)
 {
     for (unsigned i = 0; i < n; ++i) h = (h ^ (uint8_t)s[i]) * 16777619U;
     return h;
 }
-static float random_unit(uint32_t *state) /* [-1, 1) */
+CONTROL static float random_unit(uint32_t *state) /* [-1, 1) */
 {
     uint32_t t = (*state += 0x6d2b79f5U);
     t = (t ^ (t >> 15)) * (t | 1U);
@@ -78,20 +86,20 @@ static float random_unit(uint32_t *state) /* [-1, 1) */
     t ^= t >> 14;
     return (float)(t >> 8) * (2.0f / 16777216.0f) - 1.0f;
 }
-static char lower(char c) { return c >= 'A' && c <= 'Z' ? (char)(c + 32) : c; }
-static int is_letter(char c) { c = lower(c); return c >= 'a' && c <= 'z'; }
-static int is_plain_vowel(char c)
+CONTROL static char lower(char c) { return c >= 'A' && c <= 'Z' ? (char)(c + 32) : c; }
+CONTROL static int is_letter(char c) { c = lower(c); return c >= 'a' && c <= 'z'; }
+CONTROL static int is_plain_vowel(char c)
 {
     c = lower(c);
     return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
 }
 /* y is a vowel after a consonant ("happy", "my"), not at a word start ("yes"). */
-static int vowel_at(const char *w, unsigned i)
+CONTROL static int vowel_at(const char *w, unsigned i)
 {
     if (is_plain_vowel(w[i])) return 1;
     return lower(w[i]) == 'y' && i > 0 && !is_plain_vowel(w[i - 1]);
 }
-static uint8_t vowel_of(const char *g, unsigned n)
+CONTROL static uint8_t vowel_of(const char *g, unsigned n)
 {
     char a = lower(g[0]), b = n > 1 ? lower(g[1]) : 0;
     if (a == 'o' && (b == 'o' || b == 'u')) return MUMBLE_OO;
@@ -108,7 +116,7 @@ static uint8_t vowel_of(const char *g, unsigned n)
     }
 }
 /* Where F2 starts when a consonant leads into the vowel, in 10 Hz units. */
-static uint8_t locus_of(char c)
+CONTROL static uint8_t locus_of(char c)
 {
     switch (lower(c)) {
     case 'b': case 'p': case 'm': case 'f': case 'v': case 'w': return 85;
@@ -118,7 +126,7 @@ static uint8_t locus_of(char c)
     default: return 0;
     }
 }
-static unsigned pause_of(char c)
+CONTROL static unsigned pause_of(char c)
 {
     switch (c) {
     case ',': case ';': case ':': return 3;
@@ -127,13 +135,13 @@ static unsigned pause_of(char c)
     default: return 1;
     }
 }
-static int ends_phrase(char c)
+CONTROL static int ends_phrase(char c)
 {
     return c == ',' || c == ';' || c == ':' || c == '.' || c == '?' || c == '!' || c == '\n';
 }
-static float voice_unit(const struct mumble_voice *v, unsigned p) { return (float)v->value[p] * 0.01f; }
+CONTROL static float voice_unit(const struct mumble_voice *v, unsigned p) { return (float)v->value[p] * 0.01f; }
 
-unsigned mumble_plan(const char *text, unsigned length, const struct mumble_voice *voice,
+CONTROL unsigned mumble_plan(const char *text, unsigned length, const struct mumble_voice *voice,
                      unsigned open, struct mumble_syllable *out, unsigned capacity,
                      uint16_t *char_ms, uint16_t *end_ms)
 {
@@ -327,7 +335,7 @@ static unsigned echo_at, comb_at[4], allpass_at[2];
 static float echo_tone, comb_tone[4], wet_last;
 static uint32_t tail_frames;                     /* effect tail still ringing */
 
-void mumble_init(void)
+CONTROL void mumble_init(void)
 {
     /* Rosenberg glottal pulse: opening 40%, closing 16% of the period.
      * slope is d(flow)/d(phase), i.e. what leaves the lips per period. */
@@ -359,16 +367,16 @@ void mumble_init(void)
     enabled = 1;
 }
 
-static unsigned free_index(unsigned ack, unsigned request)
+CONTROL static unsigned free_index(unsigned ack, unsigned request)
 {
     for (unsigned i = 0; i < 3; ++i)
         if (i != ack && i != request) return i;
     return (ack + 1U) % 3U;
 }
-static uint32_t ms_frames(uint32_t ms) { return (uint32_t)((uint64_t)ms * FM1_SAMPLE_RATE / 1000U); }
+CONTROL static uint32_t ms_frames(uint32_t ms) { return (uint32_t)((uint64_t)ms * FM1_SAMPLE_RATE / 1000U); }
 
 /* Stable insertion sort by start time: audio walks syllables in order. */
-static void sort_syllables(struct mumble_syllable *s, unsigned n)
+CONTROL static void sort_syllables(struct mumble_syllable *s, unsigned n)
 {
     for (unsigned i = 1; i < n; ++i) {
         struct mumble_syllable x = s[i];
@@ -378,7 +386,7 @@ static void sort_syllables(struct mumble_syllable *s, unsigned n)
     }
 }
 
-int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t loop_ms, unsigned restart, uint32_t phase_ms)
+CONTROL int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t loop_ms, unsigned restart, uint32_t phase_ms)
 {
     if (!parts) return -1;
     unsigned slot = free_index(song_ack, song_request);
@@ -414,7 +422,7 @@ int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t loop_ms, u
     song_request = (uint8_t)slot;
     return 0;
 }
-int mumble_say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
+CONTROL int mumble_say(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
 {
     if (!text || !voice || track >= MUMBLE_CAST) return -1;
     struct mumble_part parts[MUMBLE_CAST];
@@ -422,7 +430,7 @@ int mumble_say(unsigned track, const char *text, unsigned length, const struct m
     parts[track] = (struct mumble_part){text, length, voice, 0, 100};
     return mumble_song(parts, 0, 1, 0);
 }
-void mumble_song_stop(void)
+CONTROL void mumble_song_stop(void)
 {
     unsigned slot = free_index(song_ack, song_request);
     songs[slot].count = 0;
@@ -431,7 +439,7 @@ void mumble_song_stop(void)
     for (unsigned t = 0; t <= MUMBLE_CAST; ++t) songs[slot].first[t] = 0;
     song_request = (uint8_t)slot;
 }
-int32_t mumble_song_position(void)
+CONTROL int32_t mumble_song_position(void)
 {
     if (!song_running) return -1;
     uint32_t frames = now_frames - song_origin, period = song_period;
@@ -439,12 +447,12 @@ int32_t mumble_song_position(void)
     return (int32_t)((uint64_t)frames * 1000U / FM1_SAMPLE_RATE);
 }
 
-static struct live *live_slot(unsigned *slot)
+CONTROL static struct live *live_slot(unsigned *slot)
 {
     *slot = free_index(live_ack, live_request);
     return &lives[*slot];
 }
-int mumble_aside(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
+CONTROL int mumble_aside(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
 {
     if (!text || !voice || track >= MUMBLE_CAST) return -1;
     unsigned slot;
@@ -457,7 +465,7 @@ int mumble_aside(unsigned track, const char *text, unsigned length, const struct
     return 0;
 }
 
-int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
+CONTROL int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice)
 {
     if (!text || !voice || !length || track >= MUMBLE_CAST) return -1;
     if (length > MUMBLE_TEXT) { text += length - MUMBLE_TEXT; length = MUMBLE_TEXT; }
@@ -494,7 +502,7 @@ int mumble_type(unsigned track, const char *text, unsigned length, const struct 
     return 1;
 }
 
-void mumble_cut(void)
+CONTROL void mumble_cut(void)
 {
     unsigned slot;
     struct live *s = live_slot(&slot);
@@ -503,7 +511,7 @@ void mumble_cut(void)
     live_cut = (uint8_t)(live_cut + 1U);
 }
 
-void mumble_stop(void)
+CONTROL void mumble_stop(void)
 {
     mumble_song_stop();
     unsigned slot;
@@ -553,7 +561,7 @@ static const uint8_t letter_sound[MUMBLE_LETTERS][3][3] = {
 };
 
 /* Cents of hz above A4. Linear within a semitone: under a cent of error. */
-static int cents_from_a4(float hz)
+CONTROL static int cents_from_a4(float hz)
 {
     const float up = 1.0594631f;
     float f = 440.0f;
@@ -564,14 +572,14 @@ static int cents_from_a4(float hz)
     return c + (int)(100.0f * (hz - f) / (f * up - f) + 0.5f);
 }
 
-int mumble_register(const struct mumble_voice *voice)
+CONTROL int mumble_register(const struct mumble_voice *voice)
 {
     if (!voice) return 0;
     int from_f4 = cents_from_a4((float)voice->value[MUMBLE_PITCH]) + 400; /* F4 is 400 cents under A4 */
     return from_f4 >= 0 ? (from_f4 + 600) / 1200 : -((-from_f4 + 600) / 1200);
 }
 
-int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout)
+CONTROL int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout)
 {
     if (letter >= MUMBLE_LETTERS || !singers || !count || count > MUMBLE_CAST) return -1;
     unsigned slot;
@@ -609,12 +617,12 @@ int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned 
     return 0;
 }
 
-void mumble_release(unsigned letter)
+CONTROL void mumble_release(unsigned letter)
 {
     if (letter < MUMBLE_LETTERS) held_gen[letter] = (uint8_t)(held_gen[letter] + 1U);
 }
 
-void mumble_status(struct mumble_status *status)
+CONTROL void mumble_status(struct mumble_status *status)
 {
     if (!status) return;
     status->song_ms = mumble_song_position();
