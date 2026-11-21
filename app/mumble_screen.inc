@@ -769,7 +769,9 @@ static void voice_lines_draw(void)
     for (unsigned r = 0; r < VOICE_ROWS; ++r) {
         unsigned y = 128U + r * 19U;
         unsigned cursor_col = r + 1U == used ? (unsigned)strlen(rows[r]) : ~0U;
-        uint32_t sig = signature(cursor_on | (shown == 0) << 1 | (voice_talking << 2) | (voice_cast << 3),
+        /* (The placeholder, with nothing shown yet, says whether there is a line.) */
+        uint32_t sig = signature(cursor_on | (shown == 0) << 1 | (voice_talking << 2) | (t->length != 0) << 3 |
+                                     (voice_cast << 4),
                                  rows[r], VOICE_COLUMNS) ^ cursor_col;
         if (cache->voice_cache[3 + r] == sig) continue;
         cache->voice_cache[3 + r] = sig;
