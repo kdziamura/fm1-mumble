@@ -54,8 +54,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends libclang-rt-18-dev
           CC=clang-18 tests/fuzz.sh --replay tests/fuzz-seeds/*
           # (libFuzzer's line a new input goes to the log, attached below; the step shows the end)
+          # (a failure: shrunk, and printed as the panel actions that make it)
           CC=clang-18 tests/fuzz.sh -max_total_time=120 -print_final_stats=1 > app/build/fuzz/fuzz.log 2>&1 \
-            || { tail -n 60 app/build/fuzz/fuzz.log; exit 1; }
+            || { tail -n 30 app/build/fuzz/fuzz.log
+                 for f in app/build/fuzz/crashes/*; do CC=clang-18 tests/fuzz.sh --minimize "$f"; break; done
+                 exit 1; }
           grep -E '^(stat::|Done )' app/build/fuzz/fuzz.log
           CC=clang-18 tests/fuzz.sh --replay
 

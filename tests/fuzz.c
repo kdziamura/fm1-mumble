@@ -33,7 +33,7 @@
  *       every character sings one key at a time, the last key pressed at
  *       once, no key held unsung while a choir member is free; a take grows
  *       only by what its character sang while recorded; LINE mode's queue
- *       moves on a syllable a key pressed, round the line;
+ *       moves on only with a key pressed after the leading one was let go;
  *       EDIT undoes the take's last pass (PLAY), else clears the line, else
  *       every line and take; the metronome runs exactly while recording.
  * And once, at start-up, every button combination survives the panel's
@@ -42,6 +42,7 @@
  *   tests/fuzz.sh [libFuzzer options]     e.g. -max_total_time=600 -jobs=8
  */
 #define PLAT_HOST 1
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -192,6 +193,9 @@ static void check_state(void)
     if (voice_lyric && !voice_play) fail("S1 LINE mode outside PLAY");
     if (voice_lyric_count > MUMBLE_SYLLABLES || (voice_lyric && voice_lyric_at >= (voice_lyric_count ? voice_lyric_count : 1u)))
         fail("S1 LINE mode's next syllable out of its line");
+    if (voice_lyric_started > 1 ||
+        (voice_lyric_lead != MUMBLE_LETTERS && (voice_lyric_lead > MUMBLE_LETTERS || !voice_lyric || !(voice_held & (1u << voice_lyric_lead)))))
+        fail("S1 LINE mode's leading key is not a key held in LINE mode");
     if (voice_song > 2) fail("S1 song state out of range");
     if (voice_demo >= VOICE_LINES) fail("S1 demo line out of range");
     if (voice_bars != 1 && voice_bars != 2 && voice_bars != 4 && voice_bars != 8) fail("S1 bars not 1, 2, 4 or 8");
@@ -260,6 +264,7 @@ static struct {
     struct voice_track tracks[MUMBLE_CAST];
     struct voice_pad pads[MUMBLE_LETTERS];
     unsigned cast, page, caps, loop, play, sample, bars, bpm, demo, song, recording, lyric, lyric_at, lyric_count;
+    unsigned lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
     uint32_t pressed, held, key_down, keys, letters, rec_held;
@@ -276,6 +281,7 @@ static void step_before(void)
     before.recording = voice_recording, before.rec_held = voice_rec_held;
     before.lyric = voice_lyric, before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count;
     before.lyric_sig = voice_lyric_sig;
+    before.lyric_started = voice_lyric_started, before.lyric_lead = voice_lyric_lead;
     memcpy(before.rec_letter, voice_rec_letter, sizeof before.rec_letter);
     /* As app.c's input() will read them (HOME never reaches the page). */
     before.held = panel_buttons(held_buttons);
@@ -299,6 +305,9 @@ static void step_after(void)
         if (before.play && voice_recording != !before.recording) fail("S2 REC in PLAY did not flip recording");
         if (before.play && voice_recording && (!voice_loop || !voice_song)) fail("S2 recording without the loop running");
     }
+    if (pressed == BUTTON(FX) && !turned_any && !before.key_down && before.lyric &&
+        (voice_lyric_at || voice_lyric_started || voice_lyric_lead != MUMBLE_LETTERS))
+        fail("S2 FX in LINE mode did not go back to the line's start");
     if (pressed == BUTTON(EDIT) && !turned_any && !before.sample && !before.key_down) {
         const struct voice_track *was = &before.tracks[before.cast], *now = &voice_tracks[before.cast];
         if (before.play && was->notes) {
@@ -385,10 +394,21 @@ static void step_after(void)
         for (unsigned k = was->notes; k < now->notes; ++k)
             if (now->take[k].syllable != before.lyric) fail("S2 a take recorded a syllable as a letter, or back");
     }
-    /* LINE: one shared queue, a syllable a key pressed, round the line. */
-    if (before.lyric && voice_lyric && before.lyric_count && voice_lyric_sig == before.lyric_sig &&
-        voice_lyric_at != (before.lyric_at + (unsigned)__builtin_popcount(before.key_down)) % before.lyric_count)
-        fail("S2 LINE mode's queue did not move on by the keys pressed");
+    /* LINE: one shared queue. The leading key let go, the first key pressed
+     * after moves on a syllable (but the very first) and leads it; keys
+     * pressed while it is held sing its syllable. */
+    if (before.lyric && voice_lyric && voice_lyric_sig == before.lyric_sig) {
+        unsigned at = before.lyric_at, started = before.lyric_started, lead = before.lyric_lead;
+        uint32_t still = before.letters & before.keys;
+        if (lead < MUMBLE_LETTERS && !(still & (1u << lead))) lead = MUMBLE_LETTERS;
+        for (unsigned k = 0; k < MUMBLE_LETTERS; ++k) {
+            if (!(before.key_down & (1u << k)) || lead < MUMBLE_LETTERS) continue;
+            if (started && before.lyric_count) at = (at + 1u) % before.lyric_count;
+            started = 1, lead = k;
+        }
+        if (voice_lyric_at != at || voice_lyric_lead != lead || voice_lyric_started != started)
+            fail("S2 LINE mode's queue did not follow its leading key");
+    }
     /* PLAY: the last key pressed is sung at once. */
     if (before.play && voice_play && before.key_down) {
         unsigned last = 31u - (unsigned)__builtin_clz(before.key_down), sung = 0;
@@ -497,6 +517,25 @@ static void boot(void)
     frame();
 }
 
+/* MUMBLE_FUZZ_EXPLAIN=1: each op printed as the panel action it is, with the
+ * time it happens (tests/fuzz.sh --explain / --minimize). */
+static int explaining = -1;
+static const char *const button_names[NB] = {"FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ",
+                                             "PLAY", "REC", "OCT-", "OCT+"};
+static const char *const encoder_names[7] = {"SELECT", "ALGO", "PRESET", "K1", "K2", "K3", "K4"};
+static void explain(const char *format, ...) __attribute__((format(printf, 1, 2)));
+static void explain(const char *format, ...)
+{
+    if (explaining < 0) explaining = getenv("MUMBLE_FUZZ_EXPLAIN") != NULL;
+    if (!explaining) return;
+    va_list list;
+    va_start(list, format);
+    fprintf(stderr, "%6u ms  ", now_ms);
+    vfprintf(stderr, format, list);
+    fputc('\n', stderr);
+    va_end(list);
+}
+
 /* The input: ops of one byte and their arguments. */
 static uint32_t play(const uint8_t *data, size_t size)
 {
@@ -511,32 +550,40 @@ static uint32_t play(const uint8_t *data, size_t size)
         switch (op % 10) {
         case 0: case 1: /* a button held or let go (the FM-1's B_* order) */
             held_buttons ^= 1u << (arg % NB);
+            explain("%s %s", held_buttons & (1u << (arg % NB)) ? "press" : "release", button_names[arg % NB]);
             break;
         case 2: case 3: /* a key */
             held_keys ^= 1u << (arg % NKEYS);
+            explain("key %u (%c) %s", arg % NKEYS, arg % NKEYS < 26 ? 'a' + (int)(arg % NKEYS) : '_',
+                    held_keys & (1u << (arg % NKEYS)) ? "down" : "up");
             break;
         case 4: { /* an encoder, a few detents either way */
             unsigned enc = arg % 7;
             int amount = (int)(int8_t)NEXT();
-            turned[enc] += amount / 16;
-            if (!(amount / 16)) turned[enc] += amount < 0 ? -1 : 1;
+            int detents = amount / 16 ? amount / 16 : amount < 0 ? -1 : 1;
+            turned[enc] += detents;
+            explain("turn %s %+d", encoder_names[enc], detents);
             break;
         }
         case 5: case 6: { /* time passes */
             unsigned n = 1 + arg % 48;
+            explain("wait %u frames (%u ms)", n, 16u * n);
             for (unsigned i = 0; i < n; ++i) frame();
             frames += n;
             break;
         }
         case 7: /* MASTER */
             master_q12 = arg * 17u;
+            explain("MASTER %u of 4335", master_q12);
             break;
         case 8: /* everything let go */
             held_buttons = held_keys = 0;
+            explain("let go of everything");
             frame();
             ++frames;
             break;
         case 9: /* the screen checked against a full repaint now */
+            explain(arg & 1 ? "check the screen against a full repaint" : "(a frame)");
             if (arg & 1) check_repaint();
             else frame(), ++frames;
             break;
@@ -546,6 +593,7 @@ static uint32_t play(const uint8_t *data, size_t size)
     }
 #undef NEXT
     phase = "end";
+    explain("end: let go of everything, 8 frames, check the screen%s", size && data[0] & 1 ? ", then a panic" : "");
     held_buttons = held_keys = 0;
     for (unsigned i = 0; i < 8; ++i) frame();
     check_repaint();
@@ -588,6 +636,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (++runs > 1 && FUZZ_ONE_INPUT) fail("FUZZ_ASAN_GLOBALS runs one input a process (tests/fuzz.sh replays)");
     uint32_t first = play(data, size);
     /* Every 16th input again from a fresh boot: the same performance plays the same. */
+    int was = explaining;
+    explaining = 0;                             /* (the replay plays quietly) */
     if (!FUZZ_ONE_INPUT && size && !(data[0] & 0xF0) && play(data, size) != first) fail("P7 the same input played differently");
+    explaining = was;
     return 0;
 }

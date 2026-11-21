@@ -54,11 +54,15 @@ model of the controls (S2: REC flips the loop, GLO steps the mode, SELECT and AL
 its parameter by the accelerated amount, typing adds exactly the keys' letters, only SAVE/EDIT+key touch a pad, and
 with nothing pressed or turned no setting changes). Putting the state back needs the app's globals in
 sections of their own, which ASan does not guard, so `tests/fuzz.sh --replay` also runs each seed and corpus input
-alone in a build whose globals it does guard. CI runs the seeds, two minutes of fuzzing and that replay.
+alone in a build whose globals it does guard. CI runs the seeds, two minutes of fuzzing and that replay; a failure there is shrunk and printed as the panel
+actions that make it.
 
 ~~~sh
 tests/fuzz.sh -max_total_time=600 -jobs=8       # clang with libFuzzer; corpus and crashes in app/build/fuzz/
 tests/fuzz.sh --replay                           # the seeds and the corpus, ASan on the globals too
+tests/fuzz.sh --minimize app/build/fuzz/crashes/crash-…   # a failure shrunk (libFuzzer's minimizer), then explained
+tests/fuzz.sh --explain FILE                     # an input as the panel actions it plays: "48 ms  press GLO" …
+tests/fuzz.sh --merge                            # the corpus shrunk to the fewest inputs with the same coverage
 ~~~
 
 ## Install
