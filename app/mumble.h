@@ -26,8 +26,8 @@
 #endif
 /* FM1_MUMBLE: whether this build has MUMBLE. The browser preview and the host
  * tests (FM1_HOST_TEST) and MUMBLE's own firmware (MUMBLE_PORT) do. FM1 Open's
- * device build does not: stock V14 leaves at most 4 KB of the app's flash and
- * MUMBLE needs about 33 KB, so on the FM-1 it ships as firmware/mumble-fm1. */
+ * device build does not: without it the app image is 345 bytes under its
+ * limit, with it 30,543 over, so on the FM-1 it ships as firmware/mumble-fm1. */
 #ifndef FM1_MUMBLE
 #if defined(MUMBLE_PORT) || defined(FM1_HOST_TEST)
 #define FM1_MUMBLE 1
