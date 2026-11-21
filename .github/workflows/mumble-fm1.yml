@@ -47,12 +47,12 @@ jobs:
           python3 base/tools/build.py app --host
           app/build/host/mumble_host app/tests/basic.txt app/build/host
 
-      - name: Fuzz (the seeds, then two minutes; tests/fuzz.c)
+      - name: Fuzz (the seeds, two minutes, the corpus with ASan on globals; tests/fuzz.c)
         run: |
           sudo apt-get install -y --no-install-recommends libclang-rt-18-dev
-          CC=clang-18 FUZZ_BUILD_ONLY=1 tests/fuzz.sh
-          app/build/fuzz/mumble-fuzz tests/fuzz-seeds/*
+          CC=clang-18 tests/fuzz.sh --replay tests/fuzz-seeds/*
           CC=clang-18 tests/fuzz.sh -max_total_time=120 -print_final_stats=1
+          CC=clang-18 tests/fuzz.sh --replay
 
       - name: Firmware
         run: |

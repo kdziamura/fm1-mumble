@@ -77,11 +77,17 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 }
 
 /* --------------------------------------------- the app, as built --- */
-/* Its state (and the engine's, fuzz_engine.c) in one section, kept as it was
- * before the first boot and put back for every input. */
+/* Its state (and the engine's, fuzz_engine.c) in its own sections, kept as it
+ * was before the first boot and put back for every input. ASan does not
+ * guard globals in sections of their own, so FUZZ_ASAN_GLOBALS builds without
+ * them: every global guarded, nothing put back (one input a run: tests/fuzz.sh
+ * replays the corpus that way). */
 #include "app.h"
+#ifndef FUZZ_ASAN_GLOBALS
 #pragma clang section bss = "mumble_bss" data = "mumble_data"
+#endif
 #include "../app/app.c"
+#ifndef FUZZ_ASAN_GLOBALS
 #pragma clang section bss = "" data = ""
 extern char __start_mumble_bss[], __stop_mumble_bss[], __start_mumble_data[], __stop_mumble_data[];
 static char *pristine_bss, *pristine_data;
@@ -96,7 +102,13 @@ static int in_state(const void *p)
     const char *c = p;
     return (c >= __start_mumble_bss && c < __stop_mumble_bss) || (c >= __start_mumble_data && c < __stop_mumble_data);
 }
+#endif
 
+#ifdef FUZZ_ASAN_GLOBALS
+#define FUZZ_ONE_INPUT 1
+#else
+#define FUZZ_ONE_INPUT 0
+#endif
 static int inside_band_buffers(const uint16_t *px, uint32_t n)
 {
     for (unsigned b = 0; b < 2; ++b)
@@ -201,8 +213,10 @@ static void check_panic(void)
 static void boot(void)
 {
     phase = "boot";
+#ifndef FUZZ_ASAN_GLOBALS
     state_copy(__start_mumble_bss, pristine_bss, bss_size());
     state_copy(__start_mumble_data, pristine_data, data_size());
+#endif
     memset(fb, 0, sizeof fb);
     in_flight = NULL;
     now_ms = 0, held_buttons = held_keys = lit_buttons = lit_keys = 0;
@@ -284,6 +298,7 @@ static void check_button_order(void)
 int LLVMFuzzerInitialize(int *argc, char ***argv)
 {
     (void)argc, (void)argv;
+#ifndef FUZZ_ASAN_GLOBALS
     if (!bss_size() || !data_size()) fail("the app's state sections are empty");
     pristine_bss = malloc(bss_size());
     pristine_data = malloc(data_size());
@@ -292,14 +307,17 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
     /* The sections must hold the page's state and the engine's, static locals too. */
     if (!in_state(&voice_cast) || !in_state(&paint_left) || !in_state(&controls))
         fail("the app's state is not all in its sections");
+#endif
     check_button_order();
     return 0;
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
+    static unsigned runs;
+    if (++runs > 1 && FUZZ_ONE_INPUT) fail("FUZZ_ASAN_GLOBALS runs one input a process (tests/fuzz.sh replays)");
     uint32_t first = play(data, size);
     /* Every 16th input again from a fresh boot: the same performance plays the same. */
-    if (size && !(data[0] & 0xF0) && play(data, size) != first) fail("P7 the same input played differently");
+    if (!FUZZ_ONE_INPUT && size && !(data[0] & 0xF0) && play(data, size) != first) fail("P7 the same input played differently");
     return 0;
 }
