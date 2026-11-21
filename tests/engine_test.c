@@ -49,14 +49,53 @@ static void write_wav(const char *path, const float *x, unsigned n)
 
 int main(int argc, char **argv)
 {
-    vowels("Sister", "EE EH");
+    vowels("Sister", "IH ER");
     vowels("Agnes", "AH EH");
     vowels("moon", "OO");
-    vowels("make", "AH");   /* silent final e */
-    vowels("the", "EH");
+    vowels("make", "EH");   /* silent final e: AY, EH gliding to EE */
+    vowels("the", "UH");
     vowels("yes", "EH");    /* word-initial y is a consonant */
     vowels("happy", "AH EE");
     vowels("hmm", "UH");    /* no vowel: one closed hum */
+
+    /* Each word's first syllable: its vowel, the vowel it glides to, its
+     * consonant's noise and its ending. */
+    static const struct { const char *word; uint8_t vowel, glide, onset, coda; } words[] = {
+        {"hey", MUMBLE_E, MUMBLE_I, MUMBLE_NOISE_BREATH, MUMBLE_CODA_NONE},
+        {"day", MUMBLE_E, MUMBLE_I, MUMBLE_NOISE_BURST | MUMBLE_NOISE_VOICED, MUMBLE_CODA_NONE},
+        {"my", MUMBLE_A, MUMBLE_I, MUMBLE_NOISE_NONE, MUMBLE_CODA_NONE},
+        {"go", MUMBLE_O, MUMBLE_OO, MUMBLE_NOISE_BURST | MUMBLE_NOISE_VOICED, MUMBLE_CODA_NONE},
+        {"now", MUMBLE_A, MUMBLE_OO, MUMBLE_NOISE_NONE, MUMBLE_CODA_NONE},
+        {"boy", MUMBLE_O, MUMBLE_I, MUMBLE_NOISE_BURST | MUMBLE_NOISE_VOICED, MUMBLE_CODA_NONE},
+        {"book", MUMBLE_UU, MUMBLE_VOWELS, MUMBLE_NOISE_BURST | MUMBLE_NOISE_VOICED, MUMBLE_CODA_STOP},
+        {"her", MUMBLE_ER, MUMBLE_VOWELS, MUMBLE_NOISE_BREATH, MUMBLE_CODA_R},
+        {"sit", MUMBLE_IH, MUMBLE_VOWELS, MUMBLE_NOISE_HISS, MUMBLE_CODA_STOP},
+        {"site", MUMBLE_A, MUMBLE_I, MUMBLE_NOISE_HISS, MUMBLE_CODA_STOP},
+        {"come", MUMBLE_U, MUMBLE_VOWELS, MUMBLE_NOISE_BURST, MUMBLE_CODA_NASAL},
+        {"dogs", MUMBLE_O, MUMBLE_VOWELS, MUMBLE_NOISE_BURST | MUMBLE_NOISE_VOICED, MUMBLE_CODA_HISS},
+        {"here", MUMBLE_I, MUMBLE_ER, MUMBLE_NOISE_BREATH, MUMBLE_CODA_R},
+        {"sing", MUMBLE_IH, MUMBLE_VOWELS, MUMBLE_NOISE_HISS, MUMBLE_CODA_NASAL},
+        {"street", MUMBLE_I, MUMBLE_VOWELS, MUMBLE_NOISE_HISS, MUMBLE_CODA_STOP},
+        {"tea", MUMBLE_I, MUMBLE_VOWELS, MUMBLE_NOISE_BURST, MUMBLE_CODA_NONE},
+        {"key", MUMBLE_I, MUMBLE_VOWELS, MUMBLE_NOISE_BURST, MUMBLE_CODA_NONE},
+        {"she", MUMBLE_I, MUMBLE_VOWELS, MUMBLE_NOISE_HISS, MUMBLE_CODA_NONE}};
+    for (unsigned w = 0; w < sizeof words / sizeof words[0]; ++w) {
+        struct mumble_syllable y[MUMBLE_SYLLABLES];
+        unsigned got = plan(words[w].word, 0, y);
+        CHECK(got >= 1 && y[0].vowel == words[w].vowel && y[0].glide == words[w].glide && y[0].onset == words[w].onset &&
+                  y[got - 1].coda == words[w].coda,
+              "%s: vowel %u glide %u onset %u coda %u (expected %u %u %u %u)", words[w].word, y[0].vowel, y[0].glide,
+              y[0].onset, y[got - 1].coda, words[w].vowel, words[w].glide, words[w].onset, words[w].coda);
+    }
+    /* Where the consonants sit: t high, s high, sh lower, k in the middle. */
+    {
+        struct mumble_syllable y[MUMBLE_SYLLABLES];
+        plan("tea", 0, y); unsigned t_hz = y[0].onset_hz;
+        plan("sea", 0, y); unsigned s_hz = y[0].onset_hz;
+        plan("she", 0, y); unsigned sh_hz = y[0].onset_hz;
+        plan("key", 0, y); unsigned k_hz = y[0].onset_hz;
+        CHECK(s_hz > sh_hz && t_hz > k_hz && s_hz > k_hz, "consonant places: s %u sh %u t %u k %u", s_hz, sh_hz, t_hz, k_hz);
+    }
 
     struct mumble_syllable s[MUMBLE_SYLLABLES];
     const char *line = "Well, hello there! Have you seen Sister Agnes? She went... somewhere.";
@@ -129,7 +168,7 @@ int main(int argc, char **argv)
     for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     float window[3] = {0};
     const unsigned spans[3][2] = {{430, 470}, {1030, 1070}, {1400, 1440}}; /* blocks: 1.25 s held, 3 s held, after release */
-    struct mumble_singer solo = {&mumble_cast[0].voice, 0, 53};
+    struct mumble_singer solo = {&mumble_cast[0].voice, 0, 53, 0};
     mumble_press(1, &solo, 1, 0); /* b at F3 */
     for (unsigned b = 0; b < 1440; ++b) {
         if (b == 1100) mumble_release(1);
@@ -144,7 +183,7 @@ int main(int argc, char **argv)
     CHECK(window[2] < 2.5e-4f * window[1], "released letter falls silent (only a faint room tail)");
     const unsigned triad[3] = {60, 64, 67};
     for (unsigned k = 0; k < 3; ++k) {
-        struct mumble_singer one = {&mumble_cast[0].voice, 0, (uint8_t)triad[k]};
+        struct mumble_singer one = {&mumble_cast[0].voice, 0, (uint8_t)triad[k], 0};
         mumble_press(k * 4, &one, 1, 0);
     }
     for (unsigned b = 0; b < 300; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
@@ -155,8 +194,8 @@ int main(int argc, char **argv)
     mumble_stop();
     for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     for (unsigned roll = 0; roll < 2; ++roll) {
-        struct mumble_singer hero = {&mumble_cast[0].voice, 0, 57}, kid = {&mumble_cast[3].voice, 3, 64},
-                             elder = {&mumble_cast[5].voice, 5, 60};
+        struct mumble_singer hero = {&mumble_cast[0].voice, 0, 57, 0}, kid = {&mumble_cast[3].voice, 3, 64, 0},
+                             elder = {&mumble_cast[5].voice, 5, 60, 0};
         mumble_press(0, &hero, 1, 0);                                        /* A */
         if (roll) for (unsigned b = 0; b < 10; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
         mumble_press(12, &kid, 1, 0);                                        /* M */
@@ -214,7 +253,7 @@ int main(int argc, char **argv)
         wraps += st.song_ms < previous;
         previous = st.song_ms;
     }
-    CHECK(guard_first >= 500 && guard_first < 560, "a track starts at its offset (%u ms)", guard_first);
+    CHECK(guard_first >= 500 && guard_first < 620, "a track starts at its offset, after its h (%u ms)", guard_first);
     CHECK(kid_onsets == 3, "a looping track repeats every pass (%u onsets in 3 s)", kid_onsets);
     CHECK(wraps == 2 && previous >= 0 && previous < 1000, "the song clock wraps per pass (%u, now %d)", wraps, (int)previous);
 
@@ -258,7 +297,7 @@ int main(int argc, char **argv)
     mumble_stop();
     for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     memset(parts, 0, sizeof parts);
-    const struct mumble_note take[1] = {{300, 400, 0, 60, 0}};
+    const struct mumble_note take[1] = {{300, 400, 0, 60, 0, 0}};
     parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, take, 1, NULL, 0};
     mumble_song(parts, 1000, 1, 0);
     unsigned take_onsets = 0, take_was = 0, take_first = 0, held_blocks = 0, late_blocks = 0;
@@ -284,8 +323,8 @@ int main(int argc, char **argv)
     struct mumble_syllable heh[MUMBLE_SYLLABLES];
     unsigned heh_n = plan("Hello", 0, heh);
     CHECK(heh_n >= 2, "Hello has syllables (%u)", heh_n);
-    const struct mumble_sound lo = {heh[1].vowel, heh[1].locus, heh[1].flags};
-    struct mumble_singer sister = {&mumble_cast[2].voice, 2, 62};
+    const struct mumble_sound lo = {heh[1].vowel, heh[1].locus, heh[1].flags, heh[1].glide, 0, 0, 0, 0};
+    struct mumble_singer sister = {&mumble_cast[2].voice, 2, 62, 0};
     CHECK(!mumble_press_sound(5, &lo, &sister, 1, 0), "a syllable is pressed");
     for (unsigned b = 0; b < 520; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 1.5 s */
     struct mumble_status syl_held; mumble_status(&syl_held);
@@ -295,8 +334,8 @@ int main(int argc, char **argv)
     CHECK(syl_held.track_level[2] && syl_held.track_vowel[2] == lo.vowel && !syl_gone.track_level[2],
           "a held syllable sustains its vowel until its key is let go");
     /* (slot 1 of a two-syllable line: "lo") */
-    const struct mumble_sound syl_line[2] = {{heh[0].vowel, heh[0].locus, heh[0].flags}, lo};
-    const struct mumble_note syl_take[1] = {{200, 600, 1, 62, 0}};
+    const struct mumble_sound syl_line[2] = {{heh[0].vowel, heh[0].locus, heh[0].flags, heh[0].glide, 0, 0, 0, 0}, lo};
+    const struct mumble_note syl_take[1] = {{200, 600, 1, 62, 0, 0}};
     memset(parts, 0, sizeof parts);
     parts[2] = (struct mumble_part){NULL, 0, &mumble_cast[2].voice, 0, 100, syl_take, 1, syl_line, 2};
     mumble_song(parts, 1000, 1, 0);
@@ -321,7 +360,7 @@ int main(int argc, char **argv)
     for (unsigned chord = 0; chord < 2; ++chord) {
         unsigned voices = chord ? MUMBLE_CAST : 1;
         for (unsigned v = 0; v < voices; ++v) {
-            struct mumble_singer one = {&mumble_cast[v].voice, (uint8_t)v, (uint8_t)(55 + v * 4)};
+            struct mumble_singer one = {&mumble_cast[v].voice, (uint8_t)v, (uint8_t)(55 + v * 4), 0};
             mumble_press(v * 3U, &one, 1, chord);
         }
         for (unsigned b = 0; b < 690; ++b) {   /* 2 s */
@@ -342,7 +381,7 @@ int main(int argc, char **argv)
     CHECK(levels[1] > 1.5f * levels[0], "a chord is still louder than one voice");
 
     /* Stopping the song lets a sustained note go at once (PLAY, a panic). */
-    const struct mumble_note long_take[1] = {{100, 5000, 0, 60, 0}};
+    const struct mumble_note long_take[1] = {{100, 5000, 0, 60, 0, 0}};
     memset(parts, 0, sizeof parts);
     parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, long_take, 1, NULL, 0};
     mumble_song(parts, 8000, 1, 0);
@@ -382,6 +421,162 @@ int main(int argc, char **argv)
     any = 0;
     for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0;
     CHECK(!any, "the metronome off: silence");
+
+    /* The singing voice, measured on HERO with no echo or room (no tails). */
+    {
+        struct mumble_voice dry = mumble_cast[0].voice;
+        dry.value[MUMBLE_ECHO] = dry.value[MUMBLE_ROOM] = 0;
+        dry.value[MUMBLE_VIBRATO] = 0;
+        struct mumble_singer one = {&dry, 0, 57, 0};
+        const struct mumble_sound plain = {MUMBLE_A, 0, 0, MUMBLE_VOWELS, 0, 0, 0, 0};
+        struct mumble_status st;
+        /* The rest of these: 0.35 s to let tails go. */
+#define SETTLE() do { mumble_stop(); for (unsigned b_ = 0; b_ < 1200; ++b_) { memset(z, 0, sizeof z); mumble_render(z); } } while (0)
+        /* A hiss before the vowel: high-frequency energy in its first 60 ms. */
+        float hf[2] = {0};
+        for (unsigned v = 0; v < 2; ++v) {
+            SETTLE();
+            struct mumble_sound snd = plain;
+            if (v) { snd.onset = MUMBLE_NOISE_HISS; snd.onset_hz = 60; }
+            mumble_press_sound(1, &snd, &one, 1, 0);
+            float last = 0.0f;
+            for (unsigned b = 0; b < 21; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) { float x = z[i] / 8388608.0f, d = x - last; hf[v] += d * d; last = x; }
+            }
+            mumble_release(1);
+        }
+        CHECK(hf[1] > 4.0f * hf[0], "an s is heard before its vowel (hf %.5f vs %.5f)", hf[1], hf[0]);
+        /* An unvoiced t holds the voice back; a voiced d does not. */
+        unsigned first_voice[3] = {0};
+        for (unsigned v = 0; v < 3; ++v) {
+            SETTLE();
+            struct mumble_sound snd = plain;
+            if (v) { snd.onset = (uint8_t)(MUMBLE_NOISE_BURST | (v == 2 ? MUMBLE_NOISE_VOICED : 0)); snd.onset_hz = 40; }
+            mumble_press_sound(1, &snd, &one, 1, 0);
+            for (unsigned b = 0; b < 40 && !first_voice[v]; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                mumble_status(&st);
+                if (st.track_level[0]) first_voice[v] = b + 1;
+            }
+            mumble_release(1);
+        }
+        CHECK(first_voice[1] >= first_voice[0] + 6 && first_voice[2] <= first_voice[0] + 1,
+              "a t holds the voice back about 25 ms, a d does not (blocks %u, %u, %u)", first_voice[0], first_voice[1], first_voice[2]);
+        /* A held AY: EH while held, EE as it is let go. */
+        SETTLE();
+        struct mumble_sound ay = plain;
+        ay.vowel = MUMBLE_E; ay.glide = MUMBLE_I;
+        mumble_press_sound(1, &ay, &one, 1, 0);
+        for (unsigned b = 0; b < 300; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+        mumble_status(&st);
+        unsigned held_vowel = st.track_vowel[0];
+        mumble_release(1);
+        for (unsigned b = 0; b < 35; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+        mumble_status(&st);
+        CHECK(held_vowel == MUMBLE_E && st.track_vowel[0] == MUMBLE_I, "a held AY glides EH to EE on release (%u, %u)",
+              held_vowel, st.track_vowel[0]);
+        /* Endings: a nasal closes slowly (160 ms), a stop cuts in 25 ms, an open vowel 120. */
+        unsigned gone[3] = {0};
+        for (unsigned v = 0; v < 3; ++v) {
+            SETTLE();
+            struct mumble_sound snd = plain;
+            if (v == 1) { snd.coda = MUMBLE_CODA_NASAL; snd.coda_hz = 11; }
+            if (v == 2) { snd.coda = MUMBLE_CODA_STOP; snd.coda_hz = 40; }
+            mumble_press_sound(1, &snd, &one, 1, 0);
+            for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+            mumble_release(1);
+            for (unsigned b = 0; b < 100 && !gone[v]; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                mumble_status(&st);
+                if (!st.track_level[0]) gone[v] = b + 1;
+            }
+        }
+        CHECK(gone[1] > gone[0] + 8 && gone[2] + 25 < gone[0], "an m closes slower, a t cuts sooner (blocks %u, %u, %u)",
+              gone[0], gone[1], gone[2]);
+        /* A hiss ending: noise after the voice has gone. */
+        float after[2] = {0};
+        for (unsigned v = 0; v < 2; ++v) {
+            SETTLE();
+            struct mumble_sound snd = plain;
+            if (v) { snd.coda = MUMBLE_CODA_HISS; snd.coda_hz = 60; }
+            mumble_press_sound(1, &snd, &one, 1, 0);
+            for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+            mumble_release(1);
+            for (unsigned b = 0; b < 70; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                if (b < 45) continue;            /* from 130 ms: the voice has let go */
+                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) { float x = z[i] / 8388608.0f; after[v] += x * x; }
+            }
+        }
+        CHECK(after[1] > 10.0f * after[0] + 1e-6f, "an s trails a hiss after the voice (%.6f vs %.6f)", after[1], after[0]);
+        /* GLIDE: a note slid into from an octave below starts low and arrives. */
+        SETTLE();
+        dry.value[MUMBLE_GLIDE] = 200;
+        struct mumble_singer slid = {&dry, 0, 57, -12};
+        mumble_press_sound(1, &plain, &slid, 1, 0);
+        int early = 0, late = 0;
+        for (unsigned b = 0; b < 200; ++b) {
+            memset(z, 0, sizeof z); mumble_render(z);
+            mumble_status(&st);
+            if (b == 4) early = st.cents;
+            if (b == 199) late = st.cents;
+        }
+        mumble_release(1);
+        CHECK(late - early > 900, "a slid note starts an octave down and arrives (%d -> %d cents)", early, late);
+        /* VIBRATO: a held note sways once it has been held a while; none without. */
+        int sway[2] = {0};
+        for (unsigned v = 0; v < 2; ++v) {
+            SETTLE();
+            dry.value[MUMBLE_GLIDE] = 0;
+            dry.value[MUMBLE_VIBRATO] = v ? 100 : 0;
+            struct mumble_singer held = {&dry, 0, 57, 0};
+            mumble_press_sound(1, &plain, &held, 1, 0);
+            int lo = 100000, hi = -100000;
+            for (unsigned b = 0; b < 450; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                if (b < 250) continue;
+                mumble_status(&st);
+                if (st.cents < lo) lo = st.cents;
+                if (st.cents > hi) hi = st.cents;
+            }
+            sway[v] = hi - lo;
+            mumble_release(1);
+        }
+        CHECK(sway[1] > 60 && sway[0] < 5, "vibrato sways a held note (%d cents; none: %d)", sway[1], sway[0]);
+        /* EFFORT: more of the voice's energy up high. */
+        float ratio[2] = {0};
+        for (unsigned v = 0; v < 2; ++v) {
+            SETTLE();
+            dry.value[MUMBLE_VIBRATO] = 0;
+            dry.value[MUMBLE_AIR] = 0;              /* (the voiced buzz alone: breath is AIR's) */
+            dry.value[MUMBLE_EFFORT] = v ? 100 : 0;
+            struct mumble_singer held = {&dry, 0, 57, 0};
+            mumble_press_sound(1, &plain, &held, 1, 0);
+            /* (the share of the energy over 2.5 kHz: two second-order high-passes, so
+             * F1 and F2, 30 dB stronger, do not leak in) */
+            const double w0 = 2.0 * 3.14159265 * 2500.0 / FM1_SAMPLE_RATE, al = sin(w0) / 1.4, cw = cos(w0);
+            const double b0 = (1 + cw) / 2 / (1 + al), b1 = -(1 + cw) / (1 + al), a1 = -2 * cw / (1 + al), a2 = (1 - al) / (1 + al);
+            double st_[2][4] = {{0}};
+            float all = 0.0f, high = 0.0f;
+            for (unsigned b = 0; b < 200; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) {
+                    double x = z[i] / 8388608.0, y = x;
+                    for (unsigned f = 0; f < 2; ++f) {
+                        double *q = st_[f], o = b0 * y + b1 * q[0] + b0 * q[1] - a1 * q[2] - a2 * q[3];
+                        q[1] = q[0]; q[0] = y; q[3] = q[2]; q[2] = o; y = o;
+                    }
+                    if (b >= 50) { all += (float)(x * x); high += (float)(y * y); }
+                }
+            }
+            ratio[v] = high / (all + 1e-12f);
+            mumble_release(1);
+        }
+        CHECK(ratio[1] > 2.0f * ratio[0], "effort brightens the voice (%.4f vs %.4f of it over 2.5 kHz)", ratio[1], ratio[0]);
+        SETTLE();
+#undef SETTLE
+    }
 
     /* Effects: a GHOST echo rings on after the line; BOT's crush is stepped. */
     mumble_stop();

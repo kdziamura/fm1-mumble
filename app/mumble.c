@@ -20,25 +20,27 @@
 const struct mumble_param_info mumble_params[MUMBLE_PARAMS] = {
     {"PITCH", 60, 420}, {"TUBE", 75, 145}, {"MOUTH", 30, 130}, {"AIR", 0, 100},
     {"SPEED", 50, 200}, {"WOBBLE", 0, 150}, {"JITTER", 0, 100}, {"TUNE", 0, 160},
-    {"CRUSH", 0, 100}, {"RADIO", 0, 100}, {"ECHO", 0, 100}, {"ROOM", 0, 100}};
+    {"CRUSH", 0, 100}, {"RADIO", 0, 100}, {"ECHO", 0, 100}, {"ROOM", 0, 100},
+    {"GLIDE", 0, 400}, {"VIBRATO", 0, 100}, {"DICTION", 0, 200}, {"EFFORT", 0, 100}};
 
-/*                                     pitch tube mouth air speed wob jit tune crush radio echo room */
+/*                                     pitch tube mouth air speed wob jit tune crush radio echo room glide vib dict effort */
 const struct mumble_character mumble_cast[MUMBLE_CAST] = {
-    {"HERO",   0x3c9f, {{135, 100, 100, 22, 100,  0, 50, 100,  0,  0, 10, 20}}},
-    {"GUARD",  0x9cd3, {{ 92,  86,  90, 18,  82,  0, 35,  60,  0,  0,  0, 55}}},
-    {"SISTER", 0xfb25, {{215, 118, 100, 32, 100,  0, 45, 115,  0,  0, 15, 70}}},
-    {"KID",    0x2dad, {{300, 134, 110, 20, 120,  0, 60, 140,  0,  0,  0, 10}}},
-    {"PIRATE", 0xbb07, {{108,  92,  45, 38,  92, 10, 80,  80, 12,  0, 25,  0}}},
-    {"ELDER",  0x9bfa, {{150,  97,  80, 50,  75, 90, 45,  90,  0,  0,  0, 40}}},
-    {"BOT",    0x9d14, {{120, 100, 100,  0, 110,  0,  0,   0, 55, 45,  0,  0}}},
-    {"GHOST",  0x5e5c, {{175, 110,  70, 95,  70, 50, 30, 120,  0, 20, 50, 85}}}};
+    {"HERO",   0x3c9f, {{135, 100, 100, 22, 100,  0, 50, 100,  0,  0, 10, 20,  60, 20, 100, 50}}},
+    {"GUARD",  0x9cd3, {{ 92,  86,  90, 18,  82,  0, 35,  60,  0,  0,  0, 55,  40, 10, 120, 70}}},
+    {"SISTER", 0xfb25, {{215, 118, 100, 32, 100,  0, 45, 115,  0,  0, 15, 70,  90, 45,  80, 35}}},
+    {"KID",    0x2dad, {{300, 134, 110, 20, 120,  0, 60, 140,  0,  0,  0, 10,  50, 15, 110, 60}}},
+    {"PIRATE", 0xbb07, {{108,  92,  45, 38,  92, 10, 80,  80, 12,  0, 25,  0,  80, 25,  90, 75}}},
+    {"ELDER",  0x9bfa, {{150,  97,  80, 50,  75, 90, 45,  90,  0,  0,  0, 40, 120, 55,  70, 30}}},
+    {"BOT",    0x9d14, {{120, 100, 100,  0, 110,  0,  0,   0, 55, 45,  0,  0,   0,  0, 140, 60}}},
+    {"GHOST",  0x5e5c, {{175, 110,  70, 95,  70, 50, 30, 120,  0, 20, 50, 85, 250, 35,  40, 20}}}};
 
-const char *const mumble_vowel_names[MUMBLE_VOWELS] = {"AH", "EH", "EE", "AW", "OO", "UH"};
+const char *const mumble_vowel_names[MUMBLE_VOWELS] = {"AH", "EH", "EE", "AW", "OO", "UH", "IH", "UU", "ER"};
 
 /* Adult formant centres (Hz), after Peterson & Barney (1952). */
 static const float formant_hz[MUMBLE_VOWELS][3] FM1_AUDIO_DATA = {
     {730, 1090, 2440}, {530, 1840, 2480}, {270, 2290, 3010},
-    {570, 840, 2410},  {300, 870, 2240},  {640, 1190, 2390}};
+    {570, 840, 2410},  {300, 870, 2240},  {640, 1190, 2390},
+    {390, 1990, 2550}, {440, 1020, 2240}, {490, 1350, 1690}};
 static const float bandwidth_hz[4] FM1_AUDIO_DATA = {70, 100, 150, 220};
 
 /* ------------------------------------------------------------------------
@@ -102,21 +104,158 @@ CONTROL static int vowel_at(const char *w, unsigned i)
     if (is_plain_vowel(w[i])) return 1;
     return lower(w[i]) == 'y' && i > 0 && !is_plain_vowel(w[i - 1]);
 }
-CONTROL static uint8_t vowel_of(const char *g, unsigned n)
+/* A word's vowel sound from its spelling: the vowel and the one it glides to
+ * (MUMBLE_VOWELS: none). AY = EH>EE, EYE = AH>EE, OH = AW>OO, OW = AH>OO,
+ * OY = AW>EE. w is the word (len letters), its vowel group k..e-1. English
+ * spelling, so rules of thumb, then a few common words that break them. */
+enum { NO_GLIDE = MUMBLE_VOWELS };
+CONTROL static int word_is(const char *w, unsigned len, const char *s)
 {
-    char a = lower(g[0]), b = n > 1 ? lower(g[1]) : 0;
-    if (a == 'o' && (b == 'o' || b == 'u')) return MUMBLE_OO;
-    if (a == 'u' && (b == 'e' || b == 'i')) return MUMBLE_OO;
-    if ((a == 'e' && (b == 'e' || b == 'a' || b == 'y')) || (a == 'i' && b == 'e')) return MUMBLE_I;
-    if ((a == 'a' && (b == 'i' || b == 'y')) || (a == 'e' && b == 'i')) return MUMBLE_E;
-    if ((a == 'a' && b == 'u') || (a == 'o' && b == 'a')) return MUMBLE_O;
+    unsigned i = 0;
+    for (; i < len && s[i]; ++i)
+        if (lower(w[i]) != s[i]) return 0;
+    return i == len && !s[i];
+}
+CONTROL static uint8_t vowel_of(const char *w, unsigned len, unsigned k, unsigned e, uint8_t *glide)
+{
+    static const struct { const char *word; uint8_t vowel, glide; } odd[] = {
+        {"the", MUMBLE_U, NO_GLIDE}, {"a", MUMBLE_U, NO_GLIDE}, {"of", MUMBLE_U, NO_GLIDE},
+        {"was", MUMBLE_U, NO_GLIDE}, {"what", MUMBLE_U, NO_GLIDE}, {"one", MUMBLE_U, NO_GLIDE},
+        {"you", MUMBLE_OO, NO_GLIDE}, {"to", MUMBLE_OO, NO_GLIDE}, {"do", MUMBLE_OO, NO_GLIDE},
+        {"who", MUMBLE_OO, NO_GLIDE}, {"your", MUMBLE_O, NO_GLIDE}, {"are", MUMBLE_A, NO_GLIDE},
+        {"have", MUMBLE_A, NO_GLIDE}, {"give", MUMBLE_IH, NO_GLIDE}, {"live", MUMBLE_IH, NO_GLIDE},
+        {"were", MUMBLE_ER, NO_GLIDE}, {"there", MUMBLE_E, NO_GLIDE}, {"where", MUMBLE_E, NO_GLIDE},
+        {"here", MUMBLE_I, NO_GLIDE}, {"eye", MUMBLE_A, MUMBLE_I}, {"i", MUMBLE_A, MUMBLE_I},
+        {"could", MUMBLE_UU, NO_GLIDE}, {"would", MUMBLE_UU, NO_GLIDE}, {"should", MUMBLE_UU, NO_GLIDE},
+        {"key", MUMBLE_I, NO_GLIDE}};
+    *glide = NO_GLIDE;
+    if (k == 0 || len <= 5)
+        for (unsigned i = 0; i < sizeof odd / sizeof odd[0]; ++i)
+            if (word_is(w, len, odd[i].word)) { *glide = odd[i].glide; return odd[i].vowel; }
+    char a = lower(w[k]), b = e > k + 1 ? lower(w[k + 1]) : 0;
+    char next = e < len ? lower(w[e]) : 0, after = e + 1 < len ? lower(w[e + 1]) : 0;
+    unsigned last = e >= len;                                     /* the group ends the word */
+    unsigned magic = e + 2 == len && lower(w[len - 1]) == 'e' && next && !is_plain_vowel(next);   /* "make" */
+    unsigned onset = 0;                                            /* consonants before it */
+    for (unsigned i = k; i > 0 && !vowel_at(w, i - 1); --i) ++onset;
+    if (b) {
+        if (a == 'e' && (b == 'e' || b == 'a')) return MUMBLE_I;
+        if (a == 'i' && b == 'e') { if (last) *glide = MUMBLE_I; return last ? MUMBLE_A : MUMBLE_I; }
+        if (a == 'e' && b == 'y') { if (len <= 4) *glide = MUMBLE_I; return len <= 4 ? MUMBLE_E : MUMBLE_I; }
+        if ((a == 'a' && (b == 'i' || b == 'y')) || (a == 'e' && b == 'i')) { *glide = MUMBLE_I; return MUMBLE_E; }
+        if (a == 'o' && b == 'o') return next == 'k' || next == 'd' ? MUMBLE_UU : MUMBLE_OO;
+        if (a == 'o' && b == 'u') {
+            if (next == 'l' && after == 'd') return MUMBLE_UU;
+            if (k > 0 && lower(w[k - 1]) == 'y') return MUMBLE_OO;
+            *glide = MUMBLE_OO;
+            return MUMBLE_A;
+        }
+        if (a == 'o' && (b == 'i' || b == 'y')) { *glide = MUMBLE_I; return MUMBLE_O; }
+        if (a == 'a' && b == 'u') return MUMBLE_O;
+        if (a == 'o' && b == 'a') { *glide = MUMBLE_OO; return MUMBLE_O; }
+        if (a == 'u' && (b == 'e' || b == 'i')) return MUMBLE_OO;
+    }
+    if (b) a = lower(w[e - 1]);                                    /* (other pairs: the last letter's sound) */
+    if (a == 'i' && next == 'g' && after == 'h') { *glide = MUMBLE_I; return MUMBLE_A; }   /* "night" */
+    if (next == 'y' && (a == 'a' || a == 'o')) { *glide = MUMBLE_I; return a == 'a' ? MUMBLE_E : MUMBLE_O; }   /* "day", "boy" */
+    if (next == 'y' && a == 'e') {                                                       /* "hey", "money" */
+        if (len <= 4) *glide = MUMBLE_I;
+        return len <= 4 ? MUMBLE_E : MUMBLE_I;
+    }
+    if (a == 'a' && next == 'w') return MUMBLE_O;                                       /* "saw" */
+    if (a == 'e' && next == 'w') return MUMBLE_OO;                                      /* "new" */
+    if (a == 'o' && next == 'w') {                                                       /* "now", "slow" */
+        *glide = MUMBLE_OO;
+        return onset >= 2 || (k > 0 && lower(w[k - 1]) == 'l') ? MUMBLE_O : MUMBLE_A;
+    }
+    if (next == 'r' && (!after || !is_plain_vowel(after))) {                            /* r-coloured */
+        if (a == 'a') return MUMBLE_A;
+        if (a == 'o') return MUMBLE_O;
+        if (a == 'e' || a == 'i' || a == 'u') return MUMBLE_ER;
+    }
+    if (a == 'o' && (next == 'm' || next == 'n' || next == 'v') && magic) return MUMBLE_U;   /* "come", "love" */
+    if (magic) {
+        switch (a) {
+        case 'a': *glide = MUMBLE_I; return MUMBLE_E;
+        case 'i': case 'y': *glide = MUMBLE_I; return MUMBLE_A;
+        case 'o': *glide = MUMBLE_OO; return MUMBLE_O;
+        case 'u': return MUMBLE_OO;
+        default: return MUMBLE_I;
+        }
+    }
+    if (last) {                                                                          /* open, at the end */
+        switch (a) {
+        case 'o': *glide = MUMBLE_OO; return MUMBLE_O;                                  /* "go" */
+        case 'e': return MUMBLE_I;                                                       /* "me" */
+        case 'i': *glide = MUMBLE_I; return MUMBLE_A;                                   /* "hi" */
+        case 'u': return MUMBLE_OO;
+        case 'y': if (k == onset) { *glide = MUMBLE_I; return MUMBLE_A; }               /* "my" */
+                  return MUMBLE_I;                                                       /* "happy" */
+        default: return MUMBLE_A;
+        }
+    }
     switch (a) {
     case 'a': return MUMBLE_A;
     case 'e': return MUMBLE_E;
     case 'o': return MUMBLE_O;
     case 'u': return MUMBLE_U;
-    default: return MUMBLE_I; /* i, y */
+    default: return MUMBLE_IH; /* i, y: "sit", "gym" */
     }
+}
+/* A consonant (or digraph: sh ch th ph wh ng ck gh qu) at w[i]: its noise
+ * before a vowel, its ending after one, and how many letters it takes. */
+struct consonant { uint8_t noise, hz, coda, coda_hz, letters; };
+CONTROL static struct consonant consonant_at(const char *w, unsigned i, unsigned end)
+{
+    char c = lower(w[i]), d = i + 1 < end ? lower(w[i + 1]) : 0;
+    struct consonant k = {MUMBLE_NOISE_NONE, 0, MUMBLE_CODA_NONE, 0, 1};
+    enum { BURST = MUMBLE_NOISE_BURST, HISS = MUMBLE_NOISE_HISS, AFFRICATE = MUMBLE_NOISE_AFFRICATE,
+           VOICED = MUMBLE_NOISE_VOICED, STOP = MUMBLE_CODA_STOP, CHISS = MUMBLE_CODA_HISS };
+    if (d == 'h' && (c == 's' || c == 'c' || c == 't' || c == 'p' || c == 'w' || c == 'g')) {
+        k.letters = 2;
+        if (c == 's') return (struct consonant){HISS, 30, CHISS, 30, 2};
+        if (c == 'c') return (struct consonant){AFFRICATE, 28, STOP, 28, 2};
+        if (c == 't' || c == 'p') return (struct consonant){HISS, c == 't' ? 75 : 70, CHISS, c == 't' ? 75 : 70, 2};
+        return k;                                                  /* wh, gh: no noise */
+    }
+    if (c == 'n' && d == 'g') return (struct consonant){MUMBLE_NOISE_NONE, 0, MUMBLE_CODA_NASAL, 21, 2};
+    if (c == 'c' && d == 'k') return (struct consonant){BURST, 20, STOP, 20, 2};
+    if (c == 'q' && d == 'u') return (struct consonant){BURST, 20, STOP, 20, 2};
+    switch (c) {
+    case 'p': return (struct consonant){BURST, 10, STOP, 10, 1};
+    case 'b': return (struct consonant){BURST | VOICED, 10, STOP, 10, 1};
+    case 't': return (struct consonant){BURST, 40, STOP, 40, 1};
+    case 'd': return (struct consonant){BURST | VOICED, 35, STOP, 35, 1};
+    case 'k': case 'q': return (struct consonant){BURST, 20, STOP, 20, 1};
+    case 'g': return (struct consonant){BURST | VOICED, 18, STOP, 18, 1};
+    case 'c': return d == 'e' || d == 'i' || d == 'y' ? (struct consonant){HISS, 60, CHISS, 60, 1}
+                                                      : (struct consonant){BURST, 20, STOP, 20, 1};
+    case 's': return (struct consonant){HISS, 60, CHISS, 60, 1};
+    case 'z': return (struct consonant){HISS | VOICED, 55, CHISS, 55, 1};
+    case 'f': return (struct consonant){HISS, 70, CHISS, 70, 1};
+    case 'v': return (struct consonant){HISS | VOICED, 65, CHISS, 65, 1};
+    case 'j': return (struct consonant){AFFRICATE | VOICED, 26, STOP, 26, 1};
+    case 'x': return (struct consonant){AFFRICATE, 55, CHISS, 55, 1};
+    case 'h': return (struct consonant){MUMBLE_NOISE_BREATH, 0, MUMBLE_CODA_NONE, 0, 1};
+    case 'm': return (struct consonant){MUMBLE_NOISE_NONE, 0, MUMBLE_CODA_NASAL, 11, 1};
+    case 'n': return (struct consonant){MUMBLE_NOISE_NONE, 0, MUMBLE_CODA_NASAL, 15, 1};
+    case 'r': return (struct consonant){MUMBLE_NOISE_NONE, 0, MUMBLE_CODA_R, 0, 1};
+    case 'l': return (struct consonant){MUMBLE_NOISE_NONE, 0, MUMBLE_CODA_L, 0, 1};
+    default: return k;                                             /* w, y */
+    }
+}
+/* The consonants from..to-1 as units: the first with a noise (or the last
+ * one: a syllable's start), or the last (its end). */
+CONTROL static struct consonant cluster(const char *w, unsigned from, unsigned to, int want_noise, int last)
+{
+    struct consonant pick = {0, 0, 0, 0, 0}, unit;
+    for (unsigned i = from; i < to; i += unit.letters ? unit.letters : 1) {
+        unit = consonant_at(w, i, to);
+        if (last) pick = unit;
+        else if (want_noise && unit.noise && !pick.noise) pick = unit;
+        else if (!want_noise && !pick.letters) pick = unit;
+    }
+    return pick;
 }
 /* Where F2 starts when a consonant leads into the vowel, in 10 Hz units. */
 CONTROL static uint8_t locus_of(char c)
@@ -194,6 +333,7 @@ CONTROL unsigned mumble_plan(const char *text, unsigned length, const struct mum
         }
         const char *w = text + i;
         unsigned len = j - i, first = n, shouted = letters > 1 && upper == letters;
+        uint8_t group_end[MUMBLE_SYLLABLES];
         for (unsigned k = 0; k < len && n < capacity; ++k) {
             if (!vowel_at(w, k) || (k > 0 && vowel_at(w, k - 1))) continue;
             unsigned e = k;
@@ -202,21 +342,44 @@ CONTROL unsigned mumble_plan(const char *text, unsigned length, const struct mum
             memset(s, 0, sizeof *s);
             s->index = (uint8_t)(i + k);
             s->ms = at[i + k];
-            s->vowel = vowel_of(w + k, e - k);
+            s->vowel = vowel_of(w, len, k, e, &s->glide);
             s->locus = k ? locus_of(w[k - 1]) : 0;
             s->flags = shouted ? MUMBLE_SHOUT : 0;
+            group_end[n] = (uint8_t)e;
             word_of[n] = (uint8_t)words; phrase_of[n] = (uint8_t)phrase;
             ++n;
         }
         /* A final lone e after a consonant is usually silent ("make"). */
+        unsigned end = len;
         if (!(open && j == length) && n - first > 1 && len > 2 &&
-            out[n - 1].index == i + len - 1 && lower(w[len - 1]) == 'e')
+            out[n - 1].index == i + len - 1 && lower(w[len - 1]) == 'e') {
             --n;
+            end = len - 1;
+        }
+        /* Consonants: a syllable starts with the noisiest of the word's first
+         * ones, or the one before it inside a word; between two syllables the
+         * first of two or more ends the last; the word's last ones end it. */
+        for (unsigned y = first; y < n; ++y) {
+            unsigned k = out[y].index - i, from = y > first ? group_end[y - 1] : 0;
+            struct consonant on = cluster(w, from, k, y == first, y > first);
+            out[y].onset = on.noise;
+            out[y].onset_hz = on.hz;
+            unsigned to = y + 1 < n ? (unsigned)(out[y + 1].index - i) : end;
+            unsigned units = 0;
+            struct consonant unit;
+            for (unsigned c = group_end[y]; c < to; c += unit.letters) { unit = consonant_at(w, c, to); ++units; }
+            if (y + 1 < n && units < 2) continue;                   /* open: its consonant starts the next */
+            struct consonant off = cluster(w, group_end[y], to, 0, y + 1 == n);
+            out[y].coda = off.coda;
+            out[y].coda_hz = off.coda_hz;
+            if (off.coda == MUMBLE_CODA_R && out[y].glide == NO_GLIDE && out[y].vowel != MUMBLE_ER) out[y].glide = MUMBLE_ER;
+            if (off.coda == MUMBLE_CODA_L && out[y].glide == NO_GLIDE) out[y].glide = MUMBLE_UU;
+        }
         /* No vowel at all ("hmm", "brr"): one closed-mouth hum. */
         if (n == first && n < capacity && !(open && j == length)) {
             struct mumble_syllable *s = &out[n];
             memset(s, 0, sizeof *s);
-            s->index = (uint8_t)i; s->ms = at[i]; s->vowel = MUMBLE_U;
+            s->index = (uint8_t)i; s->ms = at[i]; s->vowel = MUMBLE_U; s->glide = NO_GLIDE;
             s->flags = (uint8_t)(MUMBLE_HUM | (shouted ? MUMBLE_SHOUT : 0));
             word_of[n] = (uint8_t)words; phrase_of[n] = (uint8_t)phrase;
             ++n;
@@ -292,6 +455,22 @@ enum { VOICES = 8, SUB = 32, GLOTTAL = 256 };
 struct hum {
     int32_t pos;                 /* <0: not yet started */
     uint32_t frames, dur, attack, release, glide;
+    /* The voice starts voice_from frames in (after an unvoiced consonant's
+     * noise); dur, attack and release count from there. tail: the frames an
+     * ending's noise may ring past it. */
+    uint32_t voice_from, tail;
+    /* Consonants: one noise source, band-passed at the onset's and then the
+     * ending's place; the onset's kind and length, the ending's. */
+    uint8_t onset, coda, has_glide, breath, vowel2;
+    uint32_t onset_len;
+    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2;
+    /* The diphthong's second vowel, a nasal ending's closed formants. */
+    float target2[4], nasal[4];
+    /* A sung note's slide from the last one (semitones, over porta frames),
+     * the singer's vibrato (depth, phase), and effort: the source's tilt (edge > 0: its
+     * derivative mixed in, a sharper closure; < 0: a low-passed, softer source). */
+    float bend, inv_porta, vibrato, vib_phase, edge, last_bright, soft, now_semis;   /* now_semis: the pitch as it is (status) */
+    uint32_t porta;
     float inv_dur, inv_attack, inv_release, inv_glide, wobble_phase, phase, inc, period, amp, semis, gain, air, jitter, wobble, pitch;
     float fall, fade;            /* per frame: pitch fall (semitones) and level fade */
     float start[4], target[4], radius[4], y1[4], y2[4], a[4], b[4], c[4], last;
@@ -431,10 +610,11 @@ CONTROL static unsigned sound_syllable(unsigned key, const struct mumble_sound *
 CONTROL static unsigned note_syllables(const struct mumble_note *note, const struct mumble_part *part,
                                        struct mumble_syllable *out)
 {
-    static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM};
+    static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM, NO_GLIDE, 0, 0, 0, 0};
     const struct mumble_sound *sound =
         part->line && part->line_count ? &part->line[note->slot % part->line_count] : &hum;
     unsigned got = sound_syllable(0, sound, note->note, part->voice, note->shout, out);
+    out->bend = note->bend;
     for (unsigned i = 0; i < got; ++i) {
         struct mumble_syllable *y = &out[i];
         uint32_t offset = y->ms, at = (uint32_t)note->ms + offset;
@@ -688,6 +868,9 @@ CONTROL static unsigned letter_syllables(unsigned letter, unsigned note, const s
         y->index = (uint8_t)letter;
         y->gen = 0;
         y->track = 0;
+        y->glide = NO_GLIDE;
+        y->onset = y->onset_hz = y->coda = y->coda_hz = 0;
+        y->bend = 0;
     }
     return syllables;
 }
@@ -708,6 +891,12 @@ CONTROL static unsigned sound_syllable(unsigned key, const struct mumble_sound *
     out->index = (uint8_t)key;
     out->gen = 0;
     out->track = 0;
+    out->glide = sound->glide;
+    out->onset = sound->onset;
+    out->onset_hz = sound->onset_hz;
+    out->coda = sound->coda;
+    out->coda_hz = sound->coda_hz;
+    out->bend = 0;
     return 1;
 }
 
@@ -758,6 +947,7 @@ CONTROL static int press(unsigned letter, const struct mumble_sound *sound, cons
         for (unsigned i = 0; i < got; ++i, ++n) {
             s->syllable[n].gen = gen;
             s->syllable[n].track = who->track;
+            s->syllable[n].bend = who->bend;
         }
     }
     sort_syllables(s->syllable, n);
@@ -816,6 +1006,23 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         h->start[k] = h->target[k];
     }
     if (s->locus) { h->start[0] = 260.0f * tube; h->start[1] = (float)s->locus * 10.0f * tube; }
+    /* A diphthong's second vowel; a nasal ending's closed mouth (F2 at its place). */
+    h->has_glide = s->glide < MUMBLE_VOWELS && s->glide != s->vowel;
+    h->vowel2 = h->has_glide ? s->glide : s->vowel;
+    const float *g2 = formant_hz[h->has_glide ? s->glide : s->vowel < MUMBLE_VOWELS ? s->vowel : MUMBLE_U];
+    h->target2[0] = (330.0f + (g2[0] - 330.0f) * mouth) * tube;
+    h->target2[1] = (1450.0f + (g2[1] - 1450.0f) * mouth) * tube;
+    h->target2[2] = g2[2] * tube;
+    h->target2[3] = h->target[3];
+    h->coda = s->coda;
+    h->nasal[0] = 280.0f * tube;
+    h->nasal[1] = (float)(s->coda_hz ? s->coda_hz : 15) * 100.0f * tube;
+    h->nasal[2] = 2600.0f * tube;
+    h->nasal[3] = 3400.0f * tube;
+    for (unsigned k = 0; k < 4; ++k) {
+        if (h->target2[k] > RATE * 0.45f) h->target2[k] = RATE * 0.45f;
+        if (h->nasal[k] > RATE * 0.45f) h->nasal[k] = RATE * 0.45f;
+    }
     h->air = (float)v->value[MUMBLE_AIR] * 0.01f;
     for (unsigned k = 0; k < 4; ++k) {
         h->radius[k] = exp2_approx(-PI * bandwidth_hz[k] * (1.0f + 0.6f * h->air) / RATE * 1.442695f);
@@ -824,14 +1031,56 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
     h->dur = (uint32_t)s->dur_ms * (FM1_SAMPLE_RATE / 100U) / 10U;
     if (h->dur < 64) h->dur = 64;
     h->inv_dur = 1.0f / (float)h->dur;
-    h->frames = h->dur + FM1_SAMPLE_RATE * 3U / 100U;
     h->attack = h->dur * 2U / 5U; if (h->attack > 1985U) h->attack = 1985U;    /* 45 ms */
     h->release = h->dur / 2U;    if (h->release > 3528U) h->release = 3528U;   /* 80 ms */
     /* A spoken syllable sags in pitch and level; a held note stays put. */
     h->hold = (s->flags & (MUMBLE_HOLD | MUMBLE_SUSTAIN)) != 0;
     h->fall = h->hold ? 0.0f : 0.7f * h->inv_dur;
     h->fade = h->hold ? 0.0f : 0.2f * h->inv_dur;
-    if (h->hold) h->release = 5292U;                                             /* 120 ms */
+    if (h->hold) h->release = h->has_glide || s->coda == MUMBLE_CODA_NASAL || s->coda == MUMBLE_CODA_HISS
+                                  ? 7056U : 5292U;                         /* 160 ms to glide or close, else 120 */
+    if (s->coda == MUMBLE_CODA_STOP && h->release > 1102U) h->release = 1102U;  /* 25 ms: a stop cuts it */
+    /* The consonant before it: a burst (12 ms), a hiss (70 ms), both (50 ms)
+     * or breath (60 ms); an unvoiced one holds the voice back. DICTION sets
+     * how loud the consonants are. */
+    unsigned kind = s->onset & 0x7FU, voiced = (s->onset & MUMBLE_NOISE_VOICED) != 0;
+    float diction = (float)v->value[MUMBLE_DICTION] * 0.01f;
+    h->onset = (uint8_t)kind;
+    h->breath = kind == MUMBLE_NOISE_BREATH;
+    h->onset_len = kind == MUMBLE_NOISE_BURST ? 529U : kind == MUMBLE_NOISE_HISS ? 3087U :
+                   kind == MUMBLE_NOISE_AFFRICATE ? 2205U : kind == MUMBLE_NOISE_BREATH ? 2646U : 0U;
+    if (voiced) h->onset_len /= 2U;
+    h->voice_from = !kind || voiced || !diction ? 0U : kind == MUMBLE_NOISE_BURST ? 1102U : h->onset_len * 4U / 5U;
+    h->noise_level = diction * (voiced ? 0.5f : 1.0f) * (kind == MUMBLE_NOISE_BURST ? 0.9f : 0.45f);
+    for (unsigned w = 0; w < 2; ++w) {
+        /* The noise's band: centre hz, a third of it wide (300 Hz at least). */
+        float hz = (float)(w ? s->coda_hz : s->onset_hz) * 100.0f * (0.8f + 0.2f * tube);
+        if (hz < 500.0f) hz = 500.0f;
+        if (hz > RATE * 0.42f) hz = RATE * 0.42f;
+        float bw = hz * 0.35f < 300.0f ? 300.0f : hz * 0.35f;
+        float r = exp2_approx(-PI * bw / RATE * 1.442695f);
+        h->nz_b[w] = 2.0f * r * cos_approx(2.0f * PI * hz / RATE);
+        h->nz_c[w] = -r * r;
+        h->nz_a[w] = 1.0f - r;
+    }
+    h->ny1 = h->ny2 = 0.0f;
+    /* An ending's noise rings on past the voice: a stop's burst, a hiss. */
+    h->tail = s->coda == MUMBLE_CODA_STOP ? 1764U : s->coda == MUMBLE_CODA_HISS ? 3969U : 0U;
+    if (!diction) h->tail = 0;
+    h->frames = h->voice_from + h->dur + h->tail + FM1_SAMPLE_RATE * 3U / 100U;
+    /* A sung note slides from the singer's last one; held notes take a vibrato. */
+    h->bend = (float)s->bend;
+    h->porta = s->bend ? (uint32_t)v->value[MUMBLE_GLIDE] * (FM1_SAMPLE_RATE / 1000U) : 0U;
+    h->inv_porta = h->porta ? 1.0f / (float)h->porta : 0.0f;
+    h->vibrato = h->hold ? (float)v->value[MUMBLE_VIBRATO] * 0.005f : 0.0f;   /* 100%: half a semitone either way */
+    h->vib_phase = 0.0f;
+    h->now_semis = h->semis + h->bend;
+    /* EFFORT tilts the source as the folds close harder or softer; a shout
+     * pushes it. 50%: as before; 100: +10 dB at F3 against F1; 0: softer. */
+    float effort = (float)v->value[MUMBLE_EFFORT] * 0.01f + (s->flags & MUMBLE_SHOUT ? 0.45f : 0.0f);
+    if (effort > 1.0f) effort = 1.0f;
+    h->edge = 2.0f * effort - 1.0f;
+    h->last_bright = h->soft = 0.0f;
     h->tag = (s->flags & MUMBLE_HOLD) && s->index < MUMBLE_LETTERS ? (uint8_t)(s->index + 1U) : 0U;
     h->gen = s->gen;
     h->glide = s->locus ? 1543U : 0U;                                            /* 35 ms */
@@ -886,6 +1135,7 @@ static inline __attribute__((always_inline)) float round_float(float x)
     return (float)(int32_t)(x + (x >= 0.0f ? 0.5f : -0.5f));
 }
 
+static inline __attribute__((always_inline)) float unit(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
 static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
 {
     unsigned i = 0;
@@ -897,11 +1147,23 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
     while (i < frames && h->active) {
         unsigned run = frames - i;
         if (run > SUB - ((unsigned)h->pos & (SUB - 1U))) run = SUB - ((unsigned)h->pos & (SUB - 1U));
-        /* Per sub-block: formant glide, pitch fall and wobble. */
-        float t = (float)h->pos;
-        float g = h->glide ? smooth(t * h->inv_glide) : 1.0f;
+        /* Per sub-block: formants (the consonant's glide in, the diphthong,
+         * a nasal close), pitch (fall, wobble, the slide from the last note,
+         * vibrato), and where the ending's noise falls. */
+        float t = (float)h->pos - (float)h->voice_from;      /* frames into the voice (<0: before it) */
+        if (t < 0.0f) t = 0.0f;
+        float g = h->glide ? smooth(unit(t * h->inv_glide)) : 1.0f;
+        float d = 0.0f, close = 0.0f, rel_from = (float)h->dur - (float)h->release;
+        if (h->has_glide) {
+            float from = h->hold ? rel_from : (float)h->dur * 0.45f;
+            float span = h->hold ? (float)h->release * 0.7f : (float)h->dur * 0.4f;
+            d = smooth(unit((t - from) / span));
+        }
+        if (h->coda == MUMBLE_CODA_NASAL) close = 0.9f * smooth(unit((t - rel_from) * h->inv_release));
         for (unsigned k = 0; k < 4; ++k) {
             float f = h->start[k] + (h->target[k] - h->start[k]) * g;
+            f += (h->target2[k] - f) * d;
+            f += (h->nasal[k] - f) * close;
             float r = h->radius[k];
             h->c[k] = -r * r;
             h->b[k] = 2.0f * r * cos_approx(2.0f * PI * f / RATE);
@@ -913,47 +1175,95 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
         h->wobble_phase = wp + (float)run * (2.0f / RATE);
         if (wp >= 0.5f) wave = -wave;
         float semis = h->semis - h->fall * t + h->wobble * wave;
+        if (h->porta && t < (float)h->porta) semis += h->bend * (1.0f - smooth(t * h->inv_porta));
+        if (h->vibrato > 0.0f) {
+            float vp = h->vib_phase - (float)(int)h->vib_phase;
+            float vq = vp < 0.5f ? vp : vp - 0.5f, vw = 16.0f * vq * (0.5f - vq);
+            if (vp >= 0.5f) vw = -vw;
+            h->vib_phase = vp + (float)run * (5.5f / RATE);
+            semis += h->vibrato * vw * smooth(unit((t - 8820.0f) * (1.0f / 13230.0f)));   /* in after 200 ms, over 300 */
+        }
+        h->now_semis = semis;
         float inc = h->pitch * exp2_approx(semis * (1.0f / 12.0f)) / RATE;
+        uint32_t coda_from = h->voice_from + h->dur - (h->coda == MUMBLE_CODA_STOP ? 0U : h->release / 2U) +
+                             (h->coda == MUMBLE_CODA_STOP ? 661U : 0U);
+        uint32_t coda_len = h->tail ? (h->coda == MUMBLE_CODA_STOP ? 529U : 3969U) : 0U;
+        float inv_onset = h->onset_len ? 1.0f / (float)h->onset_len : 0.0f;
 
         for (unsigned end = i + run; i < end; ++i, ++h->pos) {
-            uint32_t pos = (uint32_t)h->pos;
-            if (pos >= h->frames) { h->active = 0; break; }
-            h->phase += inc * h->period;
-            if (h->phase >= 1.0f) {
-                h->phase -= 1.0f;
-                if (h->phase >= 1.0f) h->phase = 0.0f;
-                /* Vocal folds never buzz the same way twice. */
-                h->period = 1.0f + gauss(&h->noise) * 0.012f * h->jitter;
-                h->amp = 1.0f + gauss(&h->noise) * 0.08f * h->jitter;
+            uint32_t at = (uint32_t)h->pos;
+            if (at >= h->frames) { h->active = 0; break; }
+            int32_t pv = (int32_t)(at - h->voice_from);
+            float y = 0.0f;
+            if (pv >= 0 && (uint32_t)pv < h->dur) {
+                h->phase += inc * h->period;
+                if (h->phase >= 1.0f) {
+                    h->phase -= 1.0f;
+                    if (h->phase >= 1.0f) h->phase = 0.0f;
+                    /* Vocal folds never buzz the same way twice. */
+                    h->period = 1.0f + gauss(&h->noise) * 0.012f * h->jitter;
+                    h->amp = 1.0f + gauss(&h->noise) * 0.08f * h->jitter;
+                }
+                float x = h->phase * GLOTTAL;
+                unsigned n = (unsigned)x;
+                float frac = x - (float)n;
+                float flow = glottal_flow[n] + (glottal_flow[n + 1] - glottal_flow[n]) * frac;
+                float slope = glottal_slope[n] + (glottal_slope[n + 1] - glottal_slope[n]) * frac;
+                float source = slope * 0.25f * h->amp;
+                /* EFFORT: the closure's edge (derivative) mixed in, or the source softened. */
+                float prior = h->last_bright;
+                h->last_bright = source;
+                if (h->edge > 0.0f) source += h->edge * 8.0f * (source - prior);
+                else h->soft += 0.25f * (source - h->soft), source += -h->edge * (h->soft - source);
+                y = source + noise(&h->noise) * h->air * 0.5f * (0.4f + 0.6f * flow);
             }
-            float x = h->phase * GLOTTAL;
-            unsigned n = (unsigned)x;
-            float frac = x - (float)n;
-            float flow = glottal_flow[n] + (glottal_flow[n + 1] - glottal_flow[n]) * frac;
-            float slope = glottal_slope[n] + (glottal_slope[n + 1] - glottal_slope[n]) * frac;
-            float y = slope * 0.25f * h->amp + noise(&h->noise) * h->air * 0.5f * (0.4f + 0.6f * flow);
+            /* The consonants' noise: the onset's at first, then the ending's. */
+            float hiss = 0.0f, ne = 0.0f;
+            unsigned band = 0;
+            if (at < h->onset_len) {
+                float x = (float)at * inv_onset;
+                ne = h->onset == MUMBLE_NOISE_BURST ? (1.0f - x) * (1.0f - x)
+                   : unit(x * 7.0f) * unit((1.0f - x) * 5.0f);
+            } else if (coda_len && at >= coda_from && at < coda_from + coda_len) {
+                float x = (float)(at - coda_from) / (float)coda_len;
+                ne = h->coda == MUMBLE_CODA_STOP ? (1.0f - x) * (1.0f - x) : unit(x * 6.0f) * unit((1.0f - x) * 3.0f);
+                band = 1;
+            }
+            if (ne > 0.0f) {
+                float white = noise(&h->noise);
+                if (h->breath && !band) y += white * ne * h->noise_level * 1.6f;   /* an h: breath through the vowel */
+                else {
+                    float v = h->nz_a[band] * white + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
+                    h->ny2 = h->ny1; h->ny1 = v;
+                    hiss = v * ne * h->noise_level * 3.0f;
+                }
+            }
             for (unsigned k = 0; k < 4; ++k) {
                 float v = h->a[k] * y + h->b[k] * h->y1[k] + h->c[k] * h->y2[k];
                 h->y2[k] = h->y1[k]; h->y1[k] = v; y = v;
             }
-            /* Gentle pre-emphasis keeps the upper formants audible. */
+            /* Pre-emphasis keeps the upper formants audible; EFFORT sharpens them. */
             float bright = y - 0.82f * h->last;
             h->last = y;
+
+            /* A voice swells, holds and lets go; it is not struck. */
+            float env;
+            if (pv < 0) env = 0.0f;
+            else if ((uint32_t)pv < h->attack) env = smooth((float)pv * h->inv_attack);
+            else if ((uint32_t)pv + h->release < h->dur) env = 1.0f;
+            else if ((uint32_t)pv < h->dur) env = 1.0f - smooth((float)((uint32_t)pv + h->release - h->dur) * h->inv_release);
+            else env = 0.0f;
+            if (pv > 0) env *= 1.0f - h->fade * (float)pv;
+            if (h->breath && at < h->onset_len) env = env > 0.0f ? env : 1.0f;   /* (the breath is heard before the voice) */
+            bright = bright * env + hiss;
             if (h->radio > 0.0f) {
                 h->hp += h->hp_a * (bright - h->hp);
                 h->lp += h->lp_a * ((bright - h->hp) - h->lp);
-                float d = h->lp * h->drive;
-                if (d > 1.5f) d = 1.5f; else if (d < -1.5f) d = -1.5f;
-                bright = d - d * d * d * (4.0f / 27.0f);
+                float dr = h->lp * h->drive;
+                if (dr > 1.5f) dr = 1.5f; else if (dr < -1.5f) dr = -1.5f;
+                bright = dr - dr * dr * dr * (4.0f / 27.0f);
             }
-            /* A voice swells, holds and lets go; it is not struck. */
-            float env;
-            if (pos < h->attack) env = smooth((float)pos * h->inv_attack);
-            else if (pos + h->release < h->dur) env = 1.0f;
-            else if (pos < h->dur) env = 1.0f - smooth((float)(pos + h->release - h->dur) * h->inv_release);
-            else env = 0.0f;
-            env *= 1.0f - h->fade * (float)pos;
-            float out = bright * env * h->gain;
+            float out = bright * h->gain;
             if (h->levels > 0.0f) {
                 if (h->crush_count == 0) h->crushed = round_float(out * h->levels) / h->levels;
                 if (++h->crush_count >= h->crush_hold) h->crush_count = 0;
@@ -1103,11 +1413,12 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
          * where it is (after its swell). */
         if (h->active && ((h->tag && held_gen[h->tag - 1U] != h->gen) || (h->live && h->cut != live_cut) ||
                           (h->song && h->song_cut != song_cut))) {
-            uint32_t from = h->pos > 0 ? (uint32_t)h->pos : 0U;
+            int32_t into = h->pos - (int32_t)h->voice_from;
+            uint32_t from = into > 0 ? (uint32_t)into : 0U;
             if (from < h->attack) from = h->attack;
             if (from + h->release < h->dur) {
                 h->dur = from + h->release;
-                h->frames = h->dur + FM1_SAMPLE_RATE * 3U / 100U;
+                h->frames = h->voice_from + h->dur + h->tail + FM1_SAMPLE_RATE * 3U / 100U;
             }
             h->tag = 0;
             h->live = 0;
@@ -1135,10 +1446,14 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         struct hum *h = &hums[v];
         if (!h->active) continue;
         hum_render(h, FM1_BLOCK_FRAMES);
-        if (h->pos > 0 && (uint32_t)h->pos < h->dur) {
-            float x = (float)h->pos * h->inv_dur, e = (h->hold ? 0.5f : x < 0.5f ? x : 1.0f - x) * h->gain;
+        int32_t into = h->pos - (int32_t)h->voice_from;
+        if (into > 0 && (uint32_t)into < h->dur) {
+            float x = (float)into * h->inv_dur, e = (h->hold ? 0.5f : x < 0.5f ? x : 1.0f - x) * h->gain;
+            /* (past a diphthong's middle, it shows its second vowel) */
+            uint32_t mid = h->hold ? h->dur - h->release / 2U : h->dur * 13U / 20U;
+            uint8_t vowel = h->has_glide && (uint32_t)into >= mid ? h->vowel2 : h->vowel;
             if (e > loud) { loud = e; loudest = v; }
-            if (e > track_loud[h->track]) { track_loud[h->track] = e; track_vowel[h->track] = h->vowel; }
+            if (e > track_loud[h->track]) { track_loud[h->track] = e; track_vowel[h->track] = vowel; }
         }
     }
     for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
@@ -1147,10 +1462,14 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         status_track_level[t] = (uint8_t)(level > 255.0f ? 255.0f : level);
     }
     if (loudest < VOICES) {
-        status_vowel = hums[loudest].vowel;
+        const struct hum *h = &hums[loudest];
+        int32_t into = h->pos - (int32_t)h->voice_from;
+        uint32_t mid = h->hold ? h->dur - h->release / 2U : h->dur * 13U / 20U;
+        status_vowel = h->has_glide && into > 0 && (uint32_t)into >= mid ? h->vowel2 : h->vowel;
         float level = loud * 1600.0f;
         status_level = (uint8_t)(level > 255.0f ? 255.0f : level);
-        status_cents = (int16_t)(hums[loudest].semis * 100.0f);
+        float cents = h->now_semis * 100.0f;
+        status_cents = (int16_t)(cents > 30000.0f ? 30000.0f : cents < -30000.0f ? -30000.0f : cents);
         status_track = hums[loudest].track;
     } else {
         status_vowel = MUMBLE_VOWELS; status_level = 0;

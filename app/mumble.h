@@ -37,7 +37,8 @@
 #endif
 
 enum { MUMBLE_TEXT = 96, MUMBLE_SYLLABLES = 48, MUMBLE_CAST = 8 };
-enum { MUMBLE_A, MUMBLE_E, MUMBLE_I, MUMBLE_O, MUMBLE_OO, MUMBLE_U, MUMBLE_VOWELS };
+/* AH, EH, EE, AW, OO, UH, then IH ("sit"), UU ("book"), ER ("her"). */
+enum { MUMBLE_A, MUMBLE_E, MUMBLE_I, MUMBLE_O, MUMBLE_OO, MUMBLE_U, MUMBLE_IH, MUMBLE_UU, MUMBLE_ER, MUMBLE_VOWELS };
 enum {
     MUMBLE_PITCH,  /* Hz */
     MUMBLE_TUBE,   /* % vocal tract scale: <100 longer/deeper, >100 shorter */
@@ -51,6 +52,10 @@ enum {
     MUMBLE_RADIO,  /* % band-limited, driven "speaker" tone */
     MUMBLE_ECHO,   /* % send to the shared 250 ms echo */
     MUMBLE_ROOM,   /* % send to the shared room reverb */
+    MUMBLE_GLIDE,  /* ms a sung note slides from the singer's last one */
+    MUMBLE_VIBRATO,/* % a singer's 5.5 Hz vibrato on held notes (100 = a semitone either way) */
+    MUMBLE_DICTION,/* % consonants: bursts, hiss and endings */
+    MUMBLE_EFFORT, /* % how bright and pushed the voice is (a shout adds to it) */
     MUMBLE_PARAMS
 };
 enum { MUMBLE_PAGES = MUMBLE_PARAMS / 4 };
@@ -71,7 +76,19 @@ struct mumble_syllable {
     uint8_t index;      /* character that starts it; with MUMBLE_HOLD, the letter */
     uint8_t gen;        /* with MUMBLE_HOLD: the press it belongs to */
     uint8_t track;      /* cast member (track) whose voice speaks it */
+    uint8_t glide;      /* the vowel it slides to (a diphthong: "hey", "my"); MUMBLE_VOWELS: none */
+    uint8_t onset, onset_hz;   /* the consonant before it as noise (MUMBLE_NOISE_*), and its centre / 100 Hz */
+    uint8_t coda, coda_hz;     /* how it ends (MUMBLE_CODA_*), and the ending's centre / 100 Hz */
+    int8_t bend;        /* semitones a sung note slides from (GLIDE), 0: none */
 };
+/* A consonant as noise: a stop's burst, a fricative's hiss, a stop into a
+ * hiss ("ch", "j"), or an h's breath through the vowel. VOICED: the voice
+ * does not wait for it (b, d, g, v, z). */
+enum { MUMBLE_NOISE_NONE, MUMBLE_NOISE_BURST, MUMBLE_NOISE_HISS, MUMBLE_NOISE_AFFRICATE, MUMBLE_NOISE_BREATH,
+       MUMBLE_NOISE_VOICED = 0x80 };
+/* How a syllable ends: open, closing on a nasal (m, n, ng: a hum at coda_hz
+ * as F2), cut by a stop (a burst after), trailing a hiss, or coloured by r / l. */
+enum { MUMBLE_CODA_NONE, MUMBLE_CODA_NASAL, MUMBLE_CODA_STOP, MUMBLE_CODA_HISS, MUMBLE_CODA_R, MUMBLE_CODA_L };
 /* MUMBLE_HOLD: sustains until its letter is let go (mumble_release);
  * MUMBLE_SUSTAIN: sustains as a held letter does, for its dur_ms (a recorded note). */
 enum { MUMBLE_SHOUT = 1, MUMBLE_HUM = 2, MUMBLE_HOLD = 4, MUMBLE_SUSTAIN = 8 };
@@ -88,13 +105,14 @@ void mumble_init(void);
 
 /* One track's part of a song; length 0 leaves the track silent. start_ms is
  * its offset into the loop, level its volume in percent (100 = as planned). */
-/* A syllable's sound, as mumble_plan gives it: vowel, consonant locus, MUMBLE_HUM/MUMBLE_SHOUT. */
-struct mumble_sound { uint8_t vowel, locus, flags; };
+/* A syllable's sound, as mumble_plan gives it: vowel, consonant locus, MUMBLE_HUM/MUMBLE_SHOUT,
+ * and its glide, consonant and ending. */
+struct mumble_sound { uint8_t vowel, locus, flags, glide, onset, onset_hz, coda, coda_hz; };
 /* A recorded note: sung for len_ms from ms into the part at MIDI note, held
  * as mumble_press_sound holds a syllable. It keeps no words: it sings the
  * part's line at the time, syllable slot (round the line: slot % line_count;
  * a hum with no line), so a new line changes what a recorded loop sings. */
-struct mumble_note { uint16_t ms, len_ms; uint8_t slot, note, shout; };
+struct mumble_note { uint16_t ms, len_ms; uint8_t slot, note, shout; int8_t bend; /* semitones it slid from */ };
 struct mumble_part {
     const char *text; unsigned length; const struct mumble_voice *voice;
     uint16_t start_ms; uint8_t level;
@@ -132,7 +150,7 @@ void mumble_stop(void);
  * Every singer sings it at once at their own MIDI note: a choir. It plays on
  * the live lane, over a running song; letters already sounding keep ringing,
  * so chords work. 0, or -1 invalid. */
-struct mumble_singer { const struct mumble_voice *voice; uint8_t track, note; };
+struct mumble_singer { const struct mumble_voice *voice; uint8_t track, note; int8_t bend; /* slide from, semitones */ };
 int mumble_press(unsigned letter, const struct mumble_singer *singers, unsigned count, unsigned shout);
 /* LINE mode: a key (0..26) sings one syllable's sound, held until
  * mumble_release(key), as mumble_press does a letter's name. */
