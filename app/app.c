@@ -171,6 +171,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;
     else if (!strcmp(what, "take")) *got = t->notes;
     else if (!strcmp(what, "recording")) *got = (int)voice_recording;
+    else if (!strcmp(what, "passes")) *got = t->passes;
+    else if (!strcmp(what, "metronome")) *got = (int)voice_click;
     else return 0;
     return 1;
 }

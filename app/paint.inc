@@ -122,7 +122,7 @@ static void text(unsigned x, unsigned y, const char *s, unsigned scale, uint16_t
 
 /* The draw cache: what each part showed, so unchanged parts mark nothing. */
 struct draw_cache {
-    uint32_t hint_cache, foot_cache[4], voice_cache[8];
+    uint32_t hint_cache, foot_cache[4], voice_cache[9];
 };
 static struct draw_cache saved_cache, band_cache, *cache = &saved_cache;
 static uint32_t signature(uint32_t seed, const void *bytes, unsigned n)
