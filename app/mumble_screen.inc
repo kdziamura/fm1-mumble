@@ -27,8 +27,10 @@ enum { VOICE_TRACE = 21, VOICE_ROWS = 3, VOICE_COLUMNS = 18 };
 #define RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 enum { WHITE = 0xffff };
 static const uint16_t voice_knob_colors[4] = {0x2b7b, 0x2d8d, 0xf7be, 0xf325};
-static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf7be, 0xb47f, 0xfe87};
-static const char *const voice_page_names[MUMBLE_PAGES + 1] = {"VOICE", "FEEL", "FX", "LOOP"};
+/* AH EH EE AW OO UH, then IH UU ER (each near the vowel it sits between) */
+static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf7be, 0xb47f, 0xfe87,
+                                                     0x2c5f, 0xd51f, 0xfc90};
+static const char *const voice_page_names[MUMBLE_PAGES + 1] = {"VOICE", "FEEL", "FX", "SING", "LOOP"};
 static const char *const voice_greetings[MUMBLE_CAST] = {
     "Hey there!", "Halt.", "Bless you, child.", "Hiya! Hiya!", "Arr...", "Hmm, yes... yes.",
     "Hello. Hello.", "Whooo..."};
@@ -83,6 +85,11 @@ static uint32_t voice_held;
  * and when it began, and when each key went down. */
 static uint8_t voice_sings[MUMBLE_CAST];
 static uint32_t voice_sing_order[MUMBLE_CAST], voice_key_order[MUMBLE_LETTERS], voice_order;
+/* Legato: each singer's last pitch and when it stopped, so a note sung on
+ * straight after slides from it (GLIDE). */
+static uint8_t voice_sing_pitch[MUMBLE_CAST];
+static uint32_t voice_sing_end[MUMBLE_CAST];
+static int8_t voice_rec_bend[MUMBLE_CAST];
 /* The line's syllables, the current one, whether one has been sung yet, the
  * key leading it (MUMBLE_LETTERS: none), and each key's slot and sound. */
 static unsigned voice_lyric_at, voice_lyric_count, voice_lyric_started, voice_lyric_lead = MUMBLE_LETTERS;
@@ -267,7 +274,8 @@ static void voice_lyric_sync(void)
         voice_lyric_count = mumble_plan(line, n, &voice_track()->sound, 0, voice_lyric_plan, MUMBLE_SYLLABLES, NULL, NULL);
         for (unsigned k = 0; k < voice_lyric_count; ++k) {
             const struct mumble_syllable *y = &voice_lyric_plan[k];
-            voice_line_sounds[k] = (struct mumble_sound){y->vowel, y->locus, (uint8_t)(y->flags & (MUMBLE_HUM | MUMBLE_SHOUT))};
+            voice_line_sounds[k] = (struct mumble_sound){y->vowel, y->locus, (uint8_t)(y->flags & (MUMBLE_HUM | MUMBLE_SHOUT)),
+                                                         y->glide, y->onset, y->onset_hz, y->coda, y->coda_hz};
         }
         voice_lyric_rewind();
         voice_touch();                   /* the loop sings the new line */
@@ -361,7 +369,7 @@ static void voice_rec_release(unsigned who)
     memmove(voice_seq_track + at + 1, voice_seq_track + at, voice_seq_count - at);
     memmove(voice_seq_pass + at + 1, voice_seq_pass + at, voice_seq_count - at);
     voice_seq[at] = (struct mumble_note){voice_rec_at[who], (uint16_t)len, voice_rec_slot[who], voice_rec_note[who],
-                                         (uint8_t)voice_caps};
+                                         (uint8_t)voice_caps, voice_rec_bend[who]};
     voice_seq_track[at] = (uint8_t)who;
     voice_seq_pass[at] = (uint8_t)voice_pass;
     ++voice_seq_count;
@@ -400,13 +408,20 @@ static void voice_note_off(unsigned who)
     mumble_release(voice_sings[who] - 1U);
     voice_rec_release(who);
     voice_sings[who] = 0;
+    voice_sing_end[who] = frame_time;
 }
 static void voice_note_on(unsigned who, unsigned key)
 {
-    static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM};
+    static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM, MUMBLE_VOWELS, 0, 0, 0, 0};
     const struct mumble_voice *v = &voice_tracks[who].sound;
     int pitch = clamp(53 + (int)key + 12 * (voice_octave + mumble_register(v)), 0, 127);   /* lowest key is F3 */
-    struct mumble_singer one = {v, (uint8_t)who, (uint8_t)pitch};
+    /* Straight on from its last note (within 60 ms): slide from it. */
+    int bend = 0;
+    if (voice_sing_pitch[who] && frame_time - voice_sing_end[who] <= 60U)
+        bend = clamp((int)voice_sing_pitch[who] - pitch, -24, 24);
+    struct mumble_singer one = {v, (uint8_t)who, (uint8_t)pitch, (int8_t)bend};
+    voice_sing_pitch[who] = (uint8_t)pitch;
+    voice_rec_bend[who] = (int8_t)bend;
     unsigned slot = voice_key_slot[key];
     mumble_press_sound(key, voice_lyric_count ? &voice_line_sounds[slot % voice_lyric_count] : &hum, &one, 1, voice_caps);
     voice_sings[who] = (uint8_t)(key + 1U);
@@ -671,7 +686,8 @@ static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
 };
 enum { CAST_KID = 3, CAST_ELDER = 5, CAST_BOT = 6, CAST_GHOST = 7 };
 /* Mouth size per vowel when fully open (icon pixels). */
-static const uint8_t vowel_mouth[MUMBLE_VOWELS][2] = {{4, 3}, {4, 2}, {4, 1}, {3, 3}, {2, 2}, {3, 2}};
+static const uint8_t vowel_mouth[MUMBLE_VOWELS][2] = {{4, 3}, {4, 2}, {4, 1}, {3, 3}, {2, 2}, {3, 2},
+                                                       {4, 1}, {2, 2}, {3, 2}};
 
 static char voice_grid[SPRITE][SPRITE + 1];
 static void grid_set(int x, int y, char c)
@@ -746,7 +762,8 @@ static void voice_header(void)
 {
     if (paint_rendering && paint_top >= 28) return;
     const struct mumble_character *who = &mumble_cast[voice_cast];
-    uint32_t sig = voice_cast | (voice_page << 4) | (voice_caps << 6) | (voice_edited() << 7) |
+    /* (cast: 3 bits, page: 3 bits, then one bit each) */
+    uint32_t sig = voice_cast | (voice_page << 3) | (voice_caps << 6) | (voice_edited() << 7) |
                    (voice_play << 8) | ((voice_song != 0) << 9) | ((uint32_t)voice_track()->choir << 10);
     if (cache->voice_cache[0] == sig) return;
     cache->voice_cache[0] = sig;
