@@ -51,7 +51,10 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends libclang-rt-18-dev
           CC=clang-18 tests/fuzz.sh --replay tests/fuzz-seeds/*
-          CC=clang-18 tests/fuzz.sh -max_total_time=120 -print_final_stats=1
+          # (libFuzzer's line a new input goes to the log, attached below; the step shows the end)
+          CC=clang-18 tests/fuzz.sh -max_total_time=120 -print_final_stats=1 > app/build/fuzz/fuzz.log 2>&1 \
+            || { tail -n 60 app/build/fuzz/fuzz.log; exit 1; }
+          grep -E '^(stat::|Done )' app/build/fuzz/fuzz.log
           CC=clang-18 tests/fuzz.sh --replay
 
       - name: Firmware
@@ -73,4 +76,5 @@ jobs:
             firmware/mumble-fm1/app/build/host/*.png
             firmware/mumble-fm1/app/build/host/*.wav
             firmware/mumble-fm1/app/build/fuzz/crashes/
+            firmware/mumble-fm1/app/build/fuzz/fuzz.log
           if-no-files-found: warn
