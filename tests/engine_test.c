@@ -214,6 +214,22 @@ int main(int argc, char **argv)
         guard_again |= st.track_level[1] != 0;
     }
     CHECK(elder && guard_again, "the live lane plays over the song without stopping it");
+
+    /* A cut silences the live line within its release and leaves the song. */
+    const char *long_line = "aaaa eeee iiii oooo uuuu aaaa eeee";
+    mumble_aside(5, long_line, (unsigned)strlen(long_line), &mumble_cast[5].voice);
+    for (unsigned b = 0; b < 60; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    struct mumble_status cut_before; mumble_status(&cut_before);
+    mumble_cut();
+    unsigned cut_after = 0, song_on = 0;
+    for (unsigned b = 0; b < 400; ++b) {
+        memset(z, 0, sizeof z); mumble_render(z);
+        struct mumble_status st; mumble_status(&st);
+        if (b * FM1_BLOCK_FRAMES * 1000U / FM1_SAMPLE_RATE > 150U) cut_after |= st.track_level[5];
+        song_on |= st.track_level[1] != 0;
+    }
+    CHECK(cut_before.track_level[5] && !cut_after, "a cut live line falls silent within 150 ms");
+    CHECK(song_on && mumble_song_position() >= 0, "a cut leaves the song playing");
     mumble_stop();
 
     /* Effects: a GHOST echo rings on after the line; BOT's crush is stepped. */

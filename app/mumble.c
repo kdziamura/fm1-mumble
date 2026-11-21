@@ -289,6 +289,7 @@ struct hum {
     uint32_t noise;
     uint8_t active, vowel, track, crush_hold, crush_count;
     uint8_t tag, gen, hold;      /* held letter + 1 (0 = not held), its press, sustains */
+    uint8_t live, cut;           /* started by the live lane, and the cut count it belongs to */
 };
 static struct song songs[3];
 static struct live lives[3];
@@ -305,6 +306,8 @@ static uint8_t live_next;
 /* Bumped by every press and release of a letter; a held hum lets go when its
  * letter's count moves past the press it started from. */
 static volatile uint8_t held_gen[MUMBLE_LETTERS];
+/* Bumped by mumble_cut: live-lane hums from before it let go. */
+static volatile uint8_t live_cut;
 static volatile uint8_t status_vowel = MUMBLE_VOWELS, status_level, status_track;
 static volatile uint8_t status_track_vowel[MUMBLE_CAST], status_track_level[MUMBLE_CAST];
 static volatile int16_t status_cents;
@@ -491,6 +494,15 @@ int mumble_type(unsigned track, const char *text, unsigned length, const struct 
     return 1;
 }
 
+void mumble_cut(void)
+{
+    unsigned slot;
+    struct live *s = live_slot(&slot);
+    s->count = 0;
+    live_request = (uint8_t)slot;
+    live_cut = (uint8_t)(live_cut + 1U);
+}
+
 void mumble_stop(void)
 {
     mumble_song_stop();
@@ -619,8 +631,8 @@ void mumble_status(struct mumble_status *status)
 /* ------------------------------------------------------------------------
  * Audio.
  * ---------------------------------------------------------------------- */
-static FM1_AUDIO_CODE void hum_start(const struct mumble_syllable *s, const struct mumble_voice *v,
-                                     int32_t delay, uint32_t seed)
+static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, const struct mumble_voice *v,
+                                            int32_t delay, uint32_t seed)
 {
     /* Steal a free voice, else the oldest; a held letter goes last. */
     struct hum *h = &hums[0];
@@ -691,7 +703,9 @@ static FM1_AUDIO_CODE void hum_start(const struct mumble_syllable *s, const stru
     h->vowel = s->vowel;
     h->track = s->track < MUMBLE_CAST ? s->track : 0U;
     h->pos = -delay;
+    h->live = 0;
     h->active = 1;
+    return h;
 }
 
 static inline __attribute__((always_inline)) float noise(uint32_t *state) /* [-1, 1) */
@@ -885,8 +899,10 @@ static FM1_AUDIO_CODE void live_tick(const struct live *s, uint32_t now)
         uint32_t at = live_origin + syllable_frames(y);
         if ((int32_t)(at - end) >= 0) break;
         int32_t delay = (int32_t)(at - now);
-        hum_start(y, &s->voice[y->track < MUMBLE_CAST ? y->track : 0], delay > 0 ? delay : 0,
-                  (uint32_t)(live_ack * 131U + live_next * 7919U) ^ (now * 2654435761U));
+        struct hum *h = hum_start(y, &s->voice[y->track < MUMBLE_CAST ? y->track : 0], delay > 0 ? delay : 0,
+                                  (uint32_t)(live_ack * 131U + live_next * 7919U) ^ (now * 2654435761U));
+        h->live = 1;
+        h->cut = live_cut;
         ++live_next;
     }
 }
@@ -907,8 +923,9 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
     for (unsigned v = 0; v < VOICES; ++v) {
         struct hum *h = &hums[v];
         any |= h->active;
-        /* A released letter lets go from where it is (after its swell). */
-        if (h->active && h->tag && held_gen[h->tag - 1U] != h->gen) {
+        /* A released letter, or a cut live line, lets go from where it is
+         * (after its swell). */
+        if (h->active && ((h->tag && held_gen[h->tag - 1U] != h->gen) || (h->live && h->cut != live_cut))) {
             uint32_t from = h->pos > 0 ? (uint32_t)h->pos : 0U;
             if (from < h->attack) from = h->attack;
             if (from + h->release < h->dur) {
@@ -916,6 +933,7 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
                 h->frames = h->dur + FM1_SAMPLE_RATE * 3U / 100U;
             }
             h->tag = 0;
+            h->live = 0;
         }
     }
     wobble_phase += (float)FM1_BLOCK_FRAMES * (2.0f / RATE);

@@ -13,7 +13,7 @@
  * at once without disturbing the song.
  *
  * Control task: mumble_song / mumble_say / mumble_aside / mumble_type /
- * mumble_press / mumble_stop / mumble_status. Audio ISR: mumble_render mixes
+ * mumble_press / mumble_cut / mumble_stop / mumble_status. Audio ISR: mumble_render mixes
  * into the finished instrument block. */
 #ifndef FM1_MUMBLE_H
 #define FM1_MUMBLE_H
@@ -89,6 +89,9 @@ int mumble_aside(unsigned track, const char *text, unsigned length, const struct
 /* Live typing: text already ends with the new character. Speaks its syllable
  * on the live lane if that character starts one. Returns 1 when queued. */
 int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice);
+/* Cut the live lane: drop the rest of its line and let what it sounds go
+ * with a short release. The song plays on. */
+void mumble_cut(void);
 /* Stop the song and the live lane and release every held letter. Effect
  * tails ring out. */
 void mumble_stop(void);
