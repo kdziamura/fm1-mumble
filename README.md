@@ -17,6 +17,7 @@ loop. A change to MUMBLE shows in the browser preview and in the firmware alike.
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
 | `app/tests/basic.txt` | Host simulator script: typing, a demo line, PLAY, SAMPLE, the LOOP page; screenshots and a WAV |
+| `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
 
 ## Build and test
@@ -34,6 +35,19 @@ base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python   # pinned, checke
 base/.venv/bin/python base/tools/build.py app --host             # the host simulator: any cc, no toolchain
 app/build/host/mumble_host app/tests/basic.txt app/build/host
 base/.venv/bin/python base/tools/build.py app                    # app/build/mumble.fwsc
+~~~
+
+### Fuzzing
+
+`tests/fuzz.sh` builds `app/app.c`, `app/paint.inc` and the engine with clang, ASan and UBSan on a stand-in
+platform and plays each fuzz input as a performance from a fresh boot (the app's state is put back between inputs, so
+a crash file replays alone: `app/build/fuzz/mumble-fuzz CRASHFILE`). Besides memory errors and undefined behaviour it
+fails when a blit leaves the screen or its band buffer, a band buffer changes while its DMA is still sending it, the
+incremental redraw differs from a full repaint, an LED names a control the FM-1 lacks, HOME leaves the page, sound
+outlasts a panic by 3 s, or the same input plays differently twice. CI runs the seeds and two minutes of it.
+
+~~~sh
+tests/fuzz.sh -max_total_time=600 -jobs=8       # clang with libFuzzer; corpus and crashes in app/build/fuzz/
 ~~~
 
 ## Install

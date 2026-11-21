@@ -47,6 +47,13 @@ jobs:
           python3 base/tools/build.py app --host
           app/build/host/mumble_host app/tests/basic.txt app/build/host
 
+      - name: Fuzz (the seeds, then two minutes; tests/fuzz.c)
+        run: |
+          sudo apt-get install -y --no-install-recommends libclang-rt-18-dev
+          CC=clang-18 FUZZ_BUILD_ONLY=1 tests/fuzz.sh
+          app/build/fuzz/mumble-fuzz tests/fuzz-seeds/*
+          CC=clang-18 tests/fuzz.sh -max_total_time=120 -print_final_stats=1
+
       - name: Firmware
         run: |
           python3 base/tools/build.py app
@@ -65,4 +72,5 @@ jobs:
             firmware/mumble-fm1/app/build/SHA256SUMS.txt
             firmware/mumble-fm1/app/build/host/*.png
             firmware/mumble-fm1/app/build/host/*.wav
+            firmware/mumble-fm1/app/build/fuzz/crashes/
           if-no-files-found: warn
