@@ -356,6 +356,9 @@ static volatile uint32_t click_beat_frames;
 static uint32_t click_left;
 static float click_y1, click_y2, click_k1, click_k2;
 static float click_coef[2][3];                   /* plain, accented: k1, k2, first sample */
+/* The master compressor: the mix's level (a peak follower) and the gain it
+ * sets, so a choir's chord does not drive the soft clip. */
+static float comp_level, comp_gain = 1.0f;
 
 CONTROL void mumble_init(void)
 {
@@ -391,6 +394,7 @@ CONTROL void mumble_init(void)
         click_coef[a][2] = (a ? 0.16f : 0.10f) * cos_approx(w - 0.5f * PI);   /* amplitude * sin(w) */
     }
     click_beats = 0; click_left = 0; click_y1 = click_y2 = 0.0f;
+    comp_level = 0.0f; comp_gain = 1.0f;
     for (unsigned i = 0; i < 4; ++i) { comb_at[i] = 0; comb_tone[i] = 0.0f; }
     allpass_at[0] = allpass_at[1] = 0;
     song_request = song_ack = live_request = live_ack = 0;
@@ -421,14 +425,16 @@ CONTROL static unsigned letter_syllables(unsigned letter, unsigned note, const s
                                          unsigned shout, struct mumble_syllable *out);
 CONTROL static unsigned sound_syllable(unsigned key, const struct mumble_sound *sound, unsigned note,
                                        const struct mumble_voice *voice, unsigned shout, struct mumble_syllable *out);
-/* A recorded note on a track: its letter's syllables (or its one syllable's
- * sound) from note->ms, the last sustained until the key went up (then its
+/* A recorded note on a track: its slot's syllable of the part's line (a hum
+ * with no line) from note->ms, sustained until the key went up (then its
  * 120 ms release). */
-CONTROL static unsigned note_syllables(const struct mumble_note *note, const struct mumble_voice *voice,
+CONTROL static unsigned note_syllables(const struct mumble_note *note, const struct mumble_part *part,
                                        struct mumble_syllable *out)
 {
-    unsigned got = note->syllable ? sound_syllable(note->letter, &note->sound, note->note, voice, note->shout, out)
-                                  : letter_syllables(note->letter, note->note, voice, note->shout, out);
+    static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM};
+    const struct mumble_sound *sound =
+        part->line && part->line_count ? &part->line[note->slot % part->line_count] : &hum;
+    unsigned got = sound_syllable(0, sound, note->note, part->voice, note->shout, out);
     for (unsigned i = 0; i < got; ++i) {
         struct mumble_syllable *y = &out[i];
         uint32_t offset = y->ms, at = (uint32_t)note->ms + offset;
@@ -467,9 +473,9 @@ CONTROL int mumble_song(const struct mumble_part parts[MUMBLE_CAST], uint32_t lo
         }
         for (unsigned k = 0; has_notes && k < p->note_count && SONG_SYLLABLES - n >= 3U; ++k) {
             const struct mumble_note *q = &p->notes[k];
-            if (q->letter >= MUMBLE_LETTERS || q->note > 127U) continue;
+            if (q->note > 127U) continue;
             if (s->period && ms_frames(q->ms) >= s->period) continue;   /* past the end of a shorter loop */
-            n += note_syllables(q, p->voice, s->syllable + n);
+            n += note_syllables(q, p, s->syllable + n);
             if ((uint32_t)q->ms + q->len_ms + 120U > end) end = (uint32_t)q->ms + q->len_ms + 120U;
         }
         unsigned level = p->level > 100U ? 100U : p->level;
@@ -496,7 +502,7 @@ CONTROL int mumble_say(unsigned track, const char *text, unsigned length, const 
     if (!text || !voice || track >= MUMBLE_CAST) return -1;
     struct mumble_part parts[MUMBLE_CAST];
     memset(parts, 0, sizeof parts);
-    parts[track] = (struct mumble_part){text, length, voice, 0, 100, NULL, 0};
+    parts[track] = (struct mumble_part){text, length, voice, 0, 100, NULL, 0, NULL, 0};
     return mumble_song(parts, 0, 1, 0);
 }
 CONTROL void mumble_metronome(unsigned beats, uint32_t loop_ms)
@@ -1172,9 +1178,15 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         mix[i] += click_y2;
         --click_left;
     }
-    /* Soft clip (rational tanh), then mix at -2 dB under full scale. */
+    /* Compress, then soft clip (rational tanh), then mix at -2 dB under full
+     * scale. Over 0.5 the level rises a quarter as fast (4:1), with a 2 ms
+     * attack and a 150 ms release; the gain is set every 16 frames. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
-        float x = mix[i] * 1.12f;
+        float a = mix[i] < 0.0f ? -mix[i] : mix[i];
+        if (a > comp_level) comp_level += (a - comp_level) * 0.0113f;
+        else comp_level *= 0.99985f;
+        if (!(i & 15U)) comp_gain = comp_level > 0.5f ? (0.5f + (comp_level - 0.5f) * 0.25f) / comp_level : 1.0f;
+        float x = mix[i] * comp_gain * 1.12f;
         if (x > 3.0f) x = 3.0f; else if (x < -3.0f) x = -3.0f;
         float y = x * (27.0f + x * x) / (27.0f + 9.0f * x * x) * 0.9f;
         int32_t sample = (int32_t)(y * 6600000.0f);

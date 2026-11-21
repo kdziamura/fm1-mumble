@@ -90,14 +90,16 @@ void mumble_init(void);
  * its offset into the loop, level its volume in percent (100 = as planned). */
 /* A syllable's sound, as mumble_plan gives it: vowel, consonant locus, MUMBLE_HUM/MUMBLE_SHOUT. */
 struct mumble_sound { uint8_t vowel, locus, flags; };
-/* A letter sung for len_ms from ms into the part, at MIDI note: a PLAY-mode
- * take, played back as mumble_press would sing it, or (syllable 1, LINE mode)
- * its sound held as mumble_press_sound would. letter is the key it was on. */
-struct mumble_note { uint16_t ms, len_ms; uint8_t letter, note, shout, syllable; struct mumble_sound sound; };
+/* A recorded note: sung for len_ms from ms into the part at MIDI note, held
+ * as mumble_press_sound holds a syllable. It keeps no words: it sings the
+ * part's line at the time, syllable slot (round the line: slot % line_count;
+ * a hum with no line), so a new line changes what a recorded loop sings. */
+struct mumble_note { uint16_t ms, len_ms; uint8_t slot, note, shout; };
 struct mumble_part {
     const char *text; unsigned length; const struct mumble_voice *voice;
     uint16_t start_ms; uint8_t level;
-    const struct mumble_note *notes; unsigned note_count;   /* sung along with the line, in time order or not */
+    const struct mumble_note *notes; unsigned note_count;   /* sung along with the text, in time order or not */
+    const struct mumble_sound *line; unsigned line_count;    /* the syllables the notes sing */
 };
 /* Play every part on one clock: once (loop_ms 0) or looping every loop_ms,
  * cutting a line that outlasts the loop. restart=1 starts the clock phase_ms

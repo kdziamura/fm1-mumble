@@ -181,8 +181,8 @@ int main(int argc, char **argv)
 
     /* Choir: two tracks speak together, each with its own voice. */
     struct mumble_part parts[MUMBLE_CAST] = {{0}};
-    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice, 0, 100, NULL, 0};
-    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice, 0, 100, NULL, 0};
+    parts[1] = (struct mumble_part){"Halt! Who goes there?", 21, &mumble_cast[1].voice, 0, 100, NULL, 0, NULL, 0};
+    parts[3] = (struct mumble_part){"It's me! It's me!", 17, &mumble_cast[3].voice, 0, 100, NULL, 0, NULL, 0};
     mumble_song(parts, 0, 1, 0);
     unsigned both = 0;
     int32_t last_ms = -1;
@@ -199,8 +199,8 @@ int main(int argc, char **argv)
     mumble_stop();
     for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     memset(parts, 0, sizeof parts);
-    parts[3] = (struct mumble_part){"ha", 2, &mumble_cast[3].voice, 0, 100, NULL, 0};
-    parts[1] = (struct mumble_part){"ho", 2, &mumble_cast[1].voice, 500, 100, NULL, 0};
+    parts[3] = (struct mumble_part){"ha", 2, &mumble_cast[3].voice, 0, 100, NULL, 0, NULL, 0};
+    parts[1] = (struct mumble_part){"ho", 2, &mumble_cast[1].voice, 500, 100, NULL, 0, NULL, 0};
     mumble_song(parts, 1000, 1, 0);
     unsigned guard_first = 0, kid_onsets = 0, kid_was = 0, wraps = 0;
     int32_t previous = 0;
@@ -258,8 +258,8 @@ int main(int argc, char **argv)
     mumble_stop();
     for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
     memset(parts, 0, sizeof parts);
-    const struct mumble_note take[1] = {{300, 400, 1, 60, 0, 0, {0, 0, 0}}};
-    parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, take, 1};
+    const struct mumble_note take[1] = {{300, 400, 0, 60, 0}};
+    parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, take, 1, NULL, 0};
     mumble_song(parts, 1000, 1, 0);
     unsigned take_onsets = 0, take_was = 0, take_first = 0, held_blocks = 0, late_blocks = 0;
     for (unsigned b = 0; b < 1020; ++b) { /* 2.96 s */
@@ -294,9 +294,11 @@ int main(int argc, char **argv)
     struct mumble_status syl_gone; mumble_status(&syl_gone);
     CHECK(syl_held.track_level[2] && syl_held.track_vowel[2] == lo.vowel && !syl_gone.track_level[2],
           "a held syllable sustains its vowel until its key is let go");
-    const struct mumble_note syl_take[1] = {{200, 600, 5, 62, 0, 1, {lo.vowel, lo.locus, lo.flags}}};
+    /* (slot 1 of a two-syllable line: "lo") */
+    const struct mumble_sound syl_line[2] = {{heh[0].vowel, heh[0].locus, heh[0].flags}, lo};
+    const struct mumble_note syl_take[1] = {{200, 600, 1, 62, 0}};
     memset(parts, 0, sizeof parts);
-    parts[2] = (struct mumble_part){NULL, 0, &mumble_cast[2].voice, 0, 100, syl_take, 1};
+    parts[2] = (struct mumble_part){NULL, 0, &mumble_cast[2].voice, 0, 100, syl_take, 1, syl_line, 2};
     mumble_song(parts, 1000, 1, 0);
     unsigned syl_mid = 0, syl_after = 0;
     for (unsigned b = 0; b < 344; ++b) {
@@ -306,14 +308,43 @@ int main(int argc, char **argv)
         if (ms >= 450 && ms < 750) syl_mid += st.track_level[2] && st.track_vowel[2] == lo.vowel;
         if (ms >= 950) syl_after += st.track_level[2] != 0;
     }
-    CHECK(syl_mid > 90 && !syl_after, "a take's syllable plays its vowel while held, then lets go (%u, %u)", syl_mid,
+    CHECK(syl_mid > 90 && !syl_after, "a take's slot plays its line's syllable while held, then lets go (%u, %u)", syl_mid,
           syl_after);
     mumble_song_stop();
 
+    /* The compressor: a chord of all eight characters, shouted, stays off the
+     * soft clip's ceiling (0.71 of full scale: above 0.6 it is saturating);
+     * one voice alone keeps its level. */
+    mumble_stop();
+    for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    float levels[2] = {0}, near_top = 0.0f, samples = 0.0f;
+    for (unsigned chord = 0; chord < 2; ++chord) {
+        unsigned voices = chord ? MUMBLE_CAST : 1;
+        for (unsigned v = 0; v < voices; ++v) {
+            struct mumble_singer one = {&mumble_cast[v].voice, (uint8_t)v, (uint8_t)(55 + v * 4)};
+            mumble_press(v * 3U, &one, 1, chord);
+        }
+        for (unsigned b = 0; b < 690; ++b) {   /* 2 s */
+            memset(z, 0, sizeof z); mumble_render(z);
+            if (b < 170) continue;             /* from 0.5 s: held */
+            for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) {
+                float x = z[i] / 8388608.0f;
+                levels[chord] += x * x;
+                if (chord) { near_top += x > 0.6f || x < -0.6f; samples += 1.0f; }
+            }
+        }
+        mumble_stop();
+        for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    }
+    printf("compressor: one voice rms %.3f, eight shouted rms %.3f, %.2f%% near the top\n",
+           sqrt(levels[0] / (520 * 128)), sqrt(levels[1] / (520 * 128)), 100.0f * near_top / samples);
+    CHECK(near_top < 0.002f * samples, "a chord of eight stays clear of the clip (%.2f%% of samples)", 100.0f * near_top / samples);
+    CHECK(levels[1] > 1.5f * levels[0], "a chord is still louder than one voice");
+
     /* Stopping the song lets a sustained note go at once (PLAY, a panic). */
-    const struct mumble_note long_take[1] = {{100, 5000, 14, 60, 0, 0, {0, 0, 0}}};
+    const struct mumble_note long_take[1] = {{100, 5000, 0, 60, 0}};
     memset(parts, 0, sizeof parts);
-    parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, long_take, 1};
+    parts[0] = (struct mumble_part){NULL, 0, &mumble_cast[0].voice, 0, 100, long_take, 1, NULL, 0};
     mumble_song(parts, 8000, 1, 0);
     for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }   /* 0.58 s: into the note */
     struct mumble_status held_note; mumble_status(&held_note);
