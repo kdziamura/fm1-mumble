@@ -32,7 +32,8 @@
  *       a pad; REC in PLAY flips recording (looping, the loop running), and
  *       every character sings one key at a time, the last key pressed at
  *       once, no key held unsung while a choir member is free; a take grows
- *       only by what its character sang while recorded;
+ *       only by what its character sang while recorded; LINE mode's queue
+ *       moves on a syllable a key pressed, round the line;
  *       EDIT undoes the take's last pass (PLAY), else clears the line, else
  *       every line and take; the metronome runs exactly while recording.
  * And once, at start-up, every button combination survives the panel's
@@ -188,6 +189,9 @@ static void check_state(void)
         voice_talking > 1)
         fail("S1 a flag is not 0 or 1");
     if (voice_play && voice_sample) fail("S1 PLAY and SAMPLE at once");
+    if (voice_lyric && !voice_play) fail("S1 LINE mode outside PLAY");
+    if (voice_lyric_count > MUMBLE_SYLLABLES || (voice_lyric && voice_lyric_at >= (voice_lyric_count ? voice_lyric_count : 1u)))
+        fail("S1 LINE mode's next syllable out of its line");
     if (voice_song > 2) fail("S1 song state out of range");
     if (voice_demo >= VOICE_LINES) fail("S1 demo line out of range");
     if (voice_bars != 1 && voice_bars != 2 && voice_bars != 4 && voice_bars != 8) fail("S1 bars not 1, 2, 4 or 8");
@@ -226,7 +230,8 @@ static void check_state(void)
         if (t->notes > VOICE_TAKE) fail("S1 a take longer than it holds");
         for (unsigned k = 0; k < t->notes; ++k)
             if (t->take[k].letter >= MUMBLE_LETTERS || t->take[k].note > 127u || t->take[k].len_ms < 30u ||
-                t->take[k].shout > 1u)
+                t->take[k].shout > 1u || t->take[k].syllable > 1u ||
+                (t->take[k].syllable && t->take[k].sound.vowel >= MUMBLE_VOWELS))
                 fail("S1 a take's note out of range");
         if (t->passes > VOICE_PASSES || !t->notes != !t->passes || (t->passes && t->pass_at[0]))
             fail("S1 a take's passes do not cover it from its first letter");
@@ -254,7 +259,8 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     struct voice_pad pads[MUMBLE_LETTERS];
-    unsigned cast, page, caps, loop, play, sample, bars, bpm, demo, song, recording;
+    unsigned cast, page, caps, loop, play, sample, bars, bpm, demo, song, recording, lyric, lyric_at, lyric_count;
+    uint32_t lyric_sig;
     int octave;
     uint32_t pressed, held, key_down, keys, letters, rec_held;
     uint8_t rec_letter[MUMBLE_CAST];
@@ -268,6 +274,8 @@ static void step_before(void)
     before.play = voice_play, before.sample = voice_sample, before.bars = voice_bars, before.bpm = voice_bpm;
     before.demo = voice_demo, before.song = voice_song, before.octave = voice_octave, before.letters = voice_held;
     before.recording = voice_recording, before.rec_held = voice_rec_held;
+    before.lyric = voice_lyric, before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count;
+    before.lyric_sig = voice_lyric_sig;
     memcpy(before.rec_letter, voice_rec_letter, sizeof before.rec_letter);
     /* As app.c's input() will read them (HOME never reaches the page). */
     before.held = panel_buttons(held_buttons);
@@ -304,8 +312,10 @@ static void step_after(void)
                 if (voice_tracks[i].length || voice_tracks[i].notes) fail("S2 EDIT on an empty line left a line or a take");
     }
     if (pressed == BUTTON(GLO) && !turned_any) {
-        unsigned mode = before.play ? 1u : before.sample ? 2u : 0u, now = voice_play ? 1u : voice_sample ? 2u : 0u;
-        if (now != (mode + 1u) % 3u) fail("S2 GLO did not go on to the next mode");
+        /* TYPE, PLAY, LINE, SAMPLE */
+        unsigned mode = before.play ? 1u + before.lyric : before.sample ? 3u : 0u;
+        unsigned now = voice_play ? 1u + voice_lyric : voice_sample ? 3u : 0u;
+        if (now != (mode + 1u) % 4u) fail("S2 GLO did not go on to the next mode");
     }
     if (pressed == BUTTON(PLAY) && !turned_any && !before.key_down) {
         if (before.song && voice_song) fail("S2 PLAY did not stop the song");
@@ -372,7 +382,13 @@ static void step_after(void)
             fail("S2 a take grew without its character being recorded");
         if (now->notes > was->notes && now->take[was->notes].letter != before.rec_letter[i])
             fail("S2 a take recorded the wrong letter");
+        for (unsigned k = was->notes; k < now->notes; ++k)
+            if (now->take[k].syllable != before.lyric) fail("S2 a take recorded a syllable as a letter, or back");
     }
+    /* LINE: one shared queue, a syllable a key pressed, round the line. */
+    if (before.lyric && voice_lyric && before.lyric_count && voice_lyric_sig == before.lyric_sig &&
+        voice_lyric_at != (before.lyric_at + (unsigned)__builtin_popcount(before.key_down)) % before.lyric_count)
+        fail("S2 LINE mode's queue did not move on by the keys pressed");
     /* PLAY: the last key pressed is sung at once. */
     if (before.play && voice_play && before.key_down) {
         unsigned last = 31u - (unsigned)__builtin_clz(before.key_down), sung = 0;
