@@ -164,7 +164,7 @@ int app_expect(const char *what, int *got)
     if (!strcmp(what, "cast")) *got = (int)voice_cast;
     else if (!strcmp(what, "length")) *got = t->length;
     else if (!strcmp(what, "song")) *got = (int)voice_song;
-    else if (!strcmp(what, "mode")) *got = voice_play ? 1 : voice_sample ? 2 : 0;
+    else if (!strcmp(what, "mode")) *got = voice_play ? (voice_lyric ? 3 : 1) : voice_sample ? 2 : 0;
     else if (!strcmp(what, "page")) *got = (int)voice_page;
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
     else if (!strcmp(what, "choir")) *got = t->choir;
@@ -174,6 +174,12 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "passes")) *got = t->passes;
     else if (!strcmp(what, "metronome")) *got = (int)voice_click;
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;
+    else if (!strcmp(what, "lyric")) *got = (int)voice_lyric_at;
+    else if (!strcmp(what, "lyrics")) *got = (int)voice_lyric_count;
+    else if (!strcmp(what, "take_syllables")) {
+        *got = 0;
+        for (unsigned k = 0; k < t->notes; ++k) *got += t->take[k].syllable;
+    }
     else if (!strcmp(what, "singing") || !strcmp(what, "takes")) {
         *got = 0;
         for (unsigned i = 0; i < MUMBLE_CAST; ++i)

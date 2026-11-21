@@ -36,7 +36,10 @@ expect sounding 1
 shot singing.png
 key 0 up
 wait 600
-# GLO again: SAMPLE mode, a pad speaks its word while held
+# GLO again: LINE mode; and again: SAMPLE mode, a pad speaks its word while held
+tap GLO
+wait 30
+expect mode 3
 tap GLO
 wait 30
 expect mode 2

@@ -64,6 +64,11 @@ static const char *const voice_pad_words[] = {
     "Jump!", "Kaboom!", "Look!", "Mmm...", "No!", "Oh!", "Please?", "Quiet!", "Run!",
     "Sorry.", "Thanks!", "Uh-oh.", "Very good!", "What?", "Excuse me.", "Yes!", "Zzz...", "Hmm..."};
 _Static_assert(sizeof voice_pad_words / sizeof voice_pad_words[0] == MUMBLE_LETTERS, "a word per key");
+static const char *const voice_line_hints[] = {
+    "EACH KEY SINGS THE NEXT SYLLABLE",
+    "FX: FROM THE TOP  ARP: ANOTHER LINE",
+    "TYPE A LINE IN TYPE MODE TO SING IT",
+    "REC: RECORD INTO THE LOOP"};
 static const char *const voice_play_hints[] = {
     "HOLD KEYS TO SING  GLO TYPE MODE",
     "OCT- OCT+ OCTAVE  SELECT WHO",
@@ -110,7 +115,16 @@ static uint32_t voice_sing_order[MUMBLE_CAST], voice_key_order[MUMBLE_LETTERS], 
 /* PLAY mode's REC: what each character sings goes into its own take, on the
  * loop, pass over pass. A singer being recorded: where its letter began, when,
  * which and at what note. */
+/* LINE mode (PLAY with voice_lyric): each key pressed takes the next syllable
+ * of the selected character's line (the demo line when it has none), round
+ * and round; the line's plan, the next syllable, and what each key sings. */
+static unsigned voice_lyric, voice_lyric_at, voice_lyric_count;
+static uint32_t voice_lyric_sig;
+static struct mumble_syllable voice_lyric_plan[MUMBLE_SYLLABLES];
+static struct mumble_sound voice_key_sound[MUMBLE_LETTERS];
 static unsigned voice_recording;
+static uint32_t voice_rec_lyric;                  /* singers recording a syllable (LINE), not a letter's name */
+static struct mumble_sound voice_rec_sound[MUMBLE_CAST];
 static uint32_t voice_rec_held, voice_rec_since[MUMBLE_CAST];
 static uint16_t voice_rec_at[MUMBLE_CAST];
 static uint8_t voice_rec_letter[MUMBLE_CAST], voice_rec_note[MUMBLE_CAST];
@@ -328,7 +342,8 @@ static void voice_rec_release(unsigned who)
         voice_pass_open |= 1U << who;
     }
     t->take[t->notes++] = (struct mumble_note){voice_rec_at[who], (uint16_t)len, voice_rec_letter[who],
-                                                voice_rec_note[who], (uint8_t)voice_caps};
+                                                voice_rec_note[who], (uint8_t)voice_caps,
+                                                (uint8_t)((voice_rec_lyric >> who) & 1U), voice_rec_sound[who]};
     ++voice_lanes_version;
     if (voice_song) voice_song_dirty = 1;
 }
@@ -345,10 +360,15 @@ static void voice_note_on(unsigned who, unsigned key)
     const struct mumble_voice *v = &voice_tracks[who].sound;
     int pitch = clamp(53 + (int)key + 12 * (voice_octave + mumble_register(v)), 0, 127);   /* lowest key is F3 */
     struct mumble_singer one = {v, (uint8_t)who, (uint8_t)pitch};
-    mumble_press(key, &one, 1, voice_caps);
+    if (voice_lyric) mumble_press_sound(key, &voice_key_sound[key], &one, 1, voice_caps);
+    else mumble_press(key, &one, 1, voice_caps);
     voice_sings[who] = (uint8_t)(key + 1U);
     voice_sing_order[who] = ++voice_order;
-    if (voice_recording) voice_rec_press(who, key, (unsigned)pitch);
+    if (voice_recording) {
+        voice_rec_press(who, key, (unsigned)pitch);
+        voice_rec_lyric = (voice_rec_lyric & ~(1U << who)) | (uint32_t)voice_lyric << who;
+        voice_rec_sound[who] = voice_lyric ? voice_key_sound[key] : (struct mumble_sound){0, 0, 0};
+    }
     voice_sung = key;
     voice_sung_note = (unsigned)pitch;
 }
@@ -387,6 +407,36 @@ static void voice_take_clear(struct voice_track *t)
     if (voice_song) voice_song_dirty = 1;
 }
 /* PLAY mode: the selected track and the choir sing each pressed key. */
+/* LINE mode: the line the keys sing, planned again (and from its start) when
+ * it changes. */
+static const char *voice_lyric_text(unsigned *n)
+{
+    const struct voice_track *t = voice_track();
+    const char *line = t->length ? t->text : voice_lines[voice_demo % VOICE_LINES];
+    *n = t->length ? t->length : (unsigned)strlen(line);
+    return line;
+}
+static void voice_lyric_sync(void)
+{
+    unsigned n;
+    const char *line = voice_lyric_text(&n);
+    uint32_t sig = signature(n, line, n);
+    if (sig != voice_lyric_sig) {
+        voice_lyric_sig = sig;
+        voice_lyric_count = mumble_plan(line, n, &voice_track()->sound, 0, voice_lyric_plan, MUMBLE_SYLLABLES, NULL, NULL);
+        voice_lyric_at = 0;
+    }
+    if (voice_lyric_at >= voice_lyric_count) voice_lyric_at = 0;
+}
+/* The next syllable onto a key (a hum if the line has none). */
+static void voice_lyric_take(unsigned key)
+{
+    voice_lyric_sync();
+    if (!voice_lyric_count) { voice_key_sound[key] = (struct mumble_sound){MUMBLE_U, 0, MUMBLE_HUM}; return; }
+    const struct mumble_syllable *y = &voice_lyric_plan[voice_lyric_at];
+    voice_key_sound[key] = (struct mumble_sound){y->vowel, y->locus, (uint8_t)(y->flags & (MUMBLE_HUM | MUMBLE_SHOUT))};
+    voice_lyric_at = (voice_lyric_at + 1U) % voice_lyric_count;
+}
 /* PLAY mode: a key let go frees its singer, who takes up the latest key still
  * held that nobody sings (one character alone: a mono synth's last note). */
 static void voice_take_up(unsigned who)
@@ -416,6 +466,7 @@ static void voice_sing(const struct fm1_controls *c, uint32_t down)
         if (!(down & (1U << key))) continue;
         voice_held |= 1U << key;
         voice_key_order[key] = ++voice_order;
+        if (voice_lyric) voice_lyric_take(key);
         unsigned free = MUMBLE_CAST, oldest = MUMBLE_CAST;
         for (unsigned i = 0; i < MUMBLE_CAST && free == MUMBLE_CAST; ++i) {
             unsigned who = (voice_cast + i) % MUMBLE_CAST;
@@ -477,7 +528,9 @@ static void voice_mode_next(void)
     if (voice_pad_on < MUMBLE_LETTERS) mumble_cut();
     voice_pad_on = voice_pad_last = MUMBLE_LETTERS;
     voice_rec_stop();
-    if (voice_play) { voice_play = 0; voice_sample = 1; }
+    /* TYPE, PLAY, LINE (PLAY singing the line), SAMPLE. */
+    if (voice_play && !voice_lyric) { voice_lyric = 1; voice_lyric_sig = 0; voice_lyric_sync(); voice_lyric_at = 0; }
+    else if (voice_play) { voice_play = 0; voice_lyric = 0; voice_sample = 1; }
     else if (voice_sample) voice_sample = 0;
     else voice_play = 1;
 }
@@ -514,6 +567,7 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         voice_set_text(voice_track(), voice_lines[voice_demo]);
     }
     if (pressed & BUTTON(GLO)) voice_mode_next();
+    if ((pressed & BUTTON(FX)) && voice_lyric) { voice_lyric_at = 0; voice_notice("FROM THE TOP OF THE LINE"); }
     /* In SAMPLE mode SAVE and EDIT are held with a key instead. */
     if ((pressed & BUTTON(SAVE)) && !voice_sample) {
         struct voice_track *t = voice_track();
@@ -637,6 +691,7 @@ static void voice_frame(uint32_t now)
         if (voice_song) voice_song_dirty = 1;
     }
     if (voice_song_dirty && voice_song) voice_publish(0, 0);
+    if (voice_lyric) voice_lyric_sync();
     /* Recording: the metronome counts the loop's beats, and each pass of the
      * loop is a pass of the take. */
     unsigned click = voice_recording ? voice_bars * 4U : 0U;
@@ -783,7 +838,7 @@ static void voice_header(void)
     if (paint_rendering && paint_top >= 28) return;
     const struct mumble_character *who = &mumble_cast[voice_cast];
     uint32_t sig = voice_cast | (voice_page << 4) | (voice_caps << 6) | (voice_edited() << 7) |
-                   (voice_play << 8) | (voice_loop << 9) | (voice_sample << 11) | ((uint32_t)voice_track()->choir << 10);
+                   (voice_play << 8) | (voice_loop << 9) | (voice_sample << 11) | ((uint32_t)voice_track()->choir << 10) | (voice_lyric << 12);
     if (cache->voice_cache[0] == sig) return;
     cache->voice_cache[0] = sig;
     paint_fill(0, 0, 240, 28, BACK);
@@ -791,7 +846,7 @@ static void voice_header(void)
     for (unsigned i = 0; i < 4; ++i) paint_fill(86 + i * 7, 6, 5, 5, voice_knob_colors[i]);
     if (voice_loop) text(120, 6, "LOOP", 1, ACCENT, BACK);
     text(86, 16, voice_page_names[voice_page], 1, DIM, BACK);
-    if (voice_play) text(120, 16, "PLAY", 1, voice_caps ? AMBER : GREEN, BACK);
+    if (voice_play) text(120, 16, voice_lyric ? "LINE" : "PLAY", 1, voice_caps ? AMBER : GREEN, BACK);
     else if (voice_sample) text(120, 16, "SAMPLE", 1, ACCENT, BACK);
     else if (voice_caps) text(120, 16, "CAPS", 1, AMBER, BACK);
     unsigned n = (unsigned)strlen(who->name);
@@ -973,6 +1028,7 @@ static void voice_lines_draw(void)
 }
 
 /* PLAY mode: the letter being sung, its note and how it is said. */
+static void voice_play_status(unsigned singers, unsigned notes);
 static void voice_play_draw(void)
 {
     if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
@@ -1001,6 +1057,11 @@ static void voice_play_draw(void)
         text(46, 128, name, 2, held ? TEXT : DIM, BACK);
         text(46, 146, mumble_letter_names[voice_sung], 2, color, BACK);
     }
+    voice_play_status(singers, notes);
+}
+/* PLAY and LINE: the octave, the choir, and REC n / TAKE n along the box's foot. */
+static void voice_play_status(unsigned singers, unsigned notes)
+{
     char octave[12] = "OCT ", value[12];
     decimal(value, voice_octave, 1);
     if (voice_octave > 0) strcat(octave, "+");
@@ -1021,6 +1082,68 @@ static void voice_play_draw(void)
         if (voice_recording) paint_fill(172, 172, 7, 7, AMBER);
         text(voice_recording ? 182 : 172, 172, take, 1, voice_recording ? AMBER : DIM, BACK);
     }
+}
+/* Where syllable k of the line shows: from its consonants before its vowel
+ * (back to the last syllable's vowel or the word's start). */
+static unsigned voice_lyric_onset(const char *line, unsigned k)
+{
+    unsigned p = voice_lyric_plan[k].index, floor = k ? voice_lyric_plan[k - 1U].index + 1U : 0U;
+    while (p > floor) {
+        char c = (char)(line[p - 1U] | 0x20);
+        if (c < 'a' || c > 'z' || c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') break;
+        --p;
+    }
+    return p;
+}
+/* LINE mode: the line, the syllable the next key sings marked, those sung
+ * dimmed, and where the queue is. */
+static void voice_line_draw(void)
+{
+    if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
+    unsigned n;
+    const char *line = voice_lyric_text(&n);
+    unsigned held = voice_sung < MUMBLE_LETTERS && (voice_held & (1U << voice_sung)) != 0;
+    unsigned singers = 0;
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) singers += voice_in_choir(i);
+    unsigned notes = voice_track()->notes, at = voice_lyric_at, count = voice_lyric_count;
+    uint32_t sig = signature(0x4C000000U | at | (held << 7) | ((unsigned)(voice_octave + 2) << 8) | (voice_caps << 11) |
+                                 (voice_cast << 12) | (singers << 15) | (voice_recording << 19) | (voice_sung_note << 20),
+                             &notes, sizeof notes);
+    sig = signature(sig, &voice_lyric_sig, sizeof voice_lyric_sig);
+    /* The TYPE rows share this area: make them redraw on return. */
+    cache->voice_cache[4] = cache->voice_cache[5] = 0xfffffffeU;
+    if (cache->voice_cache[3] == sig) return;
+    cache->voice_cache[3] = sig;
+    cache->voice_cache[8] = 0xfffffffeU;        /* the loop bar, drawn over this */
+    paint_fill(4, BOX_TOP + 2, 232, BOX_BOTTOM - BOX_TOP - 4, BACK);
+    uint16_t mark = voice_caps ? AMBER : mumble_cast[voice_cast].color;
+    char value[12];
+    if (!count) text(10, 131, "* NOTHING TO SING IN THIS LINE", 1, DIM, BACK);
+    else {
+        unsigned from = voice_lyric_onset(line, at), to = at + 1U < count ? voice_lyric_onset(line, at + 1U) : n;
+        while (to > from + 1U && ((line[to - 1U] | 0x20) < 'a' || (line[to - 1U] | 0x20) > 'z')) --to;
+        unsigned start = from > 6U ? from - 6U : 0U;
+        if (n > VOICE_COLUMNS && start + VOICE_COLUMNS > n) start = n - VOICE_COLUMNS;
+        for (unsigned c = 0; c < VOICE_COLUMNS && start + c < n; ++c) {
+            unsigned i = start + c;
+            char glyph[2] = {line[i], 0};
+            text(10U + c * 12U, 130, glyph, 2, i < from ? DIM : i < to ? mark : TEXT, BACK);
+        }
+        unsigned end = to < start + VOICE_COLUMNS ? to : start + VOICE_COLUMNS;
+        if (end > from) paint_fill(10U + (from - start) * 12U, 146, (end - from) * 12U - 2U, 2, mark);
+        char where[24] = "SYLLABLE ";
+        decimal(value, (int)at + 1, 1);
+        strcat(where, value);
+        strcat(where, " OF ");
+        decimal(value, (int)count, 1);
+        strcat(where, value);
+        text(10, 154, where, 1, DIM, BACK);
+    }
+    if (voice_sung < MUMBLE_LETTERS) {
+        note_name(voice_sung_note, value);
+        text(170, 152, value, 2, held ? TEXT : DIM, BACK);
+    }
+    voice_play_status(singers, notes);
 }
 /* PLAY mode, while the loop runs: where it is, its beats ticked, amber while
  * recording. */
@@ -1196,12 +1319,17 @@ static __attribute__((noinline)) void voice_draw(void)
     voice_choir_strip();
     voice_box();
     if (voice_page == LOOP_PAGE) voice_lanes_draw();
-    else if (voice_play) { voice_play_draw(); voice_loop_bar(); }
+    else if (voice_play) {
+        if (voice_lyric) voice_line_draw();
+        else voice_play_draw();
+        voice_loop_bar();
+    }
     else if (voice_sample) voice_sample_draw();
     else voice_lines_draw();
     voice_knobs();
     if (paint_rendering && paint_top + PAINT_ROWS <= 229) return;
     const char *hint = notice ? notice
+                     : voice_lyric ? voice_line_hints[(frame_time / 2600U) % (sizeof voice_line_hints / sizeof voice_line_hints[0])]
                      : voice_play ? voice_play_hints[(frame_time / 2600U) % (sizeof voice_play_hints / sizeof voice_play_hints[0])]
                      : voice_sample ? voice_sample_hints[(frame_time / 2600U) % (sizeof voice_sample_hints / sizeof voice_sample_hints[0])]
                                   : voice_hints[(frame_time / 2600U) % (sizeof voice_hints / sizeof voice_hints[0])];

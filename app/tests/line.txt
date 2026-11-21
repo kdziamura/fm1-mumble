@@ -1,0 +1,76 @@
+# LINE mode: each key sings the next syllable of the selected character's
+# line ("hey you, come here": HEY, YOU, COME, HERE), round and round; a chord
+# takes the next syllables at once, one per singer; FX goes back to the start.
+wait 600
+tapkey 7
+tapkey 4
+tapkey 24
+tapkey 26
+tapkey 24
+tapkey 14
+tapkey 20
+tap FX
+tapkey 26
+tapkey 2
+tapkey 14
+tapkey 12
+tapkey 4
+tapkey 26
+tapkey 7
+tapkey 4
+tapkey 17
+tapkey 4
+expect length 18
+wait 800
+tap GLO
+tap GLO
+expect mode 3
+expect lyrics 4
+expect lyric 0
+shot line.png
+# One key: HEY. Held: it sustains.
+key 5 down
+wait 300
+expect sounding 1
+expect lyric 1
+key 5 up
+wait 300
+# Alone, a chord is mono: both keys take a syllable (YOU, COME), the last sounds.
+key 0 down
+key 9 down
+wait 200
+expect lyric 3
+expect singing 1
+key 0 up
+key 9 up
+wait 300
+# HERE, then round to HEY again.
+tapkey 12
+wait 300
+expect lyric 0
+tapkey 3
+wait 100
+expect lyric 1
+shot line-sung.png
+# FX: from the top.
+tap FX
+expect lyric 0
+# REC: what is sung goes into the take as syllables.
+tap REC
+expect recording 1
+wait 300
+key 7 down
+wait 300
+key 7 up
+wait 50
+expect take 1
+expect take_syllables 1
+tap REC
+expect recording 0
+# ARP: another line; the queue starts over on it.
+tapkey 2
+wait 100
+expect lyric 2
+tap ARP
+wait 100
+expect lyric 0
