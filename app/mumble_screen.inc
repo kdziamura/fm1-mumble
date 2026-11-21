@@ -669,7 +669,9 @@ static void voice_face(void)
 static void voice_roll(void)
 {
     if (paint_rendering && (paint_top >= STAGE_BOTTOM || paint_top + PAINT_ROWS <= STAGE_TOP)) return;
-    uint32_t sig = signature(voice_cast, voice_trace, sizeof voice_trace);
+    /* The label follows the voice every frame, the trace every 50 ms: both sign. */
+    uint32_t sig = signature(signature(voice_cast, voice_trace, sizeof voice_trace), &voice_now.vowel,
+                             sizeof voice_now.vowel);
     if (cache->voice_cache[2] == sig) return;
     cache->voice_cache[2] = sig;
     const unsigned x0 = 106, y0 = STAGE_TOP, w = 130, h = STAGE_BOTTOM - STAGE_TOP, mid = 76;
