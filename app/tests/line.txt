@@ -1,6 +1,7 @@
-# LINE mode: each key sings the next syllable of the selected character's
-# line ("hey you, come here": HEY, YOU, COME, HERE), round and round; a chord
-# takes the next syllables at once, one per singer; FX goes back to the start.
+# LINE mode: the keys sing the selected character's line ("hey you, come
+# here": HEY, YOU, COME, HERE) a syllable at a time, round and round. The key
+# that starts a syllable leads it: keys pressed while it is held sing the same
+# syllable; once it is let go, the next key moves on. FX goes back to the start.
 wait 600
 tapkey 7
 tapkey 4
@@ -28,33 +29,50 @@ expect mode 3
 expect lyrics 4
 expect lyric 0
 shot line.png
-# One key: HEY. Held: it sustains.
+# One key: HEY, and it leads the syllable.
 key 5 down
 wait 300
 expect sounding 1
-expect lyric 1
-key 5 up
-wait 300
-# Alone, a chord is mono: both keys take a syllable (YOU, COME), the last sounds.
-key 0 down
+expect lyric 0
+expect lead 5
+# A key pressed while it is held sings HEY too (alone: one voice, the last key).
 key 9 down
 wait 200
-expect lyric 3
+expect lyric 0
+expect lyric_next 0
+# The leading key let go: the other one keeps singing; the next key moves on.
+key 5 up
+wait 100
 expect singing 1
+expect lead -1
+expect lyric_next 1
+key 0 down
+wait 200
+expect lyric 1
+expect lead 0
 key 0 up
 key 9 up
 wait 300
-# HERE, then round to HEY again.
-tapkey 12
-wait 300
-expect lyric 0
+expect singing 0
+# One key at a time: COME, HERE, then round to HEY.
 tapkey 3
 wait 100
-expect lyric 1
-shot line-sung.png
-# FX: from the top.
-tap FX
+expect lyric 2
+tapkey 12
+wait 100
+expect lyric 3
+tapkey 4
+wait 100
 expect lyric 0
+expect lyric_next 1
+shot line-sung.png
+# FX: from the top; the next key sings HEY again.
+tap FX
+expect lyric_next 0
+tapkey 6
+wait 100
+expect lyric 0
+expect lyric_next 1
 # REC: what is sung goes into the take as syllables.
 tap REC
 expect recording 1

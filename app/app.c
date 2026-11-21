@@ -176,6 +176,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;
     else if (!strcmp(what, "lyric")) *got = (int)voice_lyric_at;
     else if (!strcmp(what, "lyrics")) *got = (int)voice_lyric_count;
+    else if (!strcmp(what, "lyric_next")) *got = (int)voice_lyric_next();
+    else if (!strcmp(what, "lead")) *got = voice_lyric_lead < MUMBLE_LETTERS ? (int)voice_lyric_lead : -1;
     else if (!strcmp(what, "take_syllables")) {
         *got = 0;
         for (unsigned k = 0; k < t->notes; ++k) *got += t->take[k].syllable;

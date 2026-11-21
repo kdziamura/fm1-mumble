@@ -17,7 +17,7 @@ loop. A change to MUMBLE shows in the browser preview and in the firmware alike.
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
 | `app/tests/basic.txt` | Host simulator script: typing, a demo line, PLAY, SAMPLE, the LOOP page; screenshots and a WAV |
-| `app/tests/line.txt` | Host simulator script: LINE mode singing a typed line a syllable a key, a chord, round the line, FX, a take of syllables |
+| `app/tests/line.txt` | Host simulator script: LINE mode singing a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX, a take of syllables |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, takes recorded per singer and played back, the metronome, EDIT undoing pass by pass |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
