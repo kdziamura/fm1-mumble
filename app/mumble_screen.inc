@@ -399,8 +399,8 @@ static void voice_frame(uint32_t now)
 }
 
 /* ------------------------------------------------------------------------
- * The cast as pixel avatars (mumble_sprites.inc): black outlines and flat
- * fills on a pastel tile. 24x24 portraits are drawn at 3x on whole pixels;
+ * The cast in OP-1 style line art (mumble_sprites.inc): white strokes and
+ * encoder-colour accents on black. 24x24 portraits are drawn at 3x on whole pixels;
  * 16x16 icons fill the choir strip. Mouths, blinks and the shout mark are
  * pixel overlays on a working copy of the portrait.
  * ---------------------------------------------------------------------- */
@@ -433,14 +433,14 @@ static int voice_wave(unsigned period, int amp, unsigned phase)
  * fills them, then a lash line in `lash` along their bottom. */
 struct voice_rig { uint8_t mouth_x, mouth_y; char fill, lip, lid, lash; uint8_t eyes[2][4]; };
 static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
-    {12, 13, 's', 'k', 's', 'k', {{8, 9, 2, 2}, {14, 9, 2, 2}}},  /* HERO */
-    {12, 13, 'd', 'k', 'd', 'k', {{8, 9, 2, 2}, {14, 9, 2, 2}}},  /* GUARD */
-    {12, 13, 's', 'k', 's', 'k', {{0}}},                          /* SISTER: eyes closed in prayer */
-    {12, 13, 'd', 'k', 'd', 'k', {{8, 9, 2, 2}, {14, 9, 2, 2}}},  /* KID */
-    {12, 13, 'k', 'R', 'd', 'k', {{14, 9, 2, 2}}},                /* PIRATE: one eye, one patch; a black beard */
-    {12, 15, 'w', 'k', 's', 'k', {{8, 11, 2, 2}, {14, 11, 2, 2}}}, /* ELDER: under bushy brows, in the beard */
-    {12, 22, 'n', 'c', 'n', 'c', {{9, 7, 2, 2}, {13, 7, 2, 2}}},  /* BOT: the mouth is the chest panel */
-    {12, 11, 'w', 'k', 'w', 'k', {{8, 7, 2, 3}, {14, 7, 2, 3}}},  /* GHOST */
+    {12, 13, '.', 'w', '.', 'w', {{8, 9, 2, 2}, {14, 9, 2, 2}}},   /* HERO */
+    {12, 13, '.', 'w', '.', 'w', {{8, 9, 2, 2}, {14, 9, 2, 2}}},   /* GUARD */
+    {12, 13, '.', 'w', '.', 'w', {{0}}},                           /* SISTER: eyes closed in prayer */
+    {12, 13, '.', 'w', '.', 'w', {{8, 9, 2, 2}, {14, 9, 2, 2}}},   /* KID */
+    {12, 13, '.', 'o', '.', 'w', {{14, 9, 2, 2}}},                 /* PIRATE: one eye, one patch */
+    {12, 15, '.', 'w', '.', 'w', {{8, 11, 2, 2}, {14, 11, 2, 2}}}, /* ELDER: under bushy brows */
+    {12, 22, '.', 'g', '.', 'g', {{9, 7, 2, 2}, {13, 7, 2, 2}}},   /* BOT: the mouth is the chest panel */
+    {12, 11, '.', 'w', '.', 'w', {{8, 7, 2, 3}, {14, 7, 2, 3}}},   /* GHOST */
 };
 enum { CAST_KID = 3, CAST_ELDER = 5, CAST_BOT = 6, CAST_GHOST = 7 };
 /* Mouth size per vowel when fully open (icon pixels). */
@@ -481,31 +481,31 @@ static void voice_pose(const struct pose *p)
                 for (int i = 9; i < 15; ++i)
                     if (voice_grid[j][i] == 'o') voice_grid[j][i] = 'm';
     } else if (p->open) {
-        /* The drawn mouth gives way to an open one: lips around a red
-         * inside (teeth inside red lips). */
+        /* The drawn mouth gives way to an open one: a stroke for narrow
+         * vowels, a ring for round ones. */
         unsigned v = p->vowel < MUMBLE_VOWELS ? p->vowel : MUMBLE_U;
         int w = vowel_mouth[v][0], h = (int)((vowel_mouth[v][1] * p->open + 3U) / 4U);
         int x = rig->mouth_x - (w + 1) / 2;
         grid_rect(rig->mouth_x - 2, y, 5, 1, rig->fill);
         grid_rect(x, y, w, h, rig->lip);
-        if (h >= 3 && w >= 3) grid_rect(x + 1, y + 1, w - 2, h - 2, rig->lip == 'R' ? 'w' : 'R');
+        if (h >= 3 && w >= 3) grid_rect(x + 1, y + 1, w - 2, h - 2, '.');
     }
-    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(15, 5, 'w');          /* the star twinkles */
+    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(14, 4, 'w');          /* the star twinkles */
     if (p->shout) {                                                             /* "!" */
-        grid_rect(22, 0, 1, 3, 'R');
-        grid_set(22, 4, 'R');
+        grid_rect(23, 0, 1, 3, 'o');
+        grid_set(23, 4, 'o');
     }
 }
-/* Run-length rows of the working grid (size x size) at any scale on its tile
- * colour (0: no tile); faded for the choir strip. */
-static void voice_sprite(int ox, int oy, int scale, unsigned faded, int size, uint16_t tile)
+/* Run-length rows of the working grid (size x size) at any scale; faded for
+ * the choir strip. */
+static void voice_sprite(int ox, int oy, int scale, unsigned faded, int size)
 {
     for (int y = 0; y < size; ++y)
         for (int x = 0; x < size;) {
             char c = voice_grid[y][x];
             int run = 1;
             while (x + run < size && voice_grid[y][x + run] == c) ++run;
-            uint16_t color = c == '.' ? tile : voice_palette(c);
+            uint16_t color = voice_palette(c);
             if (color) vfill(ox + x * scale, oy + y * scale, run * scale, scale, faded ? dimmer(color) : color);
             x += run;
         }
@@ -560,18 +560,16 @@ static void voice_face(void)
     uint32_t sig = signature(0x0FACE, &sig_in, sizeof sig_in);
     if (cache->voice_cache[1] == sig) return;
     cache->voice_cache[1] = sig;
-    /* On its tile; a hop slides the figure up inside it, the last row
-     * (shoulders, or the tile under the ghost) stretching to fill. */
-    const int size = SPRITE * SPRITE_SCALE, x0 = 53 - size / 2, y0 = STAGE_BOTTOM - size;
-    const uint16_t tile = voice_tile(voice_cast);
+    /* Straight on black, as an OP-1 screen draws its graphics. A hop lifts
+     * the figure; its last row (the arms) stretches down to the floor. */
+    const int size = SPRITE * SPRITE_SCALE, x0 = 53 - size / 2;
     voice_clip(4, STAGE_TOP, PORTRAIT_X1, STAGE_BOTTOM);
     vfill(4, STAGE_TOP, PORTRAIT_X1 - 4, STAGE_BOTTOM - STAGE_TOP, BACK);
-    voice_clip(x0, y0, x0 + size, STAGE_BOTTOM);
     voice_pose(&p);
-    voice_sprite(x0, y0 - lift, SPRITE_SCALE, 0, SPRITE, tile);
-    for (int x = 0; x < SPRITE; ++x) {
-        char c = voice_grid[SPRITE - 1][x];
-        if (lift > 0) vfill(x0 + x * SPRITE_SCALE, STAGE_BOTTOM - lift, SPRITE_SCALE, lift, c == '.' ? tile : voice_palette(c));
+    voice_sprite(x0, STAGE_BOTTOM - size - lift, SPRITE_SCALE, 0, SPRITE);
+    for (int x = 0; lift > 0 && x < SPRITE; ++x) {
+        uint16_t color = voice_palette(voice_grid[SPRITE - 1][x]);
+        if (color) vfill(x0 + x * SPRITE_SCALE, STAGE_BOTTOM - lift, SPRITE_SCALE, lift, color);
     }
 }
 
@@ -619,7 +617,7 @@ static void voice_choir_strip(void)
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
         int x = 14 + (int)i * 28, hop = voice_now.track_level[i] > 40U;
         for (int row = 0; row < ICON; ++row) memcpy(voice_grid[row], voice_icons[i][row], ICON);
-        voice_sprite(x, STRIP_TOP + 1 - hop, 1, !voice_in_choir(i), ICON, voice_tile(i));
+        voice_sprite(x, STRIP_TOP + 1 - hop, 1, !voice_in_choir(i), ICON);
         if (i == voice_cast) vfill(x + 2, STRIP_BOTTOM - 1, 12, 1, WHITE);
         if (voice_tracks[i].length) vfill(x + 17, STRIP_TOP + 2, 2, 2, voice_in_choir(i) ? TEXT : DIM);
     }
