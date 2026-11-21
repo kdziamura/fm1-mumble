@@ -438,7 +438,7 @@ static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
     {12, 13, 's', 'k', 's', 'k', {{0}}},                          /* SISTER: eyes closed in prayer */
     {12, 13, 'd', 'k', 'd', 'k', {{8, 9, 2, 2}, {14, 9, 2, 2}}},  /* KID */
     {12, 13, 'k', 'R', 'd', 'k', {{14, 9, 2, 2}}},                /* PIRATE: one eye, one patch; a black beard */
-    {12, 13, 'w', 'k', 'w', 'k', {{7, 9, 3, 2}, {14, 9, 3, 2}}},  /* ELDER: behind spectacles */
+    {12, 15, 'w', 'k', 's', 'k', {{8, 11, 2, 2}, {14, 11, 2, 2}}}, /* ELDER: under bushy brows, in the beard */
     {12, 22, 'n', 'c', 'n', 'c', {{9, 7, 2, 2}, {13, 7, 2, 2}}},  /* BOT: the mouth is the chest panel */
     {12, 11, 'w', 'k', 'w', 'k', {{8, 7, 2, 3}, {14, 7, 2, 3}}},  /* GHOST */
 };
@@ -490,7 +490,7 @@ static void voice_pose(const struct pose *p)
         grid_rect(x, y, w, h, rig->lip);
         if (h >= 3 && w >= 3) grid_rect(x + 1, y + 1, w - 2, h - 2, rig->lip == 'R' ? 'w' : 'R');
     }
-    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(13, 4, 'w');          /* the star twinkles */
+    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(15, 5, 'w');          /* the star twinkles */
     if (p->shout) {                                                             /* "!" */
         grid_rect(22, 0, 1, 3, 'R');
         grid_set(22, 4, 'R');
