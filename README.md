@@ -16,9 +16,9 @@ loop. A change to MUMBLE shows in the browser preview and in the firmware alike.
 | `app/paint.inc` | FM1 Open's damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn |
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
-| `app/tests/basic.txt` | Host simulator script: typing, a demo line, PLAY, SAMPLE, the LOOP page; screenshots and a WAV |
-| `app/tests/line.txt` | Host simulator script: LINE mode singing a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX, a take of syllables |
-| `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, takes recorded per singer and played back, the metronome, EDIT undoing pass by pass |
+| `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and its LOOP page; screenshots and a WAV |
+| `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
+| `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT undoing pass by pass |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
 
@@ -74,15 +74,14 @@ firmware or M-VAVE's own goes back on the same way.
 
 ## Status
 
-Milestone 1: everything the preview's page does runs (TYPE, PLAY, SAMPLE, the LOOP page, the eight characters and
-their FX) in the host simulator, and builds for the FM-1.
+Played on an FM-1 (November 2026). One shared line, TYPE and SING modes, the choir, the recorded loop (pitches,
+timing and syllable slots, singing the line as it is) and the master compressor; the same page runs in the browser
+preview.
 
-The device build with takes, the choir and LINE mode (CI, November 2026): app image 109,748 B of the 581 KB slot;
-RAM `.data`+`.bss` 77,996 of 98,304 B; RAM code 12,332 of 32,768 B (the engine's audio path 7,232 B of it); pool
-84,484 of 344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
+The last measured device build (with per-character takes, before the loop sang the shared line; CI, November 2026):
+app image 109,748 B of the 581 KB slot; RAM `.data`+`.bss` 77,996 of 98,304 B; RAM code 12,332 of 32,768 B (the
+engine's audio path 7,232 B of it); pool 84,484 of 344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
 
-- **Not tried on an FM-1.** RAM use, the audio path's time in the interrupt and the output level are to be checked
-  on the device.
-- **Nothing is saved.** Lines, sounds and pads are lost at power-off (a store object is reserved for them).
+- **Nothing is saved.** The line, the loop and the sounds are lost at power-off (a store object is reserved for them).
 - **No clock.** The loop runs on its own BPM; FM1 Open's sequencer sync is not there (MIDI clock is the plan).
 - **HOME does nothing**, and Bluetooth MIDI is off.

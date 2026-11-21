@@ -1,7 +1,7 @@
-# PLAY mode: every character sings one letter at a time, and the keys held are
-# shared out among the choir. REC records what each sings into its own take on
-# the loop (2 bars at 120 BPM: 4 s), played back pass after pass; the
-# metronome counts the beats while recording; EDIT undoes a pass at a time.
+# SING mode: every character sings one note at a time, and the keys held are
+# shared out among the choir. REC records what is sung into the loop (2 bars at
+# 120 BPM: 4 s), played back pass after pass; the metronome counts the beats
+# while recording; EDIT undoes a pass at a time, across the characters.
 wait 600
 tap GLO
 expect mode 1
@@ -47,7 +47,7 @@ key 7 up
 key 11 up
 wait 300
 expect singing 0
-# REC starts the loop and records; nobody has a line, so only takes sound.
+# REC starts the loop and records; the loop holds nothing yet.
 tap REC
 expect recording 1
 expect loop 1
@@ -67,7 +67,7 @@ wait 3100
 expect sounding 1
 wait 900
 expect sounding 0
-# Overdub a chord: E, H and L go to HERO, GUARD and SISTER, a take each.
+# Overdub a chord: E, H and L go to HERO, GUARD and SISTER.
 key 4 down
 key 7 down
 key 11 down
@@ -80,7 +80,7 @@ wait 50
 expect take 2
 expect passes 2
 expect takes 4
-# REC again stops recording (and the metronome); the takes keep playing.
+# REC again stops recording (and the metronome); the loop keeps playing.
 tap REC
 expect recording 0
 expect metronome 0
@@ -88,12 +88,13 @@ turn ALGO 3
 shot record-lanes.png
 wait 3000
 expect takes 4
-# EDIT undoes HERO's last pass, then the first; the others keep theirs.
+# EDIT undoes the last pass (the chord, all three singers), then the first.
 turn ALGO 1
 tap EDIT
 expect take 1
+expect takes 1
 expect passes 1
 tap EDIT
 expect take 0
+expect takes 0
 expect passes 0
-expect takes 2
