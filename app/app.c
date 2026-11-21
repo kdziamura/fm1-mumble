@@ -110,9 +110,13 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
     for (uint32_t i = 0; i < 2U * n; ++i) lr[i] = 0;
     for (uint32_t k = 0; k + FM1_BLOCK_FRAMES <= n; k += FM1_BLOCK_FRAMES)
         PLAT_FAR(mumble_render)(lr + 2U * k);
+    /* The gain in single precision: a 24-bit sample fits a float exactly, and
+     * a 64-bit multiply inlined among loads can corrupt a register on the
+     * FM-1 (felucca-bsp docs/CPU.md; the build's check named this loop). */
+    const float gain = (float)master_q12 * (1.0f / 4096.0f);
     for (uint32_t i = 0; i < 2U * n; ++i) {
-        int32_t v = (int32_t)(((int64_t)lr[i] * (int32_t)master_q12) >> 12);
-        lr[i] = clamp(v, -8388608, 8388607);
+        float v = (float)lr[i] * gain;
+        lr[i] = v >= 8388607.0f ? 8388607 : v <= -8388608.0f ? -8388608 : (int32_t)v;
     }
 }
 
