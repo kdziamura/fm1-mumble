@@ -127,9 +127,14 @@ struct draw_cache {
 static struct draw_cache saved_cache, band_cache, *cache = &saved_cache;
 static uint32_t signature(uint32_t seed, const void *bytes, unsigned n)
 {
+    /* FNV-1a over the seed's bytes, then the data's. A plain "h * 33 + byte"
+     * let neighbouring bytes cancel (+5 then -165), and a seed XORed in raw
+     * cancelled against the first byte (version ^ 1, head + 1). */
     const uint8_t *p = bytes;
-    for (unsigned i = 0; i < n; ++i) seed = seed * 33U + p[i];
-    return seed;
+    uint32_t h = 2166136261U;
+    for (unsigned i = 0; i < 4; ++i) h = (h ^ ((seed >> (8U * i)) & 0xFFU)) * 16777619U;
+    for (unsigned i = 0; i < n; ++i) h = (h ^ p[i]) * 16777619U;
+    return h;
 }
 static __attribute__((noinline)) void decimal(char out[12], int value, unsigned digits)
 {
