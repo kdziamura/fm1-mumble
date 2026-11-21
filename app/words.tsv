@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception
+# The screen reader's words (fm1-reader): the text on the screen <TAB> what to say.
+# url: https://example.invalid/mumble/words/
+MUMBLE	mumble
+TYPE A LINE FIRST	type a line first
+JOINED THE CHOIR	joined the choir
+LEFT THE CHOIR	left the choir

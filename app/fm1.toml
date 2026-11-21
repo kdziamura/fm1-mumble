@@ -1,0 +1,14 @@
+# MUMBLE's build settings (fm1-base tools/build.py)
+name = "MUMBLE"                # APP_NAME is in app.h; this names the build's files
+id_prefix = "FM-1_68"          # package identity: dev FM-1_6800, releases FM-1_68XXYYZZ
+usb_manufacturer = "MUMBLE"
+usb_product = "MUMBLE FM-1"
+o2 = ["engine.c"]              # the voice engine (app/mumble.c), at -O2; its audio path runs from RAM
+ble = false                    # USB MIDI only for now
+companion = false
+# the site and firmware.json (tools/make_site.py, docs/FIRMWARE-JSON.md)
+tagline = "retro-game character voices from text"
+licence = "GPL-3.0-only"
+author = "MUMBLE contributors"
+description = "Eight retro-game characters who speak what you type on the keys: TYPE, PLAY (sung letters), SAMPLE (a line per key) and a multitrack LOOP, with per-character CRUSH, RADIO, ECHO and ROOM."
+tags = ["synth"]

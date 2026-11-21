@@ -17,7 +17,13 @@
  * into the finished instrument block. */
 #ifndef FM1_MUMBLE_H
 #define FM1_MUMBLE_H
+/* The platform: FM1 Open's SDK, or a port header (firmware/mumble-fm1) that
+ * defines FM1_SAMPLE_RATE, FM1_BLOCK_FRAMES, FM1_AUDIO_CODE and FM1_AUDIO_DATA. */
+#ifdef MUMBLE_PORT
+#include MUMBLE_PORT
+#else
 #include "fm1.h"
+#endif
 
 enum { MUMBLE_TEXT = 96, MUMBLE_SYLLABLES = 48, MUMBLE_CAST = 8 };
 enum { MUMBLE_A, MUMBLE_E, MUMBLE_I, MUMBLE_O, MUMBLE_OO, MUMBLE_U, MUMBLE_VOWELS };

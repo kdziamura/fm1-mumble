@@ -1,0 +1,68 @@
+# MUMBLE as its own FM-1 firmware (firmware/mumble-fm1, on fm1-base): the host
+# simulator's tests, then the device package with JieLi's Linux toolchain,
+# fetched and checked against fm1-base's tools/toolchain.lock. The package is
+# attached to the run as the "mumble-fm1" artifact, with the test screenshots.
+name: MUMBLE firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/mumble*'
+      - 'firmware/mumble-fm1/**'
+      - '.github/workflows/mumble-fm1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04          # the JieLi toolchain is Linux x86-64 only
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: firmware/mumble-fm1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Cache the toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            firmware/mumble-fm1/base/.toolchain
+            firmware/mumble-fm1/base/.venv
+          key: fm1-toolchain-${{ hashFiles('firmware/mumble-fm1/base/tools/toolchain.lock', 'firmware/mumble-fm1/base/uv.lock') }}
+
+      - name: JieLi toolchain, AC79 SDK files and the build's Python (pinned)
+        run: |
+          base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python
+          echo "$PWD/base/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Host simulator tests
+        run: |
+          python3 base/tools/build.py app --host
+          app/build/host/mumble_host app/tests/basic.txt app/build/host
+
+      - name: Firmware
+        run: |
+          python3 base/tools/build.py app
+          ls -l app/build/*.fwsc
+          sha256sum app/build/*.fwsc | tee app/build/SHA256SUMS.txt
+          echo "### MUMBLE firmware" >> "$GITHUB_STEP_SUMMARY"
+          sed 's/^/    /' app/build/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mumble-fm1
+          path: |
+            firmware/mumble-fm1/app/build/*.fwsc
+            firmware/mumble-fm1/app/build/*.bin
+            firmware/mumble-fm1/app/build/SHA256SUMS.txt
+            firmware/mumble-fm1/app/build/host/*.png
+            firmware/mumble-fm1/app/build/host/*.wav
+          if-no-files-found: warn

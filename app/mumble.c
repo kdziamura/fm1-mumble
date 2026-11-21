@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
 /* MUMBLE voice engine. See mumble.h for the model. */
 #include "mumble.h"
-#include <string.h>
+#ifndef MUMBLE_PORT
+#include <string.h>   /* a port header declares memset itself */
+#endif
 
 /* Control-task code (text analysis, requests to the audio task) is built
  * for size; the audio path keeps the project's speed settings. */

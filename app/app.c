@@ -1,0 +1,171 @@
+/* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
+/* MUMBLE as its own FM-1 firmware. The engine (app/mumble.c, built as
+ * engine.c) and the page (app/mumble_screen.inc, with the cast's art) are the
+ * ones FM1 Open's browser preview runs; this file gives them what FM1 Open's
+ * screen.c gives them there, on fm1-base: the panel's controls in FM1 Open's
+ * order, the painting (paint.inc) and the 1 kHz-free frame loop.
+ * Part of the unity build (device/unity.c, host/plat_host.c), after the
+ * platform. */
+#define MUMBLE_PORT "mumble_port.h"
+#include "mumble_port.h"
+
+/* The few string routines the page uses; the FM-1 has no libc. */
+static unsigned mumble_strlen(const char *s) { unsigned n = 0; while (s[n]) ++n; return n; }
+static char *mumble_strcpy(char *d, const char *s) { char *r = d; while ((*d++ = *s++)) {} return r; }
+static char *mumble_strcat(char *d, const char *s) { mumble_strcpy(d + mumble_strlen(d), s); return d; }
+static void *mumble_memmove(void *d, const void *s, unsigned n)
+{
+    unsigned char *to = d;
+    const unsigned char *from = s;
+    if (to < from) while (n--) *to++ = *from++;
+    else while (n--) to[n] = from[n];
+    return d;
+}
+#define strlen mumble_strlen
+#define strcpy mumble_strcpy
+#define strcat mumble_strcat
+#define memmove mumble_memmove
+
+#include "paint.inc"
+
+/* ------------------------------------------------------------ FM1 Open --- */
+/* The page reads the panel as FM1 Open's screen.c hands it over: its button
+ * order, the keys, seven encoders (SELECT, K1, K2..K5, PRESETS). */
+enum { OCT_DOWN, OCT_UP, FX, SCL, ENV, LFO, EDIT, GLO, HOME, SAVE, ARP, SEQ, PLAY, REC, BUTTONS };
+#define BUTTON(b) (1U << (b))
+struct fm1_controls {
+    uint32_t keys;
+    uint16_t buttons;
+    int16_t encoders[7];
+};
+static const uint8_t button_of[BUTTONS] = {
+    [OCT_DOWN] = B_OCTDN, [OCT_UP] = B_OCTUP, [FX] = B_FX, [SCL] = B_SEL, [ENV] = B_ENV, [LFO] = B_LFO,
+    [EDIT] = B_EDIT, [GLO] = B_GLO, [HOME] = B_HOME, [SAVE] = B_SAVE, [ARP] = B_ARP, [SEQ] = B_SEQ,
+    [PLAY] = B_PLAY, [REC] = B_REC};
+static const uint8_t encoder_of[7] = {EN_SELECT, EN_ALGO, EN_K1, EN_K2, EN_K3, EN_K4, EN_PRESET};
+/* The page leaves to FM1 Open's overview on HOME; here it is the whole
+ * firmware, so HOME never reaches it. */
+enum { OVERVIEW, VOICE };
+static unsigned page = VOICE;
+static uint32_t blocked_keys;
+/* FM1 Open's sequencer, which the loop follows there: none here yet (a later
+ * milestone follows MIDI clock instead). */
+static struct { unsigned tempo, playing, play_step; } frame_views[1];
+static uint32_t frame_time;
+static const char *notice;
+static uint32_t notice_until;
+static uint8_t encoder_speed[7];
+/* A quick turn moves further, as FM1 Open's encoders do. */
+static int fm_encoder_delta(unsigned encoder, int16_t value)
+{
+    int amount = value < 0 ? -(int)value : value;
+    int gain = amount < 2 ? 1 : amount < 4 ? 2 : amount == 4 ? 3 : 4;
+    if (gain < encoder_speed[encoder]) gain = encoder_speed[encoder];
+    return value * gain;
+}
+
+#include "mumble_screen.inc"
+
+/* ----------------------------------------------------------- platform --- */
+static struct fm1_controls controls;
+static uint32_t buttons_before, keys_before;
+
+static uint16_t panel_buttons(uint32_t held)
+{
+    uint16_t out = 0;
+    for (unsigned b = 0; b < BUTTONS; ++b)
+        if (held & (1U << button_of[b])) out |= (uint16_t)BUTTON(b);
+    return out;
+}
+static uint32_t platform_buttons(uint32_t bits)
+{
+    uint32_t out = 0;
+    for (unsigned b = 0; b < BUTTONS; ++b)
+        if (bits & BUTTON(b)) out |= 1U << button_of[b];
+    return out;
+}
+/* Read the panel and hand it to the page. */
+static void input(void)
+{
+    controls.buttons = panel_buttons(plat_buttons());
+    controls.keys = plat_keys() & ((1U << NKEYS) - 1U);
+    for (unsigned i = 0; i < 7; ++i) {
+        int32_t turned = plat_enc(encoder_of[i]);
+        controls.encoders[i] = (int16_t)clamp(turned, -127, 127);
+    }
+    uint32_t pressed = controls.buttons & ~buttons_before & ~BUTTON(HOME);
+    uint32_t key_down = controls.keys & ~keys_before;
+    buttons_before = controls.buttons;
+    keys_before = controls.keys;
+    voice_controls(&controls, pressed, key_down);
+}
+
+void app_init(void)
+{
+    voice_open();
+}
+
+void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
+{
+    for (uint32_t i = 0; i < 2U * n; ++i) lr[i] = 0;
+    for (uint32_t k = 0; k + FM1_BLOCK_FRAMES <= n; k += FM1_BLOCK_FRAMES)
+        PLAT_FAR(mumble_render)(lr + 2U * k);
+    for (uint32_t i = 0; i < 2U * n; ++i) {
+        int32_t v = (int32_t)(((int64_t)lr[i] * (int32_t)master_q12) >> 12);
+        lr[i] = clamp(v, -8388608, 8388607);
+    }
+}
+
+void app_panic(void) { mumble_stop(); }
+
+void app_ui_init(void)
+{
+    lcd_fill(0, 0, SCREEN_W, SCREEN_H, BACK);
+    paint_all();
+}
+
+static void draw(void) { voice_draw(); }
+
+void app_frame(void)
+{
+    frame_time = plat_ms();
+    if (notice && (int32_t)(frame_time - notice_until) >= 0) notice = NULL;
+    input();
+    voice_frame(frame_time);
+    plat_leds(platform_buttons(voice_button_bits()), voice_led_bits());
+    paint_frame(draw);
+}
+
+void app_input_only(void) {}
+
+/* A message from the platform: the page's notice line. */
+void app_say(const char *a, const char *b)
+{
+    static char said[40];
+    said[0] = 0;
+    if (a) mumble_strcat(said, a);
+    if (b && b[0] && mumble_strlen(said) + mumble_strlen(b) + 1U < sizeof said) {
+        mumble_strcat(said, " ");
+        mumble_strcat(said, b);
+    }
+    notice = said;
+    notice_until = plat_ms() + 1500U;
+}
+
+#ifdef PLAT_HOST
+/* The host simulator's checks: what the page is doing. */
+int app_expect(const char *what, int *got)
+{
+    const struct voice_track *t = voice_track();
+    if (!strcmp(what, "cast")) *got = (int)voice_cast;
+    else if (!strcmp(what, "length")) *got = t->length;
+    else if (!strcmp(what, "song")) *got = (int)voice_song;
+    else if (!strcmp(what, "mode")) *got = voice_play ? 1 : voice_sample ? 2 : 0;
+    else if (!strcmp(what, "page")) *got = (int)voice_page;
+    else if (!strcmp(what, "loop")) *got = (int)voice_loop;
+    else if (!strcmp(what, "choir")) *got = t->choir;
+    else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;
+    else return 0;
+    return 1;
+}
+#endif
