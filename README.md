@@ -77,9 +77,9 @@ firmware or M-VAVE's own goes back on the same way.
 Milestone 1: everything the preview's page does runs (TYPE, PLAY, SAMPLE, the LOOP page, the eight characters and
 their FX) in the host simulator, and builds for the FM-1.
 
-The first device build (CI, November 2026): app image 103,652 B of the 581 KB slot; RAM `.data`+`.bss` 65,416 of
-98,304 B; RAM code 12,016 of 32,768 B (the engine's audio path 6,916 B of it); pool 84,484 of 344,064 B. The package
-`mumble.fwsc` is 616,059 B. Not yet:
+The device build with takes, the choir and LINE mode (CI, November 2026): app image 109,748 B of the 581 KB slot;
+RAM `.data`+`.bss` 77,996 of 98,304 B; RAM code 12,332 of 32,768 B (the engine's audio path 7,232 B of it); pool
+84,484 of 344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
 
 - **Not tried on an FM-1.** RAM use, the audio path's time in the interrupt and the output level are to be checked
   on the device.
