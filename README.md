@@ -40,8 +40,9 @@ CRUSH, a ghost for AIR ...); `tools/faces.py` draws the same faces into contact 
 face.
 
 Everything you make is kept over power-off: the line, each character's sound, choir, mute and level, the loop and
-its size, the scale and the arpeggiator. It saves itself 3 s after the last change, once no key is held and nothing
-is recording.
+its size, the scale and the arpeggiator. It saves itself 3 s after the last change, once the FM-1 has been quiet for
+a second (the loop stopped, nothing sounding or held): writing the flash holds the whole FM-1 for a moment, so it
+never happens during a performance. Change something while the loop plays and it is saved when you stop.
 
 The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the top on the clock, its tempo sizes it
 (LOOP shows SYNC), Stop stops it; without a clock it keeps its own BPM.

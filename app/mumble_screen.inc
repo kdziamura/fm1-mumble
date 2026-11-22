@@ -253,11 +253,14 @@ static void voice_stop(void)
 /* ------------------------------------------------------------------------
  * What is kept over power-off (OBJ_SETTINGS): the line, each character's
  * sound, choir, mute and level, the loop and its size, and the panel's
- * settings. It is saved VOICE_SAVE_MS after the last change, once nothing is
- * held or recording, and read back whole at power-on, or not at all when any
- * of it is out of range.
+ * settings. It is saved VOICE_SAVE_MS after the last change, once the FM-1
+ * has been quiet for VOICE_QUIET_MS (the loop stopped, nothing sounding,
+ * nothing held or recording): a save erases a flash sector, which silences
+ * the audio and holds everything else for up to a few hundred milliseconds,
+ * so it must not land in a performance. It is read back whole at power-on,
+ * or not at all when any of it is out of range.
  * ---------------------------------------------------------------------- */
-enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 2, VOICE_SAVE_MS = 3000 };
+enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 2, VOICE_SAVE_MS = 3000, VOICE_QUIET_MS = 1000 };
 struct voice_store {
     uint32_t magic;
     uint16_t version, size;
@@ -271,7 +274,7 @@ struct voice_store {
 };
 _Static_assert(sizeof(struct voice_store) <= PLAT_STORE_MAX, "the kept state fits a store object");
 static struct voice_store voice_kept;               /* (the image saved or read: too big for the stack) */
-static uint32_t voice_kept_sig, voice_change_sig, voice_change_ms;
+static uint32_t voice_kept_sig, voice_change_sig, voice_change_ms, voice_noisy_ms;
 static void voice_store_fill(struct voice_store *k)
 {
     memset(k, 0, sizeof *k);
@@ -335,15 +338,18 @@ static void voice_store_load(void)
     memcpy(voice_seq, k->seq, sizeof voice_seq);
     memcpy(voice_seq_track, k->seq_track, sizeof voice_seq_track);
 }
-/* Each frame: a change is saved once it has stood VOICE_SAVE_MS, with no key
- * held and nothing recording (a performance is not interrupted). */
+/* Each frame: a change is saved once it has stood VOICE_SAVE_MS and the
+ * FM-1 has been quiet VOICE_QUIET_MS (a performance is not interrupted). */
 static void voice_store_frame(uint32_t now)
 {
+    unsigned sounding = 0;
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) sounding |= voice_now.track_level[i] != 0;
+    if (voice_song || sounding || voice_held || voice_recording) voice_noisy_ms = now;
     voice_store_fill(&voice_kept);
     uint32_t sig = signature(0x5AFE, &voice_kept, sizeof voice_kept);
     if (sig == voice_kept_sig) return;
     if (sig != voice_change_sig) { voice_change_sig = sig; voice_change_ms = now; return; }
-    if (now - voice_change_ms < VOICE_SAVE_MS || voice_held || voice_recording) return;
+    if (now - voice_change_ms < VOICE_SAVE_MS || now - voice_noisy_ms < VOICE_QUIET_MS) return;
     if (plat_store_save(OBJ_SETTINGS, &voice_kept, sizeof voice_kept) == 0) voice_kept_sig = sig;
     else { voice_notice("COULD NOT SAVE: TRYING AGAIN"); voice_change_ms = now; }
 }

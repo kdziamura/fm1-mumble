@@ -19,8 +19,9 @@
  *       rewrite the flash under a voice);
  *   P7  a draw pass changes what it draws (the same state, two different
  *       screens) or the same input plays differently twice.
- *   P8  let go and left alone (not recording), the state is not saved
- *       within 3 s, or a power-off and on does not bring it back exactly.
+ *   P8  a save comes while the loop plays, or (let go, the loop stopped,
+ *       left alone) the state is not saved once quiet, or a power-off and on
+ *       does not bring it back exactly.
  * And on the page's state, every frame:
  *   S1  every field is in its range and agrees with the others and with the
  *       lights (the line printable text of its length, the sequence grouped
@@ -762,16 +763,22 @@ static uint32_t play(const uint8_t *data, size_t size)
     return result;
 }
 
-/* P8: let go and left alone (not recording), the state is saved within
- * VOICE_SAVE_MS (or, never changed, is still the boot's), and a power-off and
- * on brings exactly that back. */
+/* P8: let go, the loop stopped and left alone (not recording), the state is
+ * saved once quiet (or, never changed, is still the boot's), and a power-off
+ * and on brings exactly that back. Nothing is saved while the loop plays. */
 static void check_kept(void)
 {
     static struct voice_store now, after;
     if (voice_recording) return;
     phase = "save";
     held_buttons = held_keys = 0;
-    for (unsigned i = 0; i < (VOICE_SAVE_MS + 300u) / 16u; ++i) frame();
+    for (unsigned i = 0; voice_song && i < 4000u / 16u; ++i) {
+        unsigned saves = store_saves;
+        frame();
+        if (store_saves != saves) fail("P8 a save while the loop played");
+    }
+    if (voice_song) voice_stop();                 /* (as PLAY would) */
+    for (unsigned i = 0; i < (VOICE_SAVE_MS + VOICE_QUIET_MS + 1500u) / 16u; ++i) frame();
     voice_store_fill(&now);
     if (signature(0x5AFE, &now, sizeof now) != voice_kept_sig ||
         (store_len >= 0 && (store_len != (int)sizeof now || memcmp(store, &now, sizeof now))))

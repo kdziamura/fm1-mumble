@@ -1,11 +1,18 @@
 # What is kept over power-off: the line, a character's sound and mute, the
 # loop's notes and size, the scale. Saved 3 s after the last change (not while
-# a key is held or recording); a reboot brings it all back.
+# a key is held or recording, nor while the loop plays); a reboot brings it all back.
 wait 600
 tapkey 7
 tapkey 4
 tapkey 24
 expect length 3
+# A save erases flash, which holds the whole FM-1 a moment: never while the
+# loop plays, however long after a change.
+tap PLAY
+wait 4500
+expect store_writes 0
+tap PLAY
+wait 100
 # SING: K1 moves HERO's PITCH; SCL C major; REC two notes into the loop.
 tap GLO
 expect mode 1
