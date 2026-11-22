@@ -474,7 +474,7 @@ struct hum {
      * ending's place; the onset's kind and length, the ending's. */
     uint8_t onset, coda, has_glide, breath, vowel2;
     uint32_t onset_len;
-    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2;
+    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2, nlp;
     /* The diphthong's second vowel, a nasal ending's closed formants. */
     float target2[4], nasal[4];
     /* A sung note's slide from the last one (semitones, over porta frames),
@@ -1080,8 +1080,8 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float level = 0.0f;
         if (w ? what == MUMBLE_CODA_STOP : what == MUMBLE_NOISE_BURST) level = w ? 0.16f : 0.30f;
         else if (w ? what == MUMBLE_CODA_HISS : what == MUMBLE_NOISE_HISS)
-            level = at_hz >= 65U ? 0.045f : at_hz <= 35U ? 0.17f : 0.13f;
-        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.18f;
+            level = at_hz >= 65U ? 0.032f : at_hz <= 35U ? 0.12f : 0.09f;
+        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.13f;
         if (w && what == MUMBLE_CODA_HISS) level *= 0.7f;              /* an ending's hiss trails off quieter */
         if (!w && voiced) level *= 0.5f;
         /* The same loudness at any centre: divide out the resonator's power
@@ -1089,7 +1089,7 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float power = (1.0f - c) / ((1.0f + c) * ((1.0f - c) * (1.0f - c) - b * b));
         h->nz_a[w] = level * diction * inv_sqrt(power);
     }
-    h->ny1 = h->ny2 = 0.0f;
+    h->ny1 = h->ny2 = h->nlp = 0.0f;
     /* An ending's noise rings on past the voice: a stop's burst, a hiss. */
     h->tail = s->coda == MUMBLE_CODA_STOP ? 1764U : s->coda == MUMBLE_CODA_HISS ? 3969U : 0U;
     if (!diction) h->tail = 0;
@@ -1261,7 +1261,8 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                 else {
                     float v = h->nz_a[band] * white + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
                     h->ny2 = h->ny1; h->ny1 = v;
-                    hiss = v * ne;
+                    h->nlp += 0.47f * (v - h->nlp);   /* a low-pass at about 4.5 kHz: no fizz on top */
+                    hiss = h->nlp * ne;
                 }
             }
             for (unsigned k = 0; k < 4; ++k) {
