@@ -103,10 +103,8 @@ def pick(candidates, threshold=90):
 
 
 def read_portraits():
-    """The hand-drawn portraits, for comparison."""
-    src = (ROOT / "app/mumble_sprites.inc").read_text()
-    body = src[src.index("voice_portraits"):]
-    rows = re.findall(r'"([.a-z]{24})"', body)
+    """The hand-drawn portraits (tools/cast_by_hand.txt), for comparison."""
+    rows = [r for r in (ROOT / "tools/cast_by_hand.txt").read_text().split("\n") if r and not r.startswith("#")]
     return [rows[i * N:(i + 1) * N] for i in range(len(CAST))]
 
 

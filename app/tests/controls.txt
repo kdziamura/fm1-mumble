@@ -139,3 +139,14 @@ release HOME
 # GLO round to TYPE.
 tap GLO
 expect mode 0
+# The faces are built from the voices: GHOST's is a ghost, BOT's a robot with an antenna.
+turn SELECT -1
+wait 50
+expect cast 7
+expect face_body 1
+turn SELECT -1
+wait 50
+expect cast 6
+expect face_body 2
+expect face_top 2
+shot controls-bot.png

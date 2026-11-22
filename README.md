@@ -13,7 +13,8 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 |---|---|
 | `app/app.c` | The app's contract with fm1-base (`app_init`, `app_render`, `app_frame` ...) and the controls adapter |
 | `app/mumble.c`, `app/mumble.h` | The voice engine: text to syllables, the glottal source, formants, consonants, the choir, the loop, effects and the master compressor |
-| `app/mumble_screen.inc`, `app/mumble_sprites.inc` | The page: TYPE, SING and LOOP, the choir, recording, the knob pages; the cast's art |
+| `app/mumble_screen.inc` | The page: TYPE, SING and LOOP, the choir, recording, the knob pages |
+| `app/mumble_faces.inc`, `app/mumble_sprites.inc` | The cast's faces, built from their voices (portrait, icon, the rig that talks and blinks), and their palette |
 | `app/paint.inc` | The damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn (adapted from FM1 Open, see `LICENSE.md`) |
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
@@ -24,12 +25,19 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 | `app/tests/clock.txt` | Host simulator script: MIDI clock: Start, the loop on the clock's tempo as it changes, Stop, the clock gone |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT clearing a singer, then the loop |
 | `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
+| `tools/faces.py`, `tests/faces.sh` | The face generator in Python, for contact sheets (the cast by hand and from their voices, each setting swept, rolled voices, the rig); the check that the firmware's draws the same pixels |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
 
 ## Controls
 
 Hold **HOME** for a card of these on the screen; every button also says on the hint line what it just did.
+
+Each character's face is built from their voice, and changes with it: the head's proportions follow its size,
+pitch and effort, and what stands out in the voice against the rest of the cast picks the parts (a hood for ROOM, an
+antenna for RADIO, a beanie for a high voice, a knight's helmet for a drilled one, a beard for WOBBLE, a robot for
+CRUSH, a ghost for AIR ...); `tools/faces.py` draws the same faces into contact sheets. LFO's rolled voice gets a new
+face.
 
 Everything you make is kept over power-off: the line, each character's sound, choir, mute and level, the loop and
 its size, the scale and the arpeggiator. It saves itself 3 s after the last change, once no key is held and nothing
@@ -68,6 +76,7 @@ Locally (Linux x86-64; on a Mac the build runs the toolchain in Docker, see fm1-
 ~~~sh
 git submodule update --init --recursive
 tests/engine.sh app/build/engine                                 # the engine's tests (any cc), a WAV per character
+tests/faces.sh                                                   # the firmware's faces against tools/faces.py's
 base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python   # pinned, checked downloads into base/.toolchain
 base/.venv/bin/python base/tools/build.py app --host             # the host simulator: any cc, no toolchain
 app/build/host/mumble_host app/tests/basic.txt app/build/host
@@ -115,7 +124,7 @@ firmware or M-VAVE's own goes back on the same way.
 Played on an FM-1 (November 2026): one shared line, TYPE and SING, the choir, the recorded loop (pitches, timing and
 syllable slots, singing the line as it is), consonants, glides and the master compressor.
 
-Tested in the simulator and the fuzzer, not yet on an FM-1: LOOP mode, the friendlier controls, the scale lock, the
+Tested in the simulator and the fuzzer, not yet on an FM-1: the faces built from the voices, LOOP mode, the friendlier controls, the scale lock, the
 arpeggiator, quantized recording, the typewriter, saving, and the MIDI clock (whose timing on the device rests on
 `midi_stamp`).
 

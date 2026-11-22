@@ -38,6 +38,11 @@ jobs:
       - name: Engine tests (tests/engine_test.c)
         run: tests/engine.sh app/build/engine
 
+      - name: Faces (app/mumble_faces.inc draws what tools/faces.py draws)
+        run: |
+          tests/faces.sh python3
+          python3 tools/faces.py app/build/faces
+
       - name: Host simulator tests
         run: |
           python3 base/tools/build.py app --host
@@ -78,6 +83,7 @@ jobs:
             app/build/*.bin
             app/build/SHA256SUMS.txt
             app/build/host/*.png
+            app/build/faces/*.png
             app/build/host/*.wav
             app/build/fuzz/crashes/
             app/build/fuzz/fuzz.log

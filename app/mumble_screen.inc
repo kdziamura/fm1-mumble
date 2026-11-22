@@ -34,6 +34,7 @@
  *
  * Included by app.c: uses paint.inc's helpers and draw cache. */
 #include "mumble.h"
+#include "mumble_faces.inc"
 
 enum { VOICE_TRACE = 21, VOICE_ROWS = 3, VOICE_COLUMNS = 18 };
 #define RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
@@ -326,6 +327,30 @@ static void voice_store_frame(uint32_t now)
 }
 
 static void voice_close(void);
+/* The faces, built from the voices (mumble_faces.inc): the selected
+ * character's portrait and rig, every character's icon. Rebuilt here, on the
+ * control side, when a voice changes (a knob, LFO, EDIT, a load) or another
+ * character is selected; the drawing only reads them, and signs with
+ * voice_faces_version. */
+static struct voice_face voice_portrait, voice_face_work;
+static char voice_icons[MUMBLE_CAST][FACE_ICON][FACE_ICON];
+static uint32_t voice_face_sigs[MUMBLE_CAST], voice_faces_version;
+static unsigned voice_portrait_of = MUMBLE_CAST;
+static void voice_faces_update(void)
+{
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
+        uint32_t sig = signature(0xFACE0 + i, &voice_tracks[i].sound, sizeof voice_tracks[i].sound);
+        unsigned portrait = i == voice_cast && voice_portrait_of != voice_cast;
+        if (sig == voice_face_sigs[i] && !portrait) continue;
+        struct voice_face *f = i == voice_cast ? &voice_portrait : &voice_face_work;
+        voice_face_build(&voice_tracks[i].sound, f);
+        voice_face_icon(f, voice_icons[i]);
+        if (i == voice_cast) voice_portrait_of = i;
+        voice_face_sigs[i] = sig;
+        ++voice_faces_version;
+    }
+}
+
 /* Power-off, as far as RAM goes: the page starts over (and loads what was
  * kept) at the next voice_open. */
 static void voice_forget(void)
@@ -336,6 +361,8 @@ static void voice_forget(void)
     voice_seq_count = 0;
     voice_cast = voice_caps = voice_demo = voice_scale = voice_arp = 0;
     voice_bars = 2, voice_bpm = 120, voice_octave = 0;
+    voice_portrait_of = MUMBLE_CAST;
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_face_sigs[i] = 0;
 }
 
 static void voice_open(void)
@@ -363,6 +390,7 @@ static void voice_open(void)
     voice_song = 0;
     memset(voice_trace, 0, sizeof voice_trace);
     for (unsigned i = 0; i < VOICE_TRACE; ++i) voice_trace[i].vowel = MUMBLE_VOWELS;
+    voice_faces_update();
 }
 static void voice_close(void)
 {
@@ -1013,6 +1041,7 @@ static void voice_frame(uint32_t now)
 {
     mumble_status(&voice_now);
     voice_store_frame(now);
+    voice_faces_update();
     /* The audio task adopts a song a block later: only a song that was
      * heard playing can be over. */
     if (voice_song == 1 && voice_now.song_ms >= 0) voice_song = 2;
@@ -1068,10 +1097,11 @@ static void voice_frame(uint32_t now)
 }
 
 /* ------------------------------------------------------------------------
- * The cast in OP-1 style line art (mumble_sprites.inc): white strokes and
- * encoder-colour accents on black. 24x24 portraits are drawn at 3x on whole pixels;
- * 16x16 icons fill the choir strip. Mouths, blinks and the shout mark are
- * pixel overlays on a working copy of the portrait.
+ * The cast in OP-1 style line art, built from their voices (mumble_faces.inc;
+ * the palette in mumble_sprites.inc): white strokes and encoder-colour accents
+ * on black. 24x24 portraits are drawn at 3x on whole pixels; 16x16 icons fill
+ * the choir strip. Mouths, blinks and the shout mark are pixel overlays on a
+ * working copy of the portrait, where the face's rig says.
  * ---------------------------------------------------------------------- */
 #include "mumble_sprites.inc"
 
@@ -1096,22 +1126,6 @@ static int voice_wave(unsigned period, int amp, unsigned phase)
     return x < 2 * amp ? x - amp : 3 * amp - x;
 }
 
-/* Where each face moves: the mouth centre and row with the colour that
- * hides the drawn mouth (skin, beard) and the lip colour of an open one, and
- * the eyes a blink closes (x, y, w, h in portrait pixels): the lid colour
- * fills them, then a lash line in `lash` along their bottom. */
-struct voice_rig { uint8_t mouth_x, mouth_y; char fill, lip, lid, lash; uint8_t eyes[2][4]; };
-static const struct voice_rig voice_rigs[MUMBLE_CAST] = {
-    {12, 13, '.', 'w', '.', 'w', {{8, 9, 2, 2}, {14, 9, 2, 2}}},   /* HERO */
-    {12, 13, '.', 'w', '.', 'w', {{8, 9, 2, 2}, {14, 9, 2, 2}}},   /* GUARD */
-    {12, 13, '.', 'w', '.', 'w', {{0}}},                           /* SISTER: eyes closed in prayer */
-    {12, 13, '.', 'w', '.', 'w', {{8, 9, 2, 2}, {14, 9, 2, 2}}},   /* KID */
-    {12, 13, '.', 'o', '.', 'w', {{14, 9, 2, 2}}},                 /* PIRATE: one eye, one patch */
-    {12, 15, '.', 'w', '.', 'w', {{8, 11, 2, 2}, {14, 11, 2, 2}}}, /* ELDER: under bushy brows */
-    {12, 22, '.', 'g', '.', 'g', {{9, 7, 2, 2}, {13, 7, 2, 2}}},   /* BOT: the mouth is the chest panel */
-    {12, 11, '.', 'w', '.', 'w', {{8, 7, 2, 3}, {14, 7, 2, 3}}},   /* GHOST */
-};
-enum { CAST_KID = 3, CAST_ELDER = 5, CAST_BOT = 6, CAST_GHOST = 7 };
 /* Mouth size per vowel when fully open (icon pixels). */
 static const uint8_t vowel_mouth[MUMBLE_VOWELS][2] = {{4, 3}, {4, 2}, {4, 1}, {3, 3}, {2, 2}, {3, 2},
                                                        {4, 1}, {2, 2}, {3, 2}};
@@ -1127,40 +1141,35 @@ static void grid_rect(int x, int y, int w, int h, char c)
         for (int i = 0; i < w; ++i) grid_set(x + i, y + j, c);
 }
 
-struct pose { unsigned cast, open, vowel, blink, shout, tick; };
+struct pose { unsigned open, vowel, blink, shout, tick; };
+/* The selected character's portrait as it is now: eyes shut for a blink, the
+ * mouth open on a vowel (a robot's green), a robot's lamp blinking, CAPS's "!". */
 static void voice_pose(const struct pose *p)
 {
-    memcpy(voice_grid, voice_portraits[p->cast], sizeof voice_grid);
-    const struct voice_rig *rig = &voice_rigs[p->cast];
+    const struct voice_face *f = &voice_portrait;
+    for (unsigned y = 0; y < SPRITE; ++y) memcpy(voice_grid[y], f->grid[y], SPRITE);
+    char lip = f->body == BODY_ROBOT ? 'g' : 'w';
     if (p->blink)
-        for (unsigned e = 0; e < 2 && rig->eyes[e][2]; ++e) {
-            const uint8_t *eye = rig->eyes[e];
-            grid_rect(eye[0], eye[1], eye[2], eye[3], rig->lid);
-            grid_rect(eye[0], eye[1] + eye[3] - 1, eye[2], 1, rig->lash);
+        for (unsigned e = 0; e < f->eyes; ++e) {
+            const uint8_t *eye = f->eye[e];
+            grid_rect(eye[0], eye[1], eye[2], eye[3], '.');
+            grid_rect(eye[0], eye[1] + eye[3] - 1, eye[2], 1, lip);
         }
-    int y = rig->mouth_y;
-    if (p->cast == CAST_BOT) {
-        /* An equaliser on its chest panel for a mouth; the antenna lamp blinks. */
-        for (int b = 0; b < 4; ++b) {
-            int h = p->open ? 1 + (int)((p->open * (2U + (unsigned)(b * 3 + (int)p->tick) % 3U)) / 4U) : 1;
-            if (h > 3) h = 3;
-            grid_rect(8 + b * 2 + (b >= 2), y + 1 - h, 1, h, p->open ? rig->lip : 'm');
-        }
-        if (p->tick & 8U)
-            for (int j = 0; j < 2; ++j)
-                for (int i = 9; i < 15; ++i)
-                    if (voice_grid[j][i] == 'o') voice_grid[j][i] = 'm';
-    } else if (p->open) {
+    int y = f->mouth_y;
+    if (p->open) {
         /* The drawn mouth gives way to an open one: a stroke for narrow
          * vowels, a ring for round ones. */
         unsigned v = p->vowel < MUMBLE_VOWELS ? p->vowel : MUMBLE_U;
         int w = vowel_mouth[v][0], h = (int)((vowel_mouth[v][1] * p->open + 3U) / 4U);
-        int x = rig->mouth_x - (w + 1) / 2;
-        grid_rect(rig->mouth_x - 2, y, 5, 1, rig->fill);
-        grid_rect(x, y, w, h, rig->lip);
+        int x = 12 - (w + 1) / 2;
+        grid_rect(12 - f->mouth_w / 2, y, f->mouth_w, 1, '.');
+        grid_rect(x, y, w, h, lip);
         if (h >= 3 && w >= 3) grid_rect(x + 1, y + 1, w - 2, h - 2, '.');
     }
-    if (p->cast == CAST_ELDER && (p->tick & 16U)) grid_set(14, 4, 'w');          /* the star twinkles */
+    if (f->top == TOP_ANTENNA && (p->tick & 8U))                                /* the lamp blinks */
+        for (int j = 0; j < 6; ++j)
+            for (int i = 10; i < 14; ++i)
+                if (voice_grid[j][i] == 'o') voice_grid[j][i] = 'm';
     if (p->shout) {                                                             /* "!" */
         grid_rect(23, 0, 1, 3, 'o');
         grid_set(23, 4, 'o');
@@ -1231,23 +1240,21 @@ static void voice_face(void)
     const unsigned who = voice_cast;
     unsigned vowel = voice_now.track_vowel[who], level = voice_now.track_level[who];
     struct pose p;
-    p.cast = who;
     p.vowel = vowel;
     p.open = vowel < MUMBLE_VOWELS ? (level > 180U ? 4U : level / 45U) : 0U;
     p.blink = ((frame_time + who * 977U) % 3700U) < 140U;
     p.shout = voice_caps;
     p.tick = frame_time / 60U;
-    /* Motion snaps to icon pixels: a hop on every syllable, the kid
-     * bounces; only the ghost floats smoothly. */
+    /* Motion snaps to icon pixels: a hop on every syllable, a beanie
+     * bounces; only a ghost floats smoothly. */
+    const struct voice_face *f = &voice_portrait;
     int lift = p.open ? SPRITE_SCALE : 0;
-    if (who == CAST_KID && ((frame_time / 450U) & 1U)) lift = SPRITE_SCALE;
-    if (who == CAST_GHOST) lift = 1 + voice_wave(2000, 1, 0);
-    if (who != CAST_BOT && who != CAST_ELDER) p.tick = 0;
-    /* What of the tick shows: the lamp's and the star's bits, and the bot's
-     * equaliser while it talks (its bars step with tick % 3). */
-    unsigned tick_shown = (p.tick & 24U) | (who == CAST_BOT && p.open ? p.tick % 3U : 0U);
-    struct { int lift; unsigned open, vowel, blink, shout, cast, tick; } sig_in = {
-        lift, p.open, vowel, p.blink, p.shout, who, tick_shown};
+    if ((f->top == TOP_BEANIE || f->top == TOP_PROPELLER) && ((frame_time / 450U) & 1U)) lift = SPRITE_SCALE;
+    if (f->body == BODY_GHOST) lift = 1 + voice_wave(2000, 1, 0);
+    if (f->top != TOP_ANTENNA) p.tick = 0;
+    unsigned tick_shown = p.tick & 8U;                  /* (what of the tick shows: the lamp) */
+    struct { int lift; unsigned open, vowel, blink, shout, cast, tick, version; } sig_in = {
+        lift, p.open, vowel, p.blink, p.shout, who, tick_shown, voice_faces_version};
     uint32_t sig = signature(0x0FACE, &sig_in, sizeof sig_in);
     if (cache->voice_cache[1] == sig) return;
     cache->voice_cache[1] = sig;
@@ -1302,14 +1309,14 @@ static void voice_choir_strip(void)
     for (unsigned i = 0; i < MUMBLE_CAST; ++i)
         state[i] = (uint8_t)((voice_now.track_level[i] > 40U) | (voice_tracks[i].choir << 2) |
                              ((i == voice_cast) << 3) | ((voice_notes_of(i) != 0) << 4));
-    uint32_t sig = signature(0xC402, state, sizeof state);
+    uint32_t sig = signature(0xC402 ^ voice_faces_version, state, sizeof state);
     if (cache->voice_cache[7] == sig) return;
     cache->voice_cache[7] = sig;
     voice_clip(0, STRIP_TOP, 240, STRIP_BOTTOM);
     vfill(0, STRIP_TOP, 240, STRIP_BOTTOM - STRIP_TOP, BACK);
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
         int x = 14 + (int)i * 28, hop = voice_now.track_level[i] > 40U;
-        for (int row = 0; row < ICON; ++row) memcpy(voice_grid[row], voice_icons[i][row], ICON);
+        for (int row = 0; row < ICON; ++row) memcpy(voice_grid[row], voice_icons[i][row], FACE_ICON);
         voice_sprite(x, STRIP_TOP + 1 - hop, 1, !voice_in_choir(i), ICON);
         if (i == voice_cast) vfill(x + 2, STRIP_BOTTOM - 1, 12, 1, WHITE);
         if (voice_notes_of(i)) vfill(x + 17, STRIP_TOP + 2, 2, 2, voice_in_choir(i) ? TEXT : DIM);   /* in the loop */
