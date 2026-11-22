@@ -999,10 +999,14 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     for (unsigned i = 0; i < 7; ++i)
         if (edit && c->encoders[i]) voice_edit_spent = 1;
     if (c->encoders[0]) {
+        unsigned busy = voice_song || voice_held || voice_recording;
         voice_release_all();
         voice_cast = (unsigned)((int)voice_cast + c->encoders[0] % MUMBLE_CAST + MUMBLE_CAST) % MUMBLE_CAST;
+        /* A greeting in the new voice, unless the loop plays (or keys, or a
+         * recording): then it would talk over the music. */
         const char *hello = voice_greetings[voice_cast];
-        mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
+        if (!busy)
+            mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
         ++voice_lanes_version;
     }
     /* ARP held: the knobs (and ALGO) set the arpeggiator, and nothing else. */
