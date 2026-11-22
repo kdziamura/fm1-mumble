@@ -432,24 +432,29 @@ int main(int argc, char **argv)
         struct mumble_status st;
         /* The rest of these: 0.35 s to let tails go. */
 #define SETTLE() do { mumble_stop(); for (unsigned b_ = 0; b_ < 1200; ++b_) { memset(z, 0, sizeof z); mumble_render(z); } } while (0)
-        /* A hiss before the vowel: high-frequency energy in its first 60 ms. */
-        float hf[2] = {0};
+        /* A hiss before the vowel: its first 30 ms (before the voice) are
+         * mostly high-frequency energy, a plain vowel's start is not. The
+         * second difference's share of the energy: about 0.5 at 6 kHz, 0.001
+         * under 1 kHz. */
+        float hf[2] = {0}, all[2] = {0};
         for (unsigned v = 0; v < 2; ++v) {
             SETTLE();
             struct mumble_sound snd = plain;
             if (v) { snd.onset = MUMBLE_NOISE_HISS; snd.onset_hz = 60; }
             mumble_press_sound(1, &snd, &one, 1, 0);
-            float last = 0.0f, last2 = 0.0f;   /* a second difference: weighted to the hiss's band */
-            for (unsigned b = 0; b < 21; ++b) {
+            float last = 0.0f, last2 = 0.0f;
+            for (unsigned b = 0; b < 10; ++b) {
                 memset(z, 0, sizeof z); mumble_render(z);
                 for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) {
                     float x = z[i] / 8388608.0f, d = x - 2.0f * last + last2;
-                    hf[v] += d * d; last2 = last; last = x;
+                    hf[v] += d * d; all[v] += x * x; last2 = last; last = x;
                 }
             }
             mumble_release(1);
         }
-        CHECK(hf[1] > 4.0f * hf[0], "an s is heard before its vowel (hf %.5f vs %.5f)", hf[1], hf[0]);
+        CHECK(all[1] > 0.0f && hf[1] > 0.1f * all[1] && hf[0] < 0.01f * all[0] + 1e-12f,
+              "an s is a hiss before its vowel (high share %.3f, a vowel's %.4f)",
+              hf[1] / (all[1] + 1e-12f), hf[0] / (all[0] + 1e-12f));
         /* An unvoiced t holds the voice back; a voiced d does not. */
         unsigned first_voice[3] = {0};
         for (unsigned v = 0; v < 3; ++v) {

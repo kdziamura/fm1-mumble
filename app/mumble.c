@@ -474,7 +474,7 @@ struct hum {
      * ending's place; the onset's kind and length, the ending's. */
     uint8_t onset, coda, has_glide, breath, vowel2;
     uint32_t onset_len;
-    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2, nx1, nx2;
+    float noise_level, nz_a[2], nz_b[2], nz_c[2], nz_lp[2], ny1, ny2, nx1, nx2, nlp;
     /* The diphthong's second vowel, a nasal ending's closed formants. */
     float target2[4], nasal[4];
     /* A sung note's slide from the last one (semitones, over porta frames),
@@ -1073,6 +1073,9 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float r = exp2_approx(-PI * bw / RATE * 1.442695f);
         float b = 2.0f * r * cos_approx(2.0f * PI * hz / RATE), c = -r * r;
         h->nz_b[w] = b;
+        /* and a low-pass at 1.3 times the centre: the band's upper skirt
+         * falls 12 dB an octave, not 6 (an sh's spread to 10 kHz). */
+        h->nz_lp[w] = 1.0f - exp2_approx(-2.0f * PI * 1.3f * hz / RATE * 1.442695f);
         h->nz_c[w] = c;
         /* How loud, against the vowel, as speech has them: sh the loudest
          * hiss, s and the bursts below it, f and th faint; a voiced one half. */
@@ -1083,6 +1086,9 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
             level = at_hz >= 65U ? 0.032f : at_hz <= 35U ? 0.12f : 0.09f;
         else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.13f;
         if (w && what == MUMBLE_CODA_HISS) level *= 0.7f;              /* an ending's hiss trails off quieter */
+        /* A hiss up from 5 kHz (s, z, x, f, th) 8 dB down: the voice has
+         * nothing up there for it to blend into. sh, ch and j keep theirs. */
+        if (at_hz >= 50U && !(w ? what == MUMBLE_CODA_STOP : what == MUMBLE_NOISE_BURST)) level *= 0.4f;
         if (!w && voiced) level *= 0.5f;
         /* A band-pass, (1 - z^-2) / (1 - b z^-1 - c z^-2): zeros at DC and
          * Nyquist, so nothing below or far above the band (an all-pole
@@ -1094,7 +1100,7 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float power = 2.0f * g0 * (1.0f - (b * b / (1.0f - c) + c));
         h->nz_a[w] = level * diction * inv_sqrt(power);
     }
-    h->ny1 = h->ny2 = h->nx1 = h->nx2 = 0.0f;
+    h->ny1 = h->ny2 = h->nx1 = h->nx2 = h->nlp = 0.0f;
     /* An ending's noise rings on past the voice: a stop's burst, a hiss. */
     h->tail = s->coda == MUMBLE_CODA_STOP ? 1764U : s->coda == MUMBLE_CODA_HISS ? 3969U : 0U;
     if (!diction) h->tail = 0;
@@ -1267,7 +1273,8 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                     float v = h->nz_a[band] * (white - h->nx2) + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
                     h->nx2 = h->nx1; h->nx1 = white;
                     h->ny2 = h->ny1; h->ny1 = v;
-                    hiss = v * ne;
+                    h->nlp += h->nz_lp[band] * (v - h->nlp);
+                    hiss = h->nlp * ne;
                 }
             }
             for (unsigned k = 0; k < 4; ++k) {
