@@ -162,12 +162,13 @@ int app_expect(const char *what, int *got)
     if (!strcmp(what, "cast")) *got = (int)voice_cast;
     else if (!strcmp(what, "length")) *got = (int)voice_length;
     else if (!strcmp(what, "song")) *got = (int)voice_song;
-    else if (!strcmp(what, "mode")) *got = (int)voice_play;                 /* 0 TYPE, 1 SING */
+    else if (!strcmp(what, "mode")) *got = (int)voice_mode;                 /* 0 TYPE, 1 SING, 2 LOOP */
     else if (!strcmp(what, "cursor")) *got = (int)voice_cursor;             /* TYPE: where keys type */
     else if (!strcmp(what, "help")) *got = (int)voice_help;                 /* HOME held: the help card */
     else if (!strcmp(what, "edited")) *got = (int)voice_edited();           /* the selected sound moved from its character's */
     else if (!strcmp(what, "page")) *got = (int)voice_page;
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
+    else if (!strcmp(what, "bpm")) *got = (int)voice_bpm;
     else if (!strcmp(what, "choir")) *got = t->choir;
     else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;
     else if (!strcmp(what, "vowel")) *got = voice_now.vowel;                 /* the loudest sounding, 6: none */

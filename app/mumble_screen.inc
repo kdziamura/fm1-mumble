@@ -1,20 +1,22 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
 /* The VOICE page: the MUMBLE retro-game voice synthesizer.
  *
- * One line, sung by eight characters. GLO switches mode:
+ * One line, sung by eight characters. GLO steps through three modes:
  *   TYPE  keys type the line; a vowel speaks the moment it is typed.
  *   SING  keys sing the line a syllable at a time at their pitch, held while
  *         held. The key that starts a syllable leads it: keys pressed while
  *         it is held sing it too (a chord); once it is let go the next key
  *         moves on, round the line. Each character sings one note at a time;
  *         the keys held are shared out among the choir (selected first).
+ *   LOOP  the multitrack view: a lane of the loop per character; the keys
+ *         sing as in SING, the knobs set the loop.
  * The loop (always looping, BARS x BPM) plays a recorded sequence: REC
  * records what is sung, pass over pass. A note keeps its time, length,
  * pitch, singer and syllable slot, not the words: it sings the line as it is
  * now, so a new line changes what the loop sings. Each pass of the loop sings
  * from the top of the line.
  *
- *   PLAY loop on/off   REC record (from TYPE: to SING first)   GLO TYPE/SING
+ *   PLAY loop on/off   REC record (from TYPE: to SING first)   GLO the mode
  *   SELECT character   SAVE choir   ARP / PRESET demo lines   HOME held: help
  *   TYPE  keys type at the cursor   K1 cursor   K2 the letter under it
  *         OCT- delete   OCT+ CAPS   FX ,  SCL .  ENV ?  LFO !
@@ -22,6 +24,8 @@
  *   SING  ALGO / SEQ page   K1..K4 sound (EDIT held: back to the character's)
  *         OCT- OCT+ octave   FX from the top of the line
  *         EDIT undo a pass; held 1 s: clear the loop
+ *   LOOP  K1 the character's start  K2 its level  K3 bars  K4 BPM
+ *         (EDIT held: back to where they start); OCT, FX and EDIT as in SING
  * Every button says what it did on the hint line.
  *
  * Included by app.c: uses paint.inc's helpers and draw cache. */
@@ -34,7 +38,10 @@ static const uint16_t voice_knob_colors[4] = {0x2b7b, 0x2d8d, 0xf7be, 0xf325};
 /* AH EH EE AW OO UH, then IH UU ER (each near the vowel it sits between) */
 static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf7be, 0xb47f, 0xfe87,
                                                      0x2c5f, 0xd51f, 0xfc90};
-static const char *const voice_page_names[MUMBLE_PAGES + 1] = {"VOICE", "FEEL", "FX", "SING", "LOOP"};
+static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX", "SING"};
+/* GLO steps TYPE -> SING -> LOOP; the keys sing in both of the last two. */
+enum { VOICE_TYPE, VOICE_SING, VOICE_LOOP, VOICE_MODES };
+static const char *const voice_mode_names[VOICE_MODES] = {"TYPE", "SING", "LOOP"};
 static const char *const voice_greetings[MUMBLE_CAST] = {
     "Hey there!", "Halt.", "Bless you, child.", "Hiya! Hiya!", "Arr...", "Hmm, yes... yes.",
     "Hello. Hello.", "Whooo..."};
@@ -49,11 +56,12 @@ static const char *const voice_lines[] = {
     "Bread, cheese, a lantern. That will be nine coins.",
     "Who goes there? Is it... dinner time?"};
 enum { VOICE_LINES = sizeof voice_lines / sizeof voice_lines[0] };
-/* The hint line's tip in each mode (TYPE, SING), and HOME's help card. */
-static const char *const voice_tips[2] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
-                                          "KEYS SING THE LINE  HOLD HOME: HELP"};
+/* The hint line's tip in each mode, and HOME's help card. */
+static const char *const voice_tips[VOICE_MODES] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
+                                                    "KEYS SING THE LINE  HOLD HOME: HELP",
+                                                    "K1 START  K2 LEVEL  HOLD HOME: HELP"};
 enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
-static const char *const voice_help_rows[2][VOICE_HELP_ROWS] = {
+static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
     {"KEYS TYPE AT THE CURSOR   GLO: SING",
      "K1 CURSOR  K2 LETTER  OCT- DELETE",
      "OCT+ CAPS  FX ,  SCL .  ENV ?  LFO !",
@@ -61,17 +69,23 @@ static const char *const voice_help_rows[2][VOICE_HELP_ROWS] = {
      "ARP: DEMO  SAVE: CHOIR  PLAY: LOOP",
      "SELECT: WHO  REC: SING AND RECORD"},
     {"KEYS SING THE LINE  HELD: A CHORD",
-     "PLAY: LOOP  REC: RECORD  GLO: TYPE",
+     "PLAY: LOOP  REC: RECORD  GLO: LOOP",
      "OCT- OCT+ OCTAVE  FX: FROM THE TOP",
      "EDIT: UNDO A PASS  HOLD: CLEAR LOOP",
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
+     "SELECT: WHO  SAVE: CHOIR"},
+    {"A LANE A SINGER  KEYS SING  GLO: TYPE",
+     "K1 START  K2 LEVEL  K3 BARS  K4 BPM",
+     "EDIT+KNOB: AS IT WAS",
+     "PLAY: LOOP  REC: RECORD",
+     "EDIT: UNDO A PASS  HOLD: CLEAR LOOP",
      "SELECT: WHO  SAVE: CHOIR"}};
 /* K2's letters in TYPE mode, round and round. */
 static const char voice_alphabet[] = "abcdefghijklmnopqrstuvwxyz ,.?!'-";
 enum { VOICE_ALPHABET = sizeof voice_alphabet - 1, VOICE_HOLD_MS = 1000 };
 
 /* A character: sound, choir, and place in the loop. */
-enum { VOICE_PAGES = MUMBLE_PAGES + 1, LOOP_PAGE = MUMBLE_PAGES, VOICE_SEQ = 128, VOICE_PASSES = 8 };
+enum { VOICE_PAGES = MUMBLE_PAGES, VOICE_SEQ = 128, VOICE_PASSES = 8 };
 struct voice_track {
     uint8_t choir, start, level;             /* start: 16th step in the loop; level: percent */
     struct mumble_voice sound;
@@ -89,8 +103,9 @@ static struct mumble_status voice_now;
 static struct { uint8_t vowel, level, track; int16_t cents; } voice_trace[VOICE_TRACE];
 static uint32_t voice_trace_ms;
 static uint32_t voice_keys_lit;
-/* SING mode: held keys, octave shift, and the last key sung and its note. */
-static unsigned voice_play, voice_sung = MUMBLE_LETTERS, voice_sung_note;
+/* The mode, and whether the keys sing (SING or LOOP); held keys, octave
+ * shift, and the last key sung and its note. */
+static unsigned voice_mode, voice_play, voice_sung = MUMBLE_LETTERS, voice_sung_note;
 static int voice_octave;
 static uint32_t voice_held;
 /* Every character sings one key at a time: each singer's key + 1 (0: silent)
@@ -219,7 +234,7 @@ static void voice_open(void)
         voice_ready = 1;
     }
     voice_page = 0;
-    voice_play = 0;
+    voice_mode = voice_play = 0;
     voice_held = 0;
     voice_song = 0;
     memset(voice_trace, 0, sizeof voice_trace);
@@ -312,7 +327,7 @@ static const uint8_t voice_bar_choices[4] = {1, 2, 4, 8};
 static void voice_edit(unsigned col, int delta)
 {
     struct voice_track *t = voice_track();
-    if (voice_page == LOOP_PAGE) {
+    if (voice_mode == VOICE_LOOP) {
         if (col == 0) t->start = (uint8_t)clamp((int)t->start + delta, 0, (int)voice_steps() - 1);
         else if (col == 1) t->level = (uint8_t)clamp((int)t->level + delta, 0, 100);
         else if (col == 2) {
@@ -334,7 +349,7 @@ static void voice_edit(unsigned col, int delta)
 static void voice_reset(unsigned col)
 {
     struct voice_track *t = voice_track();
-    if (voice_page == LOOP_PAGE) {
+    if (voice_mode == VOICE_LOOP) {
         static const char *const names[4] = {"START", "LEVEL", "BARS", "BPM"};
         if (col == 0) t->start = 0;
         else if (col == 1) t->level = 100;
@@ -629,12 +644,16 @@ static void voice_say_number(const char *a, int value, const char *c)
     decimal(number, value, 1);
     voice_say(a, number, c);
 }
-/* GLO: TYPE <-> SING (recording stops in TYPE). */
-static void voice_mode_next(void)
+/* GLO: TYPE -> SING -> LOOP (recording stops in TYPE; between SING and LOOP
+ * the keys and the recording carry on). */
+static void voice_mode_to(unsigned mode)
 {
-    voice_release_all();
-    voice_rec_stop();
-    voice_play ^= 1U;
+    if (mode == VOICE_TYPE || voice_mode == VOICE_TYPE) {
+        voice_release_all();
+        voice_rec_stop();
+    }
+    voice_mode = mode;
+    voice_play = mode != VOICE_TYPE;
 }
 static void voice_demo_line(unsigned demo)
 {
@@ -686,7 +705,7 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
     if (pressed & BUTTON(SEQ)) voice_page = (voice_page + 1U) % VOICE_PAGES;
     if (voice_page != paged || (pressed & BUTTON(SEQ)))
-        voice_say(voice_page_names[voice_page], voice_play ? " PAGE" : " PAGE: ITS KNOBS IN SING", NULL);
+        voice_say(voice_page_names[voice_page], voice_mode == VOICE_SING ? " PAGE" : " PAGE: ITS KNOBS IN SING", NULL);
     for (unsigned i = 0; i < 4; ++i) {
         int turned = c->encoders[2 + i];
         if (!turned) continue;
@@ -694,15 +713,17 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
             if (i == 0) voice_move_cursor(fm_encoder_delta(2, turned));
             else if (i == 1) voice_letter(turned);
         } else if (edit) voice_reset(i);
-        else voice_edit(i, fm_encoder_delta(2 + i, turned));
+        else voice_edit(i, fm_encoder_delta(2 + i, turned));    /* SING: the page's sounds; LOOP: the loop */
     }
     if (c->encoders[6])
         voice_demo_line((unsigned)((int)voice_demo + c->encoders[6] % (int)VOICE_LINES + (int)VOICE_LINES) % VOICE_LINES);
     if (pressed & BUTTON(GLO)) {
-        voice_mode_next();
-        voice_notice(voice_play ? "SING: KEYS SING THE LINE" : "TYPE: KEYS TYPE THE LINE");
+        static const char *const said[VOICE_MODES] = {"TYPE: KEYS TYPE THE LINE", "SING: KEYS SING THE LINE",
+                                                      "LOOP: A LANE FOR EACH SINGER"};
+        voice_mode_to((voice_mode + 1U) % VOICE_MODES);
+        voice_notice(said[voice_mode]);
     }
-    if ((pressed & BUTTON(REC)) && !voice_play) voice_mode_next();       /* REC sings: to SING mode */
+    if ((pressed & BUTTON(REC)) && !voice_play) voice_mode_to(VOICE_SING);  /* REC sings: to SING mode */
     if ((pressed & BUTTON(FX)) && voice_play) { voice_lyric_rewind(); voice_notice("FROM THE TOP OF THE LINE"); }
     if (pressed & BUTTON(SAVE)) {
         struct voice_track *t = voice_track();
@@ -940,23 +961,28 @@ static void voice_header(void)
     const struct mumble_character *who = &mumble_cast[voice_cast];
     /* (cast: 3 bits, page: 3 bits, then one bit each) */
     uint32_t sig = voice_cast | (voice_page << 3) | (voice_caps << 6) | (voice_edited() << 7) |
-                   (voice_play << 8) | ((voice_song != 0) << 9) | ((uint32_t)voice_track()->choir << 10);
+                   (voice_mode << 8) | ((voice_song != 0) << 10) | ((uint32_t)voice_track()->choir << 11);
     if (cache->voice_cache[0] == sig) return;
     cache->voice_cache[0] = sig;
     paint_fill(0, 0, 240, 28, BACK);
-    /* The name and the mode, then the pages as tabs: the knobs' page lit (in
-     * SING, where the knobs play it), the others dim. */
+    /* The name and the three modes (the current one lit, a play mark while
+     * the loop runs), then the sound pages as tabs: the knobs' page lit in
+     * SING, where the knobs play it, dim in the other modes. */
+    static const uint16_t mode_colors[VOICE_MODES] = {TEXT, GREEN, ACCENT};
     text(8, 4, "MUMBLE", 1, TEXT, BACK);
-    text(50, 4, voice_play ? "SING" : "TYPE", 1, voice_play ? GREEN : TEXT, BACK);
-    if (voice_song) text(80, 4, "LOOP", 1, ACCENT, BACK);
-    if (voice_caps) text(110, 4, "CAPS", 1, AMBER, BACK);
+    for (unsigned m = 0; m < VOICE_MODES; ++m)
+        text(50U + m * 30U, 4, voice_mode_names[m], 1, m == voice_mode ? mode_colors[m] : PANEL, BACK);
+    if (voice_song)
+        for (unsigned r = 0; r < 7; ++r) paint_fill(140, 4U + r, r < 4U ? r + 1U : 7U - r, 1, ACCENT);
+    unsigned sing = voice_mode == VOICE_SING;
     for (unsigned k = 0, x = 8; k < VOICE_PAGES; ++k) {
         unsigned n = (unsigned)strlen(voice_page_names[k]);
         unsigned on = k == voice_page;
-        text(x, 16, voice_page_names[k], 1, on ? (voice_play ? TEXT : DIM) : PANEL, BACK);
-        if (on) paint_fill(x, 24, n * 6U - 1U, 2, voice_play ? ACCENT : DIM);
+        text(x, 16, voice_page_names[k], 1, on ? (sing ? TEXT : DIM) : PANEL, BACK);
+        if (on) paint_fill(x, 24, n * 6U - 1U, 2, sing ? ACCENT : DIM);
         x += (n + 1U) * 6U;
     }
+    if (voice_caps) text(124, 16, "CAPS", 1, AMBER, BACK);
     unsigned n = (unsigned)strlen(who->name);
     unsigned x = 232 - n * 12U;
     text(x, 7, who->name, 2, who->color, BACK);
@@ -1260,7 +1286,7 @@ static void voice_loop_bar(void)
     paint_fill(x0, y, head, 2, voice_recording ? AMBER : mumble_cast[voice_cast].color);
 }
 
-/* LOOP page: eight lanes over one loop, OP-1 tape style. Each lane shows
+/* LOOP mode: eight lanes over one loop, OP-1 tape style. Each lane shows
  * its character's notes in the sequence from its offset, each start marked
  * white; the playhead sweeps while the loop plays. */
 static void voice_lanes_draw(void)
@@ -1275,7 +1301,8 @@ static void voice_lanes_draw(void)
         head = x0 + (int)(at * (uint32_t)(x1 - x0) / loop);
     }
     uint32_t sig = signature(0x1A9E5 ^ voice_lanes_version, &head, sizeof head) ^
-                   (voice_cast << 4) ^ ((uint32_t)voice_song << 8) ^ ((uint32_t)voice_loop << 10);
+                   (voice_cast << 4) ^ ((uint32_t)voice_song << 8) ^ ((uint32_t)voice_loop << 10) ^
+                   ((uint32_t)voice_recording << 11);
     /* The TYPE rows share this area: make them redraw on return. */
     cache->voice_cache[4] = cache->voice_cache[5] = 0xfffffffeU;
     if (cache->voice_cache[3] == sig) return;
@@ -1311,21 +1338,21 @@ static void voice_lanes_draw(void)
             vfill(x, y, 1, lane_h - 1, WHITE);
         }
     }
-    if (head >= 0) vfill(head, lane_top - 1, 1, 8 * lane_h + 1, WHITE);
+    if (head >= 0) vfill(head, lane_top - 1, 1, 8 * lane_h + 1, voice_recording ? AMBER : WHITE);
 }
 
 /* HOME held: what each control does in this mode, over the dialogue box. */
 static void voice_help_draw(void)
 {
     if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
-    uint32_t sig = 0x4E1F0000U | voice_play;
+    uint32_t sig = 0x4E1F0000U | voice_mode;
     /* The rows under it redraw when it goes. */
     cache->voice_cache[4] = cache->voice_cache[5] = cache->voice_cache[8] = 0xfffffffeU;
     if (cache->voice_cache[3] == sig) return;
     cache->voice_cache[3] = sig;
     paint_fill(4, BOX_TOP + 2, 232, BOX_BOTTOM - BOX_TOP - 4, BACK);
     for (unsigned r = 0; r < VOICE_HELP_ROWS; ++r)
-        text(10, 127U + r * 10U, voice_help_rows[voice_play][r], 1, r ? TEXT : ACCENT, BACK);
+        text(10, 127U + r * 10U, voice_help_rows[voice_mode][r], 1, r ? TEXT : ACCENT, BACK);
 }
 
 /* A knob: its name, its value (unit small after it), and over them a bar of
@@ -1373,7 +1400,7 @@ static void voice_knobs(void)
         voice_meter(3, "", "", "", voice_knob_colors[3], 0, 0, NO_TICK);
         return;
     }
-    if (voice_page == LOOP_PAGE) {
+    if (voice_mode == VOICE_LOOP) {
         const struct voice_track *t = voice_track();
         /* START as bar.step, like the FM1 step pages. */
         char step[12];
@@ -1411,7 +1438,7 @@ static __attribute__((noinline)) void voice_draw(void)
     voice_choir_strip();
     voice_box();
     if (voice_help) voice_help_draw();
-    else if (voice_play && voice_page == LOOP_PAGE) voice_lanes_draw();
+    else if (voice_mode == VOICE_LOOP) voice_lanes_draw();
     else if (voice_play) {
         voice_line_draw();
         voice_loop_bar();
@@ -1423,7 +1450,7 @@ static __attribute__((noinline)) void voice_draw(void)
     uint32_t held = frame_time - voice_edit_since, progress = 0;
     unsigned holding = voice_edit_down && !voice_edit_spent && held >= 150U;
     const char *hint = holding ? (voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP")
-                     : notice ? notice : voice_tips[voice_play];
+                     : notice ? notice : voice_tips[voice_mode];
     if (holding) progress = (held >= VOICE_HOLD_MS ? VOICE_HOLD_MS : held) * 228U / VOICE_HOLD_MS;
     uint32_t hint_sig = signature(1 + holding + (progress << 1), hint, (unsigned)strlen(hint));
     if (hint_sig != cache->hint_cache) {

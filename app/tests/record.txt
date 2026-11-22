@@ -84,12 +84,15 @@ expect takes 4
 tap REC
 expect recording 0
 expect metronome 0
-turn ALGO 3
+# LOOP mode: a lane for each singer.
+tap GLO
+expect mode 2
+expect recording 0
 shot record-lanes.png
 wait 3000
 expect takes 4
-# EDIT undoes the last pass (the chord, all three singers), then the first.
-turn ALGO 1
+# EDIT undoes the last pass (the chord, all three singers), then the first,
+# in LOOP mode as in SING.
 tap EDIT
 expect take 1
 expect takes 1

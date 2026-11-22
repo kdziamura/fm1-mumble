@@ -1,6 +1,6 @@
 # The controls: TYPE's cursor (K1) and letter (K2), EDIT a word back and
 # EDIT held, HOME's help card in each mode, EDIT with a knob putting a sound
-# back, and the knobs' bars on each page.
+# back, and the knobs' bars in each mode.
 wait 600
 expect mode 0
 # "hello", then the cursor two back: a space typed there splits it.
@@ -72,8 +72,23 @@ release EDIT
 wait 50
 expect edited 0
 expect length >20
-# The LOOP page's knobs.
-turn ALGO -1
+# GLO on to LOOP mode: the lanes, and the knobs set the loop; EDIT held with
+# K4 turned puts the BPM back.
+tap GLO
+expect mode 2
+turn K4 5
 wait 50
-expect page 4
+expect bpm 125
 shot controls-loop.png
+press EDIT
+turn K4 1
+release EDIT
+wait 50
+expect bpm 120
+press HOME
+wait 100
+shot help-loop.png
+release HOME
+# GLO round to TYPE.
+tap GLO
+expect mode 0

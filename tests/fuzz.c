@@ -24,12 +24,14 @@
  *       lights (the line printable text of its length, the sequence grouped
  *       by singer with its notes and passes in range, one key per singer and
  *       none held unsung while a choir member is free, recording only in
- *       SING, the metronome exactly while recording, sounds in range ...);
- *   S2  the frame did what a model of the controls says: GLO switches TYPE
- *       and SING, REC records (from TYPE: to SING first), PLAY starts or stops
- *       the loop, SELECT and ALGO move by their detents, in SING a knob moves
- *       its parameter of the selected sound by the accelerated amount (with
- *       EDIT held, back to the character's), in TYPE K1 moves the cursor and
+ *       SING or LOOP, the metronome exactly while recording, sounds in
+ *       range ...);
+ *   S2  the frame did what a model of the controls says: GLO steps TYPE,
+ *       SING, LOOP, REC records (from TYPE: to SING first), PLAY starts or
+ *       stops the loop, SELECT and ALGO move by their detents, in SING a knob
+ *       moves its parameter of the selected sound by the accelerated amount
+ *       (with EDIT held, back to the character's), in LOOP the knobs move the
+ *       start, level, bars and BPM (EDIT held: back), in TYPE K1 moves the cursor and
  *       K2 changes only the letter under it; EDIT let go unspent undoes
  *       exactly the last pass (SING) or cuts the word before the cursor
  *       (TYPE), held 1 s it clears the loop (SING) or the line, then the loop
@@ -184,6 +186,7 @@ static void check_state(void)
     if (!voice_ready) fail("S1 the page is not open");
     if (voice_cast >= MUMBLE_CAST) fail("S1 cast out of range");
     if (voice_page >= VOICE_PAGES) fail("S1 page out of range");
+    if (voice_mode >= VOICE_MODES || voice_play != (voice_mode != VOICE_TYPE)) fail("S1 the mode out of range");
     if (voice_caps > 1 || voice_play > 1 || voice_song_dirty > 1 || voice_recording > 1 || voice_loop != 1)
         fail("S1 a flag is not 0 or 1 (or the loop not looping)");
     if (voice_song > 2) fail("S1 song state out of range");
@@ -248,7 +251,7 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
-    unsigned length, cursor, cast, page, caps, play, bars, bpm, demo, song, recording;
+    unsigned length, cursor, cast, page, caps, mode, play, bars, bpm, demo, song, recording;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
@@ -264,7 +267,7 @@ static void step_before(void)
     memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
     memcpy(before.text, voice_text, sizeof voice_text);
     before.length = voice_length, before.cursor = voice_cursor, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
-    before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
+    before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
     before.song = voice_song, before.recording = voice_recording, before.octave = voice_octave;
     before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count, before.lyric_started = voice_lyric_started;
     before.lyric_lead = voice_lyric_lead, before.lyric_sig = voice_lyric_sig, before.song_ms = voice_now.song_ms;
@@ -305,11 +308,12 @@ static void step_after(void)
     unsigned let_go = (before.letters & ~before.keys) != 0;
     /* One control at a time, as each does. */
     if (pressed == BUTTON(GLO) && alone) {
-        if (voice_play == before.play) fail("S2 GLO did not switch TYPE and SING");
+        if (voice_mode != (before.mode + 1u) % VOICE_MODES) fail("S2 GLO did not step TYPE, SING, LOOP");
         if (!voice_play && voice_recording) fail("S2 recording went on into TYPE");
+        if (before.mode == VOICE_SING && voice_recording != before.recording) fail("S2 GLO from SING to LOOP stopped recording");
     }
     if (pressed == BUTTON(REC) && alone) {
-        if (!voice_play) fail("S2 REC did not go to SING");
+        if (voice_mode != (before.play ? before.mode : (unsigned)VOICE_SING)) fail("S2 REC did not go to SING");
         if (voice_recording != (before.play ? !before.recording : 1u)) fail("S2 REC did not flip recording");
         if (voice_recording && !voice_song) fail("S2 recording without the loop running");
     }
@@ -360,7 +364,8 @@ static void step_after(void)
         fail("S2 ALGO did not move the page by its detents");
     /* SING, the knobs on a sound page: the selected sound, those parameters, by
      * the accelerated amount, kept in range; with EDIT held, the character's. */
-    if (before.play && !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && before.page != LOOP_PAGE) {
+    unsigned knobs_alone = !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6];
+    if (before.mode == VOICE_SING && knobs_alone) {
         struct mumble_voice want = before.tracks[before.cast].sound;
         for (unsigned c = 0; c < 4; ++c) {
             int v = before.turned[2 + c];
@@ -371,6 +376,29 @@ static void step_after(void)
                                  : (uint16_t)clamp((int)want.value[p] + v * gain, mumble_params[p].min, mumble_params[p].max);
         }
         if (memcmp(&want, &voice_tracks[before.cast].sound, sizeof want)) fail("S2 a knob moved the sound wrongly");
+    }
+    /* LOOP, the knobs in turn: the selected one's start and level, the bars
+     * (a step of 1, 2, 4, 8), the BPM; with EDIT held, where they start. */
+    if (before.mode == VOICE_LOOP && knobs_alone) {
+        int start = before.tracks[before.cast].start, level = before.tracks[before.cast].level;
+        int bars = (int)before.bars, bpm = (int)before.bpm;
+        for (unsigned c = 0; c < 4; ++c) {
+            int v = before.turned[2 + c];
+            if (!v) continue;
+            int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
+            int steps = bars * 16;
+            if (c == 0) start = edit ? 0 : clamp(start + v * gain, 0, steps - 1);
+            else if (c == 1) level = edit ? 100 : clamp(level + v * gain, 0, 100);
+            else if (c == 2) bars = edit ? 2 : clamp(v > 0 ? bars * 2 : bars / 2, 1, 8);
+            else bpm = edit ? 120 : clamp(bpm + v * gain, 40, 240);
+            if (start >= bars * 16) start = bars * 16 - 1;
+        }
+        if (voice_tracks[before.cast].start != start || voice_tracks[before.cast].level != level ||
+            voice_bars != (unsigned)bars || voice_bpm != (unsigned)bpm)
+            fail("S2 a LOOP knob moved the loop wrongly");
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i)
+            if (memcmp(&before.tracks[i].sound, &voice_tracks[i].sound, sizeof before.tracks[i].sound))
+                fail("S2 a LOOP knob changed a sound");
     }
     /* TYPE, K1 then K2 alone: the cursor moved by the accelerated amount, then
      * the letter under it changed (at the end, one added) and nothing else. */
@@ -394,7 +422,7 @@ static void step_after(void)
 
     /* Nothing pressed or turned: only the keys act, and only as the mode says. */
     if (voice_cast != before.cast || voice_page != before.page || voice_caps != before.caps ||
-        voice_play != before.play || voice_bars != before.bars || voice_bpm != before.bpm ||
+        voice_mode != before.mode || voice_bars != before.bars || voice_bpm != before.bpm ||
         voice_demo != before.demo || voice_octave != before.octave || voice_recording != before.recording)
         fail("S2 a setting changed with nothing pressed or turned");
     if (!before.song && voice_song) fail("S2 the loop started with nothing pressed");

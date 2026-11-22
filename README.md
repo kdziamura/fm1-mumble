@@ -13,13 +13,13 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 |---|---|
 | `app/app.c` | The app's contract with fm1-base (`app_init`, `app_render`, `app_frame` ...) and the controls adapter |
 | `app/mumble.c`, `app/mumble.h` | The voice engine: text to syllables, the glottal source, formants, consonants, the choir, the loop, effects and the master compressor |
-| `app/mumble_screen.inc`, `app/mumble_sprites.inc` | The page: TYPE and SING, the choir, recording, the knob pages; the cast's art |
+| `app/mumble_screen.inc`, `app/mumble_sprites.inc` | The page: TYPE, SING and LOOP, the choir, recording, the knob pages; the cast's art |
 | `app/paint.inc` | The damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn (adapted from FM1 Open, see `LICENSE.md`) |
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
-| `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and its LOOP page; screenshots and a WAV |
+| `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and LOOP mode's lanes; screenshots and a WAV |
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
-| `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back; screenshots of each |
+| `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back, LOOP mode's knobs; screenshots of each |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT undoing pass by pass |
 | `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
@@ -29,19 +29,22 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 
 Hold **HOME** for a card of these on the screen; every button also says on the hint line what it just did.
 
-| Control | TYPE (keys type the line) | SING (keys sing it) |
-|---|---|---|
-| Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord |
-| K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own |
-| K3 / K4 | — | |
-| EDIT | A word back; held 1 s: clear the line, then the loop | Undo a pass; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's |
-| OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up |
-| FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line |
-| ALGO, SEQ | | The page: VOICE, FEEL, FX, SING, LOOP (tabs at the top) |
-| GLO | To SING | To TYPE |
-| SELECT / SAVE | The character / in or out of the choir | |
-| ARP, PRESET | A demo line | |
-| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first) | |
+GLO steps through three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
+view: a lane of the loop for each character, the keys singing as in SING).
+
+| Control | TYPE | SING | LOOP |
+|---|---|---|---|
+| Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord | As in SING |
+| K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own | The character's start / level in the loop |
+| K3 / K4 | — | | The loop's bars / BPM |
+| EDIT | A word back; held 1 s: clear the line, then the loop | Undo a pass; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | As in SING; with a knob: that setting back |
+| OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
+| FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line | As in SING |
+| ALGO, SEQ | The page SING's knobs play: VOICE, FEEL, FX, SING (tabs at the top) | | |
+| GLO | To SING | To LOOP (recording carries on) | To TYPE |
+| SELECT / SAVE | The character / in or out of the choir | | |
+| ARP, PRESET | A demo line | | |
+| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first) | | |
 
 ## Build and test
 
@@ -96,7 +99,7 @@ firmware or M-VAVE's own goes back on the same way.
 
 ## Status
 
-Played on an FM-1 (November 2026). One shared line, TYPE and SING modes, the choir, the recorded loop (pitches,
+Played on an FM-1 (November 2026). One shared line, TYPE, SING and LOOP modes, the choir, the recorded loop (pitches,
 timing and syllable slots, singing the line as it is), consonants, glides and the master compressor.
 
 The last measured device build (with consonants and glides, before the voice's top; CI, November 2026): app image

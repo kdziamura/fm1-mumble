@@ -93,6 +93,7 @@ expect lyric 0
 # The loop keeps no words: it sings the line as it is. A note recorded on
 # "ma" sings "moo" once the line is changed, while the loop plays on.
 tap GLO
+tap GLO
 expect mode 0
 # EDIT held a second clears the line, held again the loop.
 press EDIT
@@ -123,6 +124,7 @@ wait 3500
 expect sounding 1
 expect vowel 0
 # A new line, typed while the loop plays.
+tap GLO
 tap GLO
 tap OCT-
 tap OCT-
