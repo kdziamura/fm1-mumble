@@ -216,9 +216,13 @@ static void voice_publish(unsigned restart, uint32_t phase_ms)
     if (restart || !voice_song) voice_song = 1;
 }
 /* Start the loop; with the FM1 sequencer playing, join it at its step. */
+/* Where a MIDI clock says the loop is: its ticks since Start, round the
+ * loop (24 a beat, 2500 / BPM ms each). */
+enum { VOICE_DRIFT_MS = 40 };
+static uint32_t voice_clock_ms(void) { return frame_views[0].play_tick % (voice_steps() * 6U) * 2500U / voice_tempo(); }
 static void voice_start(void)
 {
-    voice_publish(1, voice_fm1_playing ? voice_step_ms(frame_views[0].play_step % voice_steps()) : 0);
+    voice_publish(1, voice_fm1_playing ? voice_clock_ms() : 0);
     voice_loop_last_ms = -1;
 }
 static void voice_stop(void)
@@ -1013,10 +1017,21 @@ static void voice_frame(uint32_t now)
      * heard playing can be over. */
     if (voice_song == 1 && voice_now.song_ms >= 0) voice_song = 2;
     else if (voice_song == 2 && voice_now.song_ms < 0) voice_song = 0;
-    /* Follow the FM1 sequencer: its start relocks the loop, its tempo sizes it. */
+    /* Follow a MIDI clock: its Start starts the loop from the top (or relocks
+     * it), its Stop stops it, its tempo sizes it; while it plays, a loop more
+     * than VOICE_DRIFT_MS off the clock is put back on it. */
     unsigned playing = frame_views[0].playing != 0;
     static unsigned last_tempo;
-    if (playing && !voice_fm1_playing && voice_song) { voice_fm1_playing = 1; voice_publish(1, 0); }
+    if (frame_views[0].stopped) {
+        frame_views[0].stopped = 0;
+        if (voice_song) { voice_stop(); voice_notice("MIDI STOP"); }
+    }
+    if (frame_views[0].started) frame_views[0].started = 0, voice_fm1_playing = 0;
+    if (playing && !voice_fm1_playing) {
+        voice_fm1_playing = 1;
+        voice_start();
+        voice_notice("MIDI START: THE LOOP FOLLOWS THE CLOCK");
+    }
     voice_fm1_playing = playing;
     if (voice_tempo() != last_tempo) {
         last_tempo = voice_tempo();
@@ -1026,6 +1041,11 @@ static void voice_frame(uint32_t now)
     voice_typewriter();
     if (voice_song_dirty && voice_song) voice_publish(0, 0);
     /* Each pass of the loop sings from the top of the line. */
+    if (voice_fm1_playing && voice_song == 2 && voice_now.song_ms >= 0) {
+        uint32_t loop = voice_loop_ms(), want = voice_clock_ms();
+        uint32_t off = ((uint32_t)voice_now.song_ms + loop - want) % loop;
+        if (off > VOICE_DRIFT_MS && loop - off > VOICE_DRIFT_MS) voice_publish(1, want);
+    }
     if (voice_song && voice_now.song_ms >= 0) {
         if (voice_now.song_ms < voice_loop_last_ms) voice_lyric_rewind();
         voice_loop_last_ms = voice_now.song_ms;

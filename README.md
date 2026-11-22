@@ -21,6 +21,7 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
 | `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back, LOOP mode's knobs; screenshots of each |
 | `app/tests/save.txt` | Host simulator script: a line, a sound, a scale, a recorded loop, a mute and a tempo saved on their own and back after a reboot |
+| `app/tests/clock.txt` | Host simulator script: MIDI clock: Start, the loop on the clock's tempo as it changes, Stop, the clock gone |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT clearing a singer, then the loop |
 | `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
@@ -33,6 +34,9 @@ Hold **HOME** for a card of these on the screen; every button also says on the h
 Everything you make is kept over power-off: the line, each character's sound, choir, mute and level, the loop and
 its size, the scale and the arpeggiator. It saves itself 3 s after the last change, once no key is held and nothing
 is recording.
+
+The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the top on the clock, its tempo sizes it
+(LOOP shows SYNC), Stop stops it; without a clock it keeps its own BPM.
 
 GLO steps through three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
 view: a lane of the loop for each character, the keys singing as in SING). In TYPE the keys' lights mark the vowels; in SING and
@@ -71,6 +75,7 @@ app/build/host/mumble_host app/tests/record.txt app/build/host
 app/build/host/mumble_host app/tests/line.txt app/build/host
 app/build/host/mumble_host app/tests/controls.txt app/build/host
 app/build/host/mumble_host app/tests/save.txt app/build/host
+app/build/host/mumble_host app/tests/clock.txt app/build/host
 base/.venv/bin/python base/tools/build.py app                    # app/build/mumble.fwsc
 ~~~
 
@@ -107,15 +112,18 @@ firmware or M-VAVE's own goes back on the same way.
 
 ## Status
 
-Played on an FM-1 (November 2026). One shared line, TYPE, SING and LOOP modes, the choir, the recorded loop (pitches,
-timing and syllable slots, singing the line as it is), consonants, glides and the master compressor.
+Played on an FM-1 (November 2026): one shared line, TYPE and SING, the choir, the recorded loop (pitches, timing and
+syllable slots, singing the line as it is), consonants, glides and the master compressor.
+
+Tested in the simulator and the fuzzer, not yet on an FM-1: LOOP mode, the friendlier controls, the scale lock, the
+arpeggiator, quantized recording, the typewriter, saving, and the MIDI clock (whose timing on the device rests on
+`midi_stamp`).
 
 The last measured device build (with consonants and glides, before the voice's top; CI, November 2026): app image
 112,024 B of the 581 KB slot; RAM `.data`+`.bss` 73,568 of 98,304 B; RAM code 15,400 of 32,768 B; pool 84,484 of
 344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
 
-- **No clock.** The loop runs on its own BPM (MIDI clock is the plan).
-- **HOME does nothing**, and Bluetooth MIDI is off.
+- **Bluetooth MIDI is off**, and no MIDI notes come in (only the clock).
 
 ## License
 

@@ -5,6 +5,7 @@ usb_manufacturer = "MUMBLE"
 usb_product = "MUMBLE FM-1"
 o2 = ["engine.c"]              # the voice engine (app/mumble.c), at -O2; its audio path runs from RAM
 ble = false                    # USB MIDI only for now
+midi_stamp = true              # MIDI clock stamped where it lands: the loop follows its tempo
 companion = false
 # the site and firmware.json (tools/make_site.py, docs/FIRMWARE-JSON.md)
 tagline = "retro-game character voices from text"

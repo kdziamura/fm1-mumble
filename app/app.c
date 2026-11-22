@@ -47,8 +47,67 @@ static const uint8_t encoder_of[7] = {EN_SELECT, EN_ALGO, EN_K1, EN_K2, EN_K3, E
 enum { OVERVIEW, VOICE };
 static unsigned page = VOICE;
 static uint32_t blocked_keys;
-/* A sequencer for the loop to follow: none yet (MIDI clock is the plan). */
-static struct { unsigned tempo, playing, play_step; } frame_views[1];
+/* A clock for the loop to follow: MIDI clock in (24 a beat) from USB or the
+ * TRS jack, with Start, Continue and Stop. tempo: its BPM (0: no clock);
+ * playing: started and ticking; play_tick: ticks since Start; started /
+ * stopped: a Start or a Stop came (the page takes them and clears them). */
+static struct { unsigned tempo, playing, play_step, play_tick, started, stopped; } frame_views[1];
+/* The clock's tempo from the span of its last MIDI_CLOCK_SPAN ticks (four
+ * beats): their times as they landed (fm1.toml midi_stamp); on the host,
+ * whose MIDI stamps are its real time, as the frame read them. */
+enum { MIDI_CLOCK_LOST_MS = 500, MIDI_CLOCK_SPAN = 96 };
+static struct {
+    uint32_t t24[MIDI_CLOCK_SPAN], heard_ms;
+    unsigned at, count, running;
+} midi_clock;
+static void midi_clock_poll(uint32_t now)
+{
+    uint32_t pkt;
+    int port;
+    if (midi_clock.count && now - midi_clock.heard_ms >= MIDI_CLOCK_LOST_MS) midi_clock.count = 0;   /* gone */
+    while (plat_midi_in(&pkt, &port)) {
+        unsigned status = pkt >> 8 & 0xFFu;
+        if (status == 0xF8u) {
+#ifdef PLAT_HOST
+            uint32_t t = now * 1000U * PLAT_TICKS_PER_US;
+#else
+            uint32_t t = plat_midi_in_t24();
+#endif
+            midi_clock.t24[midi_clock.at] = t;
+            midi_clock.at = (midi_clock.at + 1U) % MIDI_CLOCK_SPAN;
+            if (midi_clock.count < MIDI_CLOCK_SPAN) ++midi_clock.count;
+            midi_clock.heard_ms = now;
+            if (midi_clock.running) ++frame_views[0].play_tick;
+        } else if (status == 0xFAu) {
+            midi_clock.running = 1;
+            frame_views[0].play_tick = 0;
+            frame_views[0].started = 1;
+        } else if (status == 0xFBu) {
+            midi_clock.running = 1;
+        } else if (status == 0xFCu) {
+            midi_clock.running = 0;
+            frame_views[0].stopped = 1;
+        }
+    }
+    /* The BPM moves only when the clock is half a BPM away from it (no
+     * flicker between two neighbours): 60 s / (24 ticks x a tick's length). */
+    unsigned tempo = frame_views[0].tempo;
+    if (midi_clock.count < 2) tempo = 0;
+    else {
+        uint32_t newest = midi_clock.t24[(midi_clock.at + MIDI_CLOCK_SPAN - 1U) % MIDI_CLOCK_SPAN];
+        uint32_t oldest = midi_clock.t24[(midi_clock.at + MIDI_CLOCK_SPAN - midi_clock.count) % MIDI_CLOCK_SPAN];
+        /* us over count - 1 ticks: under 6 s at 40 BPM, so 32 bits do (and no
+         * 64-bit sums on the FM-1: see app_render) */
+        uint32_t span = (newest - oldest) / PLAT_TICKS_PER_US;
+        uint32_t tenths = span ? 25000000U * (midi_clock.count - 1U) / span : tempo * 10U;
+        if (!tenths) tenths = 1200U;                     /* (ticks all at once, and no tempo yet: 120) */
+        if (!tempo || tenths > tempo * 10U + 5U || tenths + 5U < tempo * 10U) tempo = (tenths + 5U) / 10U;
+        tempo = tempo < 40U ? 40U : tempo > 240U ? 240U : tempo;
+    }
+    frame_views[0].tempo = tempo;
+    frame_views[0].playing = midi_clock.running && tempo;
+    frame_views[0].play_step = frame_views[0].play_tick / 6U;
+}
 static uint32_t frame_time;
 static const char *notice;
 static uint32_t notice_until;
@@ -132,6 +191,7 @@ void app_frame(void)
 {
     frame_time = plat_ms();
     if (notice && (int32_t)(frame_time - notice_until) >= 0) notice = NULL;
+    midi_clock_poll(frame_time);
     input();
     voice_frame(frame_time);
     plat_leds(platform_buttons(voice_button_bits()), voice_led_bits());
@@ -171,6 +231,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "page")) *got = (int)voice_page;
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
     else if (!strcmp(what, "bpm")) *got = (int)voice_bpm;
+    else if (!strcmp(what, "tempo")) *got = (int)voice_tempo();             /* the loop's: a MIDI clock's while it plays */
+    else if (!strcmp(what, "sync")) *got = (int)voice_fm1_playing;          /* following a MIDI clock */
     else if (!strcmp(what, "mute")) *got = (int)voice_track()->mute;        /* the selected one's, in the loop */
     else if (!strcmp(what, "choir")) *got = t->choir;
     else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;

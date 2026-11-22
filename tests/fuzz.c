@@ -47,7 +47,7 @@
  *       the queue moves on only with a key pressed after the leading one was
  *       let go and goes back to the top as the loop wraps; the sequence only
  *       gains notes, each from a singer being recorded, first with the slot
- *       it was singing.
+ *       it was singing (a frame with MIDI in excused).
  * And once, at start-up, every button combination survives the panel's
  * button-order mapping both ways.
  *
@@ -175,6 +175,18 @@ int plat_store_save(uint32_t obj, const void *src, uint32_t len)
     ++store_saves;
     return 0;
 }
+/* MIDI in: what the input queues (Start, Stop, Continue, clock ticks). */
+static uint8_t midi_q[64];
+static unsigned midi_r, midi_w;
+static void midi_push(uint8_t status) { if (midi_w - midi_r < sizeof midi_q) midi_q[midi_w++ % sizeof midi_q] = status; }
+int plat_midi_in(uint32_t *pkt, int *port)
+{
+    if (midi_r == midi_w) return 0;
+    *pkt = 0x0Fu | (uint32_t)midi_q[midi_r++ % sizeof midi_q] << 8;
+    if (port) *port = 0;
+    return 1;
+}
+uint32_t plat_midi_in_t24(void) { return now_ms * 24000u; }
 void plat_leds(uint32_t b, uint32_t k)
 {
     if (b & ~((1u << NB) - 1u)) fail("P4 an LED for a button the FM-1 does not have");
@@ -290,7 +302,7 @@ static struct {
     struct mumble_note seq[VOICE_SEQ];
     uint8_t seq_track[VOICE_SEQ], rec_slot[MUMBLE_CAST];
     unsigned seq_count;
-    uint32_t pressed, held, key_down, keys, letters, rec_held;
+    uint32_t pressed, held, key_down, keys, letters, rec_held, midi;
     int32_t turned[7];
 } before;
 static void step_before(void)
@@ -305,6 +317,9 @@ static void step_before(void)
     memcpy(before.seq, voice_seq, sizeof voice_seq);
     memcpy(before.seq_track, voice_seq_track, sizeof voice_seq_track);
     memcpy(before.rec_slot, voice_rec_slot, sizeof voice_rec_slot);
+    /* (MIDI waiting: the loop may start or stop, and recording with it, with
+     * nothing pressed; a tick too, the first after a Continue.) */
+    before.midi = midi_r != midi_w;
     before.seq_count = voice_seq_count, before.letters = voice_held, before.rec_held = voice_rec_held;
     /* As app.c's input() will read them (HOME never reaches the page). */
     before.held = panel_buttons(held_buttons);
@@ -326,7 +341,7 @@ static void step_after(void)
     uint32_t pressed = before.pressed;
     unsigned turned_any = 0;
     for (unsigned i = 0; i < 7; ++i) turned_any |= before.turned[i] != 0;
-    unsigned alone = !turned_any && !before.key_down;
+    unsigned alone = !turned_any && !before.key_down && !before.midi;
     unsigned edit = (before.held & BUTTON(EDIT)) != 0, edit_tap = 0, edit_hold = 0;
     if (pressed & BUTTON(EDIT)) edit_since = now_ms, edit_spent = 0;
     if (edit && turned_any) edit_spent = 1;
@@ -455,7 +470,7 @@ static void step_after(void)
             if (!memchr(voice_alphabet, c, VOICE_ALPHABET)) fail("S2 K2 made a letter not in its alphabet");
         }
     }
-    if (pressed || turned_any || edit_tap || edit_hold) return;
+    if (pressed || turned_any || edit_tap || edit_hold || before.midi) return;
 
     /* Nothing pressed or turned: only the keys act, and only as the mode says. */
     if (voice_cast != before.cast || voice_page != before.page || voice_caps != before.caps ||
@@ -591,6 +606,7 @@ static void boot(int keep_store)
 {
     phase = "boot";
     if (!keep_store) store_len = -1, store_saves = 0;
+    midi_r = midi_w = 0;
 #ifndef FUZZ_ASAN_GLOBALS
     state_copy(__start_mumble_bss, pristine_bss, bss_size());
     state_copy(__start_mumble_data, pristine_data, data_size());
@@ -662,9 +678,21 @@ static uint32_t play(const uint8_t *data, size_t size)
             frames += n;
             break;
         }
-        case 7: /* MASTER */
-            master_q12 = arg * 17u;
-            explain("MASTER %u of 4335", master_q12);
+        case 7: /* MASTER, or MIDI in: Start, Stop, Continue, or a run of clock ticks a frame apart */
+            if (!(arg & 0x80u)) {
+                master_q12 = arg * 17u;
+                explain("MASTER %u of 4335", master_q12);
+            } else if ((arg & 3u) < 3u) {
+                static const uint8_t transport[3] = {0xFA, 0xFC, 0xFB};
+                static const char *const names[3] = {"Start", "Stop", "Continue"};
+                midi_push(transport[arg & 3u]);
+                explain("MIDI %s", names[arg & 3u]);
+            } else {
+                unsigned n = 4u + (arg >> 2 & 31u);
+                explain("MIDI clock, %u ticks a frame apart", n);
+                for (unsigned i = 0; i < n; ++i) midi_push(0xF8), frame();
+                frames += n;
+            }
             break;
         case 8: /* everything let go */
             held_buttons = held_keys = 0;

@@ -1,0 +1,32 @@
+# MIDI clock: a Start starts the loop on the clock, its tempo sizes the loop,
+# a Stop stops it; a clock that goes away leaves the loop its own BPM.
+wait 600
+tap GLO
+tap GLO
+expect mode 2
+expect song 0
+expect tempo 120
+# Ticks with no Start (a DAW stopped): the loop keeps to itself.
+clock 48 25
+expect song 0
+expect sync 0
+# Start, then ticks at 100 BPM (25 ms each): the loop plays, synced.
+midi FA 00 00
+clock 96 25
+expect song 2
+expect sync 1
+expect tempo >98
+expect tempo <102
+shot clock-sync.png
+# Faster (20 ms: 125 BPM): the loop follows.
+clock 96 20
+expect tempo >122
+expect tempo <128
+# Stop: the loop stops.
+midi FC 00 00
+wait 50
+expect song 0
+expect sync 0
+# The clock gone half a second: the loop's own 120 BPM again.
+wait 700
+expect tempo 120

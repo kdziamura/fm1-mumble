@@ -46,6 +46,7 @@ jobs:
           app/build/host/mumble_host app/tests/line.txt app/build/host
           app/build/host/mumble_host app/tests/controls.txt app/build/host
           app/build/host/mumble_host app/tests/save.txt app/build/host
+          app/build/host/mumble_host app/tests/clock.txt app/build/host
 
       - name: Fuzz (the seeds, two minutes, the corpus with ASan on globals; tests/fuzz.c)
         run: |
