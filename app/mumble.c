@@ -1080,8 +1080,9 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float level = 0.0f;
         if (w ? what == MUMBLE_CODA_STOP : what == MUMBLE_NOISE_BURST) level = w ? 0.16f : 0.30f;
         else if (w ? what == MUMBLE_CODA_HISS : what == MUMBLE_NOISE_HISS)
-            level = at_hz >= 65U ? 0.07f : at_hz <= 35U ? 0.30f : 0.22f;
-        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.26f;
+            level = at_hz >= 65U ? 0.045f : at_hz <= 35U ? 0.17f : 0.13f;
+        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.18f;
+        if (w && what == MUMBLE_CODA_HISS) level *= 0.7f;              /* an ending's hiss trails off quieter */
         if (!w && voiced) level *= 0.5f;
         /* The same loudness at any centre: divide out the resonator's power
          * gain for white noise, (1 - c) / ((1 + c)((1 - c)^2 - b^2)). */
@@ -1251,7 +1252,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                    : unit(x * 7.0f) * unit((1.0f - x) * 5.0f);
             } else if (coda_len && at >= coda_from && at < coda_from + coda_len) {
                 float x = (float)(at - coda_from) / (float)coda_len;
-                ne = h->coda == MUMBLE_CODA_STOP ? (1.0f - x) * (1.0f - x) : unit(x * 6.0f) * unit((1.0f - x) * 3.0f);
+                ne = h->coda == MUMBLE_CODA_STOP ? (1.0f - x) * (1.0f - x) : unit(x * 8.0f) * (1.0f - x) * (1.0f - x);
                 band = 1;
             }
             if (ne > 0.0f) {
