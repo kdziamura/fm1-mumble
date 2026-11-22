@@ -72,11 +72,14 @@ release EDIT
 wait 50
 expect edited 0
 expect length >20
-# SCL (the simulator's SEL): a scale the keys keep to. F# (key 1) sings F in C major; off again, F#.
+# SCL (the simulator's SEL): a scale the keys keep to. F# (key 1) sings F in C major; round the eight back to none, F#.
 tap SEL
 expect scale 1
 tapkey 1
 expect pitch_class 5
+tap SEL
+tap SEL
+tap SEL
 tap SEL
 tap SEL
 tap SEL
@@ -107,15 +110,48 @@ key 0 up
 key 4 up
 wait 50
 expect singing 0
-# ARP held, the knobs set it (and it stays on as it is let go): 1/8 (250 ms
-# at 120 BPM), down the keys.
-press ARP
+# LFO rolls a new voice for the character; ENV gives it back.
+tap LFO
+wait 50
+expect edited 1
+tap ENV
+wait 50
+expect edited 0
+# GLO on to LOOP mode: the lanes; ALGO turns its tabs (the sound pages stay
+# SING's). MIX: EDIT held with K4 turned puts the BPM back; K1 to 0 mutes.
+tap GLO
+expect mode 2
+expect tab 0
+turn K4 5
+wait 50
+expect bpm 125
+shot controls-loop.png
+press EDIT
+turn K4 1
+release EDIT
+wait 50
+expect bpm 120
+spin K1 -100
+wait 50
+expect level 0
+press EDIT
+turn K1 1
+release EDIT
+wait 50
+expect level 100
+press HOME
+wait 100
+shot help-loop.png
+release HOME
+# The ARP tab: 1/8 (250 ms at 120 BPM), down the keys (which sing in LOOP too).
+turn ALGO 1
+wait 50
+expect tab 1
+expect page 0
 turn K1 -2
 turn K2 1
 wait 50
 shot controls-arp.png
-release ARP
-wait 50
 expect arp 1
 expect arp_rate 1
 expect arp_pattern 1
@@ -131,12 +167,9 @@ key 0 up
 key 4 up
 wait 50
 # Two octaves: down from key 4 an octave up (57), key 0 there (53), then key 4 (45).
-press ARP
 turn K3 1
-release ARP
 wait 50
 expect arp_octaves 2
-expect arp 1
 key 0 down
 key 4 down
 wait 40
@@ -148,48 +181,33 @@ expect sung_note 45
 key 0 up
 key 4 up
 wait 50
-press ARP
 turn K3 -1
 turn K1 2
 turn K2 -1
-release ARP
 wait 50
 expect arp_octaves 1
 expect arp_rate 3
 tap ARP
 expect arp 0
-# LFO rolls a new voice for the character.
-tap LFO
-wait 50
-expect edited 1
-# GLO on to LOOP mode: the lanes, and the knobs set the loop; EDIT held with
-# K4 turned puts the BPM back.
-tap GLO
-expect mode 2
-# The sound pages are SING's: ALGO leaves them be here.
+# The SCALE tab: D dorian (E flat, key 0 F: F is in it; F#, key 1: F).
 turn ALGO 1
 wait 50
-expect page 0
-turn K4 5
+expect tab 2
+turn K1 2
+turn K2 5
 wait 50
-expect bpm 125
-shot controls-loop.png
+expect root 2
+expect scale 5
+shot controls-scale.png
+tapkey 1
+expect pitch_class 5
 press EDIT
-turn K4 1
+turn K2 1
+turn K1 1
 release EDIT
 wait 50
-expect bpm 120
-# K1 mutes the selected character in the loop (right) and hears it again (left).
-turn K1 1
-wait 50
-expect mute 1
-turn K1 -1
-wait 50
-expect mute 0
-press HOME
-wait 100
-shot help-loop.png
-release HOME
+expect scale 0
+expect root 0
 # GLO round to TYPE.
 tap GLO
 expect mode 0

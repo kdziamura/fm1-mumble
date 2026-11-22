@@ -1,4 +1,4 @@
-# What is kept over power-off: the line, a character's sound and mute, the
+# What is kept over power-off: the line, a character's sound and level, the
 # loop's notes and size, the scale. Saved 3 s after the last change (not while
 # a key is held or recording, nor while the loop plays); a reboot brings it all back.
 wait 600
@@ -35,14 +35,14 @@ expect takes 2
 tap PLAY
 wait 100
 expect song 0
-# LOOP: HERO muted, the loop 4 bars at 100 BPM.
+# LOOP: HERO muted (level 0), the loop 4 bars at 100 BPM.
 tap GLO
 expect mode 2
-turn K1 1
+spin K1 -100
 turn K3 1
 turn K4 -20
 wait 50
-expect mute 1
+expect level 0
 expect bpm <120
 # Left alone 3 s: saved. A reboot: RAM gone, the flash read back.
 wait 3500
@@ -54,6 +54,6 @@ expect length 3
 expect edited 1
 expect scale 1
 expect takes 2
-expect mute 1
+expect level 0
 expect bpm <120
 shot save-reboot.png

@@ -34,9 +34,10 @@
  *       it arms, and the first key starts the loop recording), PLAY starts or
  *       stops the loop, SELECT and ALGO move by their detents, in SING a knob
  *       moves its parameter of the selected sound by the accelerated amount
- *       (with EDIT held, back to the character's), ALGO turns the pages only
- *       in SING, in LOOP the knobs set the mute, level, bars and BPM (EDIT
- *       held: back), in TYPE K1 moves the cursor and K2 changes only the
+ *       (with EDIT held, back to the character's), ALGO turns SING's pages and
+ *       LOOP's tabs, in LOOP the knobs set the tab's settings (MIX level,
+ *       swing, bars, BPM; ARP rate, pattern, octaves, gate; SCALE root and
+ *       scale; EDIT held: back), in TYPE K1 moves the cursor and K2 changes only the
  *       letter under it; EDIT let go unspent clears exactly the selected
  *       singer's notes (SING, LOOP) or cuts the word before the cursor
  *       (TYPE), held 1 s it clears the loop (SING, LOOP) or the line, then
@@ -273,7 +274,7 @@ static void check_state(void)
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
         const struct voice_track *t = &voice_tracks[i];
         if (t->choir > 1) fail("S1 choir not 0 or 1");
-        if (t->mute > 1) fail("S1 mute not 0 or 1");
+        if (voice_tab >= VOICE_TABS || voice_root > 11) fail("S1 LOOP's tab or the scale's root out of range");
         if (t->level > 100) fail("S1 a level over 100");
         check_sound(&t->sound, "S1 a sound parameter out of its range");
     }
@@ -305,7 +306,7 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
-    unsigned arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing;
+    unsigned arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing, tab, root;
     unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, demo, song, recording, armed;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
@@ -322,6 +323,7 @@ static void step_before(void)
     memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
     memcpy(before.text, voice_text, sizeof voice_text);
     before.length = voice_length, before.cursor = voice_cursor, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
+    before.tab = voice_tab, before.root = voice_root;
     before.arp_rate = voice_arp_rate, before.arp_pattern = voice_arp_pattern, before.arp_octaves = voice_arp_octaves;
     before.arp_gate = voice_arp_gate, before.arp_swing = voice_arp_swing;
     before.scale = voice_scale, before.arp = voice_arp, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
@@ -350,8 +352,6 @@ static int same_note(unsigned k, unsigned j)
  * 1 s, or a knob turned with it), whether it was down last frame. */
 static uint32_t edit_since;
 static unsigned edit_spent, edit_was;
-/* ARP the same way: spent by a knob (K1..K4, ALGO) turned with it held. */
-static unsigned arp_spent, arp_was;
 /* LFO and ENV: a tap as it is let go, a hold at VOICE_HOLD_MS (as the app's voice_hold_step). */
 struct hold_model { uint32_t since; unsigned down, spent; };
 static struct hold_model lfo_model, env_model;
@@ -376,12 +376,7 @@ static void step_after(void)
     if (edit && !edit_spent && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
     if (!edit && edit_was && !edit_spent) edit_tap = 1;
     edit_was = edit;
-    unsigned arp_held = (before.held & BUTTON(ARP)) != 0, arp_tap = 0;
-    if (pressed & BUTTON(ARP)) arp_spent = 0;
-    for (unsigned i = 1; i < 6; ++i)
-        if (arp_held && before.turned[i]) arp_spent = 1;
-    if (!arp_held && arp_was && !arp_spent) arp_tap = 1;
-    arp_was = arp_held;
+    unsigned arp_tap = (pressed & BUTTON(ARP)) != 0;
     unsigned lfo = hold_model_step(&lfo_model, (before.held & BUTTON(LFO)) != 0, (pressed & BUTTON(LFO)) != 0);
     unsigned env = hold_model_step(&env_model, (before.held & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0);
     /* (A recorded note let go in the same frame joins the loop after EDIT acts.) */
@@ -400,9 +395,6 @@ static void step_after(void)
             fail("S2 REC did not record, arm or stop as it should");
         if (voice_recording && !voice_song) fail("S2 recording without the loop running");
     }
-    if (pressed == BUTTON(SCL) && alone && voice_scale != (before.scale + 1u) % VOICE_SCALES)
-        fail("S2 SCL did not step the scale");
-    if (voice_scale != before.scale && !(pressed & BUTTON(SCL))) fail("S2 the scale changed with SCL not pressed");
     /* LFO tapped: a new voice for the selected one alone (TYPE: a syllable,
      * no voice); ENV tapped: their own voice back; held, everyone's. */
     if (lfo == 1 && !pressed && !turned_any)
@@ -418,25 +410,6 @@ static void step_after(void)
         }
     if (arp_tap && voice_arp == before.arp) fail("S2 ARP tapped did not switch the arpeggiator");
     if (!arp_tap && voice_arp != before.arp) fail("S2 the arpeggiator switched without ARP tapped");
-    /* ARP held: K1 the rate, K2 the pattern, K3 octaves (a step a detent), K4
-     * the gate, ALGO swing (accelerated); nothing else takes those knobs. */
-    {
-        int rate = (int)before.arp_rate, pattern = (int)before.arp_pattern, octaves = (int)before.arp_octaves;
-        int gate = (int)before.arp_gate, swing = (int)before.arp_swing;
-        if (arp_held) {
-            int k1 = before.turned[2], k2 = before.turned[3], k3 = before.turned[4], k4 = before.turned[5], al = before.turned[1];
-            if (k1) rate = clamp(rate + (k1 > 0 ? 1 : -1), 0, ARP_RATES - 1);
-            if (k2) pattern = clamp(pattern + (k2 > 0 ? 1 : -1), 0, ARP_PATTERNS - 1);
-            if (k3) octaves = clamp(octaves + (k3 > 0 ? 1 : -1), 1, 3);
-            int a4 = k4 < 0 ? -k4 : k4, g4 = a4 < 2 ? 1 : a4 < 4 ? 2 : a4 == 4 ? 3 : 4;
-            if (k4) gate = clamp(gate + k4 * g4, 10, 100);
-            int a1 = al < 0 ? -al : al, g1 = a1 < 2 ? 1 : a1 < 4 ? 2 : a1 == 4 ? 3 : 4;
-            if (al) swing = clamp(swing + al * g1, 0, ARP_SWING_MAX);
-        }
-        if (voice_arp_rate != (unsigned)rate || voice_arp_pattern != (unsigned)pattern || voice_arp_octaves != (unsigned)octaves ||
-            voice_arp_gate != (unsigned)gate || voice_arp_swing != (unsigned)swing)
-            fail("S2 the arpeggiator's settings moved but as ARP held and its knobs say");
-    }
     if (pressed == BUTTON(PLAY) && alone) {
         if (before.song && voice_song) fail("S2 PLAY did not stop the loop");
         if (!before.song && !voice_song) fail("S2 PLAY did not start the loop");
@@ -480,20 +453,19 @@ static void step_after(void)
         if (!before.key_down && (voice_length != before.length || memcmp(voice_text, before.text, voice_length)))
             fail("S2 another character did not keep the line");
     }
-    if (!(pressed & BUTTON(SEQ)) && before.turned[1] && before.mode == VOICE_SING && !arp_held &&
+    if (before.turned[1] && before.mode == VOICE_SING &&
         voice_page != (unsigned)(((int)before.page + before.turned[1] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
         fail("S2 ALGO did not move the page by its detents");
     /* (ALGO and SEQ are read before GLO: the mode the frame began in decides.) */
-    if ((before.mode != VOICE_SING || (arp_held && !(pressed & BUTTON(SEQ)))) && voice_page != before.page)
-        fail("S2 the sound page changed outside SING (or by ALGO with ARP held)");
+    if (before.mode != VOICE_SING && voice_page != before.page) fail("S2 the sound page changed outside SING");
+    /* ALGO in LOOP: its tabs, by their detents; else they stay. */
+    if (before.mode == VOICE_LOOP && before.turned[1]) {
+        if (voice_tab != (unsigned)(((int)before.tab + before.turned[1] % (int)VOICE_TABS + (int)VOICE_TABS) % (int)VOICE_TABS))
+            fail("S2 ALGO did not move LOOP's tab by its detents");
+    } else if (voice_tab != before.tab) fail("S2 LOOP's tab changed without ALGO in LOOP");
     /* SING, the knobs on a sound page: the selected sound, those parameters, by
      * the accelerated amount, kept in range; with EDIT held, the character's. */
     unsigned knobs_alone = !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && !lfo && !env;
-    if (arp_held) {
-        if (memcmp(before.tracks, voice_tracks, sizeof voice_tracks) && !(pressed & ~BUTTON(ARP)) && !lfo && !env)
-            fail("S2 a knob with ARP held changed a character");
-        knobs_alone = 0;
-    }
     if (before.mode == VOICE_SING && knobs_alone) {
         struct mumble_voice want = before.tracks[before.cast].sound;
         for (unsigned c = 0; c < 4; ++c) {
@@ -506,30 +478,44 @@ static void step_after(void)
         }
         if (memcmp(&want, &voice_tracks[before.cast].sound, sizeof want)) fail("S2 a knob moved the sound wrongly");
     }
-    /* LOOP, the knobs in turn: the selected one's mute (right: on) and level,
-     * the bars (a step of 1, 2, 4, 8), the BPM; with EDIT held, where they start. */
-    if (before.mode == VOICE_LOOP && knobs_alone) {
-        int mute = before.tracks[before.cast].mute, level = before.tracks[before.cast].level;
-        int bars = (int)before.bars, bpm = (int)before.bpm;
-        for (unsigned c = 0; c < 4; ++c) {
-            int v = before.turned[2 + c];
-            if (!v) continue;
-            int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
-            if (c == 0) mute = edit ? 0 : v > 0;
-            else if (c == 1) level = edit ? 100 : clamp(level + v * gain, 0, 100);
-            else if (c == 2) bars = edit ? 2 : clamp(v > 0 ? bars * 2 : bars / 2, 1, 8);
-            else bpm = edit ? 120 : clamp(bpm + v * gain, 40, 240);
+    /* LOOP's knobs by its tab: MIX the selected one's level (0 muted), swing,
+     * the bars (1, 2, 4, 8), the BPM; ARP its rate, pattern, octaves (a step a
+     * detent) and gate; SCALE the root (round) and the scale (a step). EDIT
+     * held: where they start. SCL steps the scale; nothing else moves them. */
+    if ((before.mode == VOICE_LOOP && knobs_alone) || !turned_any) {
+        int want[10] = {before.tracks[before.cast].level, (int)before.arp_swing, (int)before.bars, (int)before.bpm,
+                        (int)before.arp_rate, (int)before.arp_pattern, (int)before.arp_octaves, (int)before.arp_gate,
+                        (int)before.root, (int)before.scale};
+        static const int start[10] = {100, 0, 2, 120, ARP_RATE, ARP_UP, 1, ARP_GATE, 0, 0};
+        for (unsigned c = 0; c < 4 && turned_any; ++c) {
+            int v = before.turned[2 + c], k = (int)(before.tab * 4u + c);
+            if (!v || k >= 10) continue;
+            int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4, step = v > 0 ? 1 : -1;
+            if (edit) want[k] = start[k];
+            else if (k == 0) want[k] = clamp(want[k] + v * gain, 0, 100);
+            else if (k == 1) want[k] = clamp(want[k] + v * gain, 0, ARP_SWING_MAX);
+            else if (k == 2) want[k] = clamp(v > 0 ? want[k] * 2 : want[k] / 2, 1, 8);
+            else if (k == 3) want[k] = clamp(want[k] + v * gain, 40, 240);
+            else if (k == 4) want[k] = clamp(want[k] + step, 0, ARP_RATES - 1);
+            else if (k == 5) want[k] = clamp(want[k] + step, 0, ARP_PATTERNS - 1);
+            else if (k == 6) want[k] = clamp(want[k] + step, 1, 3);
+            else if (k == 7) want[k] = clamp(want[k] + v * gain, 10, 100);
+            else if (k == 8) want[k] = (want[k] + 12 + step) % 12;
+            else want[k] = clamp(want[k] + step, 0, VOICE_SCALES - 1);
         }
-        if (voice_tracks[before.cast].mute != mute || voice_tracks[before.cast].level != level ||
-            voice_bars != (unsigned)bars || voice_bpm != (unsigned)bpm)
-            fail("S2 a LOOP knob moved the loop wrongly");
-        for (unsigned i = 0; i < MUMBLE_CAST; ++i)
-            if (memcmp(&before.tracks[i].sound, &voice_tracks[i].sound, sizeof before.tracks[i].sound))
-                fail("S2 a LOOP knob changed a sound");
+        if (pressed & BUTTON(SCL)) want[9] = (want[9] + 1) % VOICE_SCALES;
+        int got[10] = {voice_tracks[before.cast].level, (int)voice_arp_swing, (int)voice_bars, (int)voice_bpm,
+                       (int)voice_arp_rate, (int)voice_arp_pattern, (int)voice_arp_octaves, (int)voice_arp_gate,
+                       (int)voice_root, (int)voice_scale};
+        if (memcmp(want, got, sizeof want)) fail("S2 the loop's, the arpeggiator's or the scale's settings moved wrongly");
+        if (before.mode == VOICE_LOOP && knobs_alone)
+            for (unsigned i = 0; i < MUMBLE_CAST; ++i)
+                if (memcmp(&before.tracks[i].sound, &voice_tracks[i].sound, sizeof before.tracks[i].sound))
+                    fail("S2 a LOOP knob changed a sound");
     }
     /* TYPE, K1 then K2 alone: the cursor moved by the accelerated amount, then
      * the letter under it changed (at the end, one added) and nothing else. */
-    if (!before.play && !pressed && !arp_held && !lfo && !before.key_down && !before.turned[0] && !before.turned[6] && !edit_tap &&
+    if (!before.play && !pressed && !lfo && !before.key_down && !before.turned[0] && !before.turned[6] && !edit_tap &&
         !edit_hold && (before.turned[2] || before.turned[3])) {
         if (memcmp(before.tracks, voice_tracks, sizeof voice_tracks) && !lfo && !env) fail("S2 a TYPE knob changed a sound");
         int v = before.turned[2], a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
@@ -697,7 +683,6 @@ static void boot(int keep_store)
     memset(turned, 0, sizeof turned);
     master_q12 = 4096, audio_debt = 0, audio_sum = 0, audio_peak = 0;
     edit_since = 0, edit_spent = 0, edit_was = 0;
-    arp_spent = 0, arp_was = 0;
     memset(&lfo_model, 0, sizeof lfo_model), memset(&env_model, 0, sizeof env_model);
     app_init();
     app_ui_init();

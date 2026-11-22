@@ -233,7 +233,9 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "bpm")) *got = (int)voice_bpm;
     else if (!strcmp(what, "tempo")) *got = (int)voice_tempo();             /* the loop's: a MIDI clock's while it plays */
     else if (!strcmp(what, "sync")) *got = (int)voice_fm1_playing;          /* following a MIDI clock */
-    else if (!strcmp(what, "mute")) *got = (int)voice_track()->mute;        /* the selected one's, in the loop */
+    else if (!strcmp(what, "level")) *got = (int)voice_track()->level;      /* the selected one's, in the loop (0 muted) */
+    else if (!strcmp(what, "tab")) *got = (int)voice_tab;                   /* LOOP's: 0 MIX, 1 ARP, 2 SCALE */
+    else if (!strcmp(what, "root")) *got = (int)voice_root;                 /* the scale's: 0 C .. 11 B */
     else if (!strcmp(what, "choir")) *got = t->choir;
     else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;
     else if (!strcmp(what, "vowel")) *got = voice_now.vowel;                 /* the loudest sounding, 6: none */
