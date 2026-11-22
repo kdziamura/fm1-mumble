@@ -27,7 +27,10 @@
  *   body   AIR a ghost, CRUSH a robot (each built as the hand-drawn GHOST and
  *          BOT are), ROOM a robe, a drilled voice armour, JITTER stripes,
  *          PITCH a tee, a little AIR a scarf, DICTION a bow tie, GLIDE a cape
- * and the voice sets the face: brows (crossed with EFFORT, raised with
+ * A woman's voice (an adult's pitch and tract in their usual range) has her
+ * own hair (long, a ponytail, a bun or a bob, dark or ginger; long hair under
+ * a hat), lashes, earrings and for some coloured lips, and no beard.
+ * And the voice sets the face: brows (crossed with EFFORT, raised with
  * GLIDE), the mouth (a frown when strained, a smile with TUNE), sleepy lids
  * with AIR.
  * Main loop only (a few thousand operations a face). */
@@ -229,6 +232,11 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         face_ghost(f, t, size);
         return;
     }
+    /* A woman's voice (an adult's pitch and tract in their usual range, not a
+     * child's): their own hair (or long hair under a hat), lashes, earrings, for
+     * some coloured lips; no beard. */
+    int fem = t[T_PITCH] >= 250 && t[T_PITCH] <= 640 && t[T_TUBE] >= 430 && t[T_TUBE] <= 757;
+    int looks = (int)v->value[T_SPEED] + 2 * (int)v->value[T_TUNE] + 3 * (int)v->value[T_MOUTH];   /* (which hair, which colour) */
     const struct face_candidate tops[] = {
         {TOP_HOOD, z[T_ROOM], t[T_ROOM] > 550},          {TOP_ANTENNA, z[T_RADIO], t[T_RADIO] > 350},
         {TOP_SPIKES, z[T_SPEED], t[T_SPEED] > 400},      {TOP_CAP, z[T_DICTION], t[T_DICTION] > 500},
@@ -240,14 +248,17 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         {TOP_MOHAWK, (z[T_SPEED] + z[T_EFFORT]) / 2, t[T_SPEED] > 450 && t[T_EFFORT] > 550}};
     const struct face_candidate extras[] = {
         {EXTRA_VISOR, z[T_CRUSH], t[T_CRUSH] > 500},
-        {EXTRA_BEARD, z[T_WOBBLE] - z[T_PITCH] * 7 / 10, t[T_WOBBLE] > 400},
+        {EXTRA_BEARD, z[T_WOBBLE] - z[T_PITCH] * 7 / 10, t[T_WOBBLE] > 400 && !fem},
         {EXTRA_EYE_PATCH, (z[T_JITTER] + z[T_EFFORT]) * 6 / 10 - z[T_MOUTH] * 4 / 10, t[T_JITTER] > 600},
         {EXTRA_GLASSES, z[T_DICTION] * 8 / 10, z[T_DICTION] > 120},
-        {EXTRA_MUSTACHE, (z[T_EFFORT] - z[T_PITCH]) / 2, t[T_PITCH] < 250 && t[T_EFFORT] > 450},
+        {EXTRA_MUSTACHE, (z[T_EFFORT] - z[T_PITCH]) / 2, t[T_PITCH] < 250 && t[T_EFFORT] > 450 && !fem},
         {EXTRA_FRECKLES, (z[T_PITCH] + z[T_JITTER]) / 2, t[T_PITCH] > 350 && t[T_JITTER] > 450},
         {EXTRA_MONOCLE, (z[T_DICTION] - z[T_SPEED]) / 2, t[T_DICTION] > 500 && t[T_SPEED] < 450}};
     int top = f->top = face_pick(tops, 14, 90), extra = f->extra = face_pick(extras, 7, 70);
     int machine = extra == EXTRA_VISOR;
+    fem = fem && !machine;
+    if (fem && (top == TOP_SPIKES || top == TOP_BALD || top == TOP_LONG_HAIR || top == TOP_MOHAWK))
+        top = f->top = TOP_NONE;                                                 /* (their own hair instead) */
 
     /* Proportions, in whole pixels: half the head's width (its left side at
      * 12 - half), its height to the chin line (row 16), the jaw's steps. */
@@ -286,7 +297,9 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         face_rect(f, xl - 1, ey, 1, 2, '.', 1);
     } else if (top != TOP_HOOD && top != TOP_LONG_HAIR && top != TOP_HELMET && top != TOP_HEADPHONES) {
         face_both(f, xl - 1, ey, 'w'), face_both(f, xl - 2, ey + 1, 'w'), face_both(f, xl - 1, ey + 2, 'w');
+        if (fem) face_both(f, xl - 1, ey + 3, 'o');                             /* earrings */
     }
+    if (fem) face_both(f, left - 1, ey - 1, 'w');                                /* lashes */
     if (!machine && t[T_AIR] > 450 && eh == 2) face_rect(f, left, ey, ew, 1, 'm', 1);   /* sleepy: lids half down */
     if (!machine && top != TOP_HELMET) {          /* brows: cross with effort, up with glide */
         if (t[T_EFFORT] > 650)
@@ -303,7 +316,7 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     if (!machine && high > 150 && extra != EXTRA_BEARD && top != TOP_HELMET) face_rect(f, left - 1, ey + 3, 2, 1, 'o', 1);
     int mw = t[T_MOUTH] < 450 ? 2 : t[T_MOUTH] < 850 ? 4 : 6;
     int my = face_min(ey + 4, yc - 2);
-    face_rect(f, 12 - mw / 2, my, mw / 2, 1, 'w', 1);
+    face_rect(f, 12 - mw / 2, my, mw / 2, 1, fem && looks / 4 % 2 ? 'o' : 'w', 1);
     f->mouth_y = (uint8_t)my, f->mouth_w = (uint8_t)mw;
     if (t[T_EFFORT] > 700) face_both(f, 12 - mw / 2 - 1, my + 1, 'w');         /* a frown, a strained voice */
     else if (t[T_TUNE] > 600) face_both(f, 12 - mw / 2 - 1, my - 1, 'w');      /* a smile, a lively one */
@@ -345,6 +358,11 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     }
 
     /* On top. */
+    char hair = looks / 8 % 3 == 0 ? 'o' : 'm';
+    if (fem && (top == TOP_CAP || top == TOP_BEANIE || top == TOP_PROPELLER || top == TOP_CROWN || top == TOP_TOP_HAT ||
+                top == TOP_BANDANA || top == TOP_ANTENNA || top == TOP_HEADPHONES))
+        for (int y = top == TOP_HEADPHONES ? ey + 2 : yt + 1; y < yc + 4; ++y)   /* long hair from under the hat */
+            face_both(f, xl - 1 - (y > ey + 1), y, hair);
     if (top == TOP_TOP_HAT) {                     /* tall, a band round it, a brim */
         face_rect(f, xl + 2, yt - 5, 2 * half - 4, 1, 'w', 0);
         face_line(f, xl + 2, yt - 4, xl + 2, yt - 1, 'w', 1);
@@ -413,8 +431,24 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         face_line(f, xl - 1, yt, xl - 1, yc, 'b', 1);
         face_line(f, xl - 1, yc + 1, xl - 3, yc + 3, 'b', 1);
         face_line(f, xl - 3, yc + 3, xl - 3, FACE_N - 1, 'b', 1);
+    } else if (fem) {                             /* long hair, a ponytail, a bun or a bob; dark or ginger */
+        int style = looks % 4;
+        face_rect(f, xl + 1, yt + 1, 2 * half - 2, 1, hair, 0);
+        face_both(f, xl + 1, yt + 2, hair), face_both(f, xl + 2, yt + 2, hair);
+        if (style == 0) {                                                        /* long, past the shoulders */
+            for (int y = yt; y < yc + 4; ++y) face_both(f, xl - 1 - (y > ey + 1), y, hair);
+            face_both(f, xl - 1, yt, '.');
+        } else if (style == 1) {                                                 /* a ponytail, tied at the side */
+            face_rect(f, xr + 1, yt + 1, 2, 1, hair == 'm' ? 'o' : 'b', 0);
+            for (int y = yt + 2; y < ey + 5; ++y) face_set(f, xr + 2 - (y > ey + 2), y, hair);
+        } else if (style == 2) {                                                 /* a bun on top */
+            face_rect(f, 10, yt - 3, 4, 1, hair, 0), face_both(f, 9, yt - 2, hair), face_rect(f, 10, yt - 1, 4, 1, hair, 0);
+        } else {                                                                 /* a bob, to the jaw */
+            face_line(f, xl - 1, yt + 1, xl - 1, my, hair, 1);
+            face_rect(f, xl - 1, yt, 2, 1, hair, 1);
+        }
     } else if (!machine) {                        /* hair, one of four, from the voice */
-        int style = ((int)v->value[T_SPEED] + 2 * (int)v->value[T_TUNE] + 3 * (int)v->value[T_MOUTH]) % 4;
+        int style = looks % 4;
         if (style == 0) {                                                        /* a fringe */
             face_rect(f, xl + 3, yt + 1, 2 * half - 6, 1, 'm', 0);
             face_both(f, xl + 1, yt + 2, 'm');

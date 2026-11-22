@@ -29,7 +29,10 @@ slot takes the part of the setting that stands out most, past a threshold.
   body   AIR a ghost, CRUSH a robot, ROOM a robe, a drilled voice armour,
          JITTER stripes, PITCH a tee, a little AIR a scarf, DICTION a bow tie,
          GLIDE a cape
-and the voice sets the face: brows (crossed with EFFORT, raised with GLIDE),
+A woman's voice (an adult's pitch and tract in their usual range, not a
+child's) has their own hair (long, a ponytail, a bun or a bob, dark or ginger;
+long hair under a hat), lashes, earrings and for some coloured lips, and no
+beard. And the voice sets the face: brows (crossed with EFFORT, raised with GLIDE),
 the mouth (a frown when strained, a smile with TUNE), sleepy lids with AIR.
 The face also says where its mouth and eyes are (the rig the talking and
 blinking overlays need), so nothing is placed by hand.
@@ -261,6 +264,11 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
         f.parts = ["ghost"]
         build_ghost(f, t, size)
         return f
+    # A woman's voice (an adult's pitch and tract in their usual range, not a
+    # child's): their own hair (or long hair under a hat), lashes, earrings, for
+    # some coloured lips; no beard.
+    fem = 250 <= t["pitch"] <= 640 and 430 <= t["tube"] <= 757
+    looks = values[4] + 2 * values[7] + 3 * values[2]             # (a hash of the voice: which hair, which colour)
     top = pick([("hood", z["room"], t["room"] > 550), ("antenna", z["radio"], t["radio"] > 350),
                 ("spikes", z["speed"], t["speed"] > 400), ("cap", z["diction"], t["diction"] > 500),
                 ("helmet", drilled, t["effort"] > 600), ("bandana", z["jitter"], t["jitter"] > 600),
@@ -270,10 +278,10 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
                 ("headphones", z["echo"], t["echo"] > 350), ("crown", z["tune"], t["tune"] > 650),
                 ("mohawk", tdiv(z["speed"] + z["effort"], 2), t["speed"] > 450 and t["effort"] > 550)])
     extra = pick([("visor", z["crush"], t["crush"] > 500),
-                  ("beard", z["wobble"] - tdiv(z["pitch"] * 7, 10), t["wobble"] > 400),
+                  ("beard", z["wobble"] - tdiv(z["pitch"] * 7, 10), t["wobble"] > 400 and not fem),
                   ("eye patch", tdiv((z["jitter"] + z["effort"]) * 6, 10) - tdiv(z["mouth"] * 4, 10), t["jitter"] > 600),
                   ("glasses", tdiv(z["diction"] * 8, 10), z["diction"] > 120),
-                  ("mustache", tdiv(z["effort"] - z["pitch"], 2), t["pitch"] < 250 and t["effort"] > 450),
+                  ("mustache", tdiv(z["effort"] - z["pitch"], 2), t["pitch"] < 250 and t["effort"] > 450 and not fem),
                   ("freckles", tdiv(z["pitch"] + z["jitter"], 2), t["pitch"] > 350 and t["jitter"] > 450),
                   ("monocle", tdiv(z["diction"] - z["speed"], 2), t["diction"] > 500 and t["speed"] < 450)],
                  threshold=70)
@@ -282,7 +290,10 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
     if extra_override:
         extra = extra_override
     machine = extra == "visor"
-    f.parts = [p for p in (top, extra, body) if p]
+    fem = fem and not machine
+    if fem and top in ("spikes", "bald", "long hair", "mohawk"):
+        top = None                                                  # (their own hair instead)
+    f.parts = [p for p in (top, extra, body) if p] + (["woman"] if fem else [])
 
     # Proportions, in whole pixels: half the head's width (its left side at
     # 12 - half), its height to the chin line (row 16), the jaw's steps.
@@ -322,6 +333,10 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
         f.rect(xl - 1, ey, 1, 2, ".", mirror=True)
     elif top not in ("hood", "long hair", "helmet", "headphones"):
         f.both(xl - 1, ey, "w"), f.both(xl - 2, ey + 1, "w"), f.both(xl - 1, ey + 2, "w")
+        if fem:
+            f.both(xl - 1, ey + 3, "o")                                 # earrings
+    if fem:
+        f.both(left - 1, ey - 1, "w")                                   # lashes
     if not machine and t["air"] > 450 and eh == 2:                     # sleepy: lids half down
         f.rect(left, ey, ew, 1, "m", mirror=True)
     if not machine and top != "helmet":                                 # brows: cross with effort, up with glide
@@ -339,7 +354,7 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
         f.rect(left - 1, ey + 3, 2, 1, "o", mirror=True)
     mw = 2 if t["mouth"] < 450 else 4 if t["mouth"] < 850 else 6
     my = min(ey + 4, yc - 2)
-    f.rect(12 - mw // 2, my, mw // 2, 1, "w", mirror=True)
+    f.rect(12 - mw // 2, my, mw // 2, 1, "o" if fem and looks // 4 % 2 else "w", mirror=True)
     f.mouth, f.mouth_w = (12, my), mw
     if t["effort"] > 700:                                               # a frown, a strained voice
         f.both(12 - mw // 2 - 1, my + 1, "w")
@@ -381,6 +396,10 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
         f.rect(left + ew + 1, ey - 1, 2 * (12 - left - ew - 1), 1, "o")
 
     # On top.
+    hair_colour = "o" if looks // 8 % 3 == 0 else "m"
+    if fem and top in ("cap", "beanie", "propeller", "crown", "top hat", "bandana", "antenna", "headphones"):
+        for y in range(ey + 2 if top == "headphones" else yt + 1, yc + 4):   # long hair from under the hat
+            f.both(xl - 1 - (y > ey + 1), y, hair_colour)
     if top == "top hat":                         # tall, a band round it, a brim
         f.rect(xl + 2, yt - 5, 2 * half - 4, 1, "w")
         f.line(xl + 2, yt - 4, xl + 2, yt - 1, "w", mirror=True)
@@ -457,8 +476,25 @@ def build(values, top_override=None, extra_override=None, body_override=None) ->
         f.line(xl - 1, yt, xl - 1, yc, "b", mirror=True)
         f.line(xl - 1, yc + 1, xl - 3, yc + 3, "b", mirror=True)
         f.line(xl - 3, yc + 3, xl - 3, N - 1, "b", mirror=True)
+    elif top is None and fem:                    # long hair, a ponytail, a bun or a bob; dark or ginger
+        style, hair = looks % 4, hair_colour
+        f.rect(xl + 1, yt + 1, 2 * half - 2, 1, hair)
+        f.both(xl + 1, yt + 2, hair), f.both(xl + 2, yt + 2, hair)
+        if style == 0:                                                  # long, down past the shoulders
+            for y in range(yt, yc + 4):
+                f.both(xl - 1 - (y > ey + 1), y, hair)
+            f.both(xl - 1, yt, ".")
+        elif style == 1:                                                # a ponytail, tied at the side
+            f.rect(xr + 1, yt + 1, 2, 1, "o" if hair == "m" else "b")
+            for y in range(yt + 2, ey + 5):
+                f.set(xr + 2 - (y > ey + 2), y, hair)
+        elif style == 2:                                                # a bun on top
+            f.rect(10, yt - 3, 4, 1, hair), f.both(9, yt - 2, hair), f.rect(10, yt - 1, 4, 1, hair)
+        else:                                                           # a bob, to the jaw
+            f.line(xl - 1, yt + 1, xl - 1, my, hair, mirror=True)
+            f.rect(xl - 1, yt, 2, 1, hair, mirror=True)
     elif top is None and not machine:            # hair, one of four, from the voice
-        style = (values[4] + 2 * values[7] + 3 * values[2]) % 4
+        style = looks % 4
         if style == 0:                                                  # a fringe
             f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")
             f.both(xl + 1, yt + 2, "m")
