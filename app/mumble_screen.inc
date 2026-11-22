@@ -602,8 +602,8 @@ static unsigned voice_lyric_onset(const char *line, unsigned k)
     return p;
 }
 /* SING's typewriter: the line types out in the box as it is sung, a letter
- * every VOICE_TYPE_MS, up to the end of the syllable sung last; from the top
- * again when the line starts over. */
+ * every VOICE_TYPE_MS, up to the end of the syllable sung last (never more
+ * than that syllable behind); from the top again when the line starts over. */
 enum { VOICE_TYPE_MS = 35 };
 static unsigned voice_typed_from, voice_typed_target;
 static uint32_t voice_typed_ms, voice_typed_sig;
@@ -623,7 +623,10 @@ static void voice_typewriter(void)
         voice_typed_from = 0;
         voice_typed_ms = frame_time;
     } else if (target > voice_typed_target) {
-        voice_typed_from = voice_typed();
+        /* A new syllable: what comes before it shows at once (a fast
+         * arpeggio would leave the typing words behind), it types out. */
+        unsigned typed = voice_typed(), sung = voice_lyric_onset(line, voice_lyric_at);
+        voice_typed_from = typed > sung ? typed : sung;
         voice_typed_ms = frame_time;
     }
     voice_typed_target = target;
@@ -1473,9 +1476,12 @@ static void voice_line_draw(void)
     else {
         unsigned from = voice_lyric_onset(line, at), to = at + 1U < count ? voice_lyric_onset(line, at + 1U) : n;
         while (to > from + 1U && ((line[to - 1U] | 0x20) < 'a' || (line[to - 1U] | 0x20) > 'z')) --to;
-        unsigned start = from > 6U ? from - 6U : 0U;
-        if (n > VOICE_COLUMNS && start + VOICE_COLUMNS > n) start = n - VOICE_COLUMNS;
+        /* The window keeps the syllable sung last in view (whole, as it
+         * types out), six letters of what came before it, then the next. */
         unsigned sung = voice_lyric_started ? voice_lyric_onset(line, voice_lyric_at) : n;
+        unsigned anchor = sung < from ? sung : from;
+        unsigned start = anchor > 6U ? anchor - 6U : 0U;
+        if (n > VOICE_COLUMNS && start + VOICE_COLUMNS > n) start = n - VOICE_COLUMNS;
         for (unsigned c = 0; c < VOICE_COLUMNS && start + c < n; ++c) {
             unsigned i = start + c;
             char glyph[2] = {line[i], 0};

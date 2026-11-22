@@ -98,6 +98,11 @@ expect sung 4
 expect singing 1
 wait 125
 expect sung 0
+# The typewriter keeps up with it: never behind the syllable being sung.
+wait 600
+expect typed_lag <1
+wait 350
+expect typed_lag <1
 key 0 up
 key 4 up
 wait 50

@@ -250,6 +250,11 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;
     else if (!strcmp(what, "pitch_class")) *got = (int)(voice_sung_note % 12U);   /* the last note sung: 0 C .. 11 B */
     else if (!strcmp(what, "typed")) *got = (int)voice_typed();             /* SING: the line typed out so far */
+    else if (!strcmp(what, "typed_lag")) {                                  /* how far the typing is behind the syllable sung */
+        unsigned n;
+        const char *line = voice_lyric_text(&n);
+        *got = voice_lyric_started && voice_lyric_count ? (int)voice_lyric_onset(line, voice_lyric_at) - (int)voice_typed() : 0;
+    }
     else if (!strcmp(what, "face_top")) *got = (int)voice_portrait.top;     /* the selected one's face: mumble_faces.inc's TOP_* */
     else if (!strcmp(what, "face_body")) *got = (int)voice_portrait.body;   /* BODY_*: 1 ghost, 2 robot ... */
     else if (!strcmp(what, "arp")) *got = (int)voice_arp;
