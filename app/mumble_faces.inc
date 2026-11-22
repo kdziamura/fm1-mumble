@@ -18,19 +18,27 @@
  *   top    ROOM a hood, RADIO an antenna, SPEED spikes and a headband,
  *          DICTION a cap, a drilled voice (pushed, low, crisp, steady) a
  *          knight's helmet, JITTER a bandana, VIBRATO long hair, WOBBLE bald,
- *          GLIDE a propeller beanie, PITCH a beanie with a bobble
+ *          GLIDE a propeller beanie, PITCH a beanie with a bobble, a crisp low
+ *          voice a top hat, ECHO headphones, TUNE a crown, a fast pushed one
+ *          a mohawk; else one of four hairstyles
  *   face   CRUSH a visor, WOBBLE a beard (low voices), JITTER + EFFORT an eye
- *          patch, a very crisp DICTION glasses
+ *          patch, a very crisp DICTION glasses, a low pushed voice a
+ *          mustache, a high rough one freckles, a crisp slow one a monocle
  *   body   AIR a ghost, CRUSH a robot (each built as the hand-drawn GHOST and
  *          BOT are), ROOM a robe, a drilled voice armour, JITTER stripes,
- *          PITCH a tee
+ *          PITCH a tee, a little AIR a scarf, DICTION a bow tie, GLIDE a cape
+ * and the voice sets the face: brows (crossed with EFFORT, raised with
+ * GLIDE), the mouth (a frown when strained, a smile with TUNE), sleepy lids
+ * with AIR.
  * Main loop only (a few thousand operations a face). */
 
 enum { FACE_N = 24, FACE_ICON = 16 };
 enum { TOP_NONE, TOP_HOOD, TOP_ANTENNA, TOP_SPIKES, TOP_CAP, TOP_HELMET, TOP_BANDANA, TOP_LONG_HAIR, TOP_BALD,
-       TOP_PROPELLER, TOP_BEANIE };
-enum { EXTRA_NONE, EXTRA_VISOR, EXTRA_BEARD, EXTRA_EYE_PATCH, EXTRA_GLASSES };
-enum { BODY_NONE, BODY_GHOST, BODY_ROBOT, BODY_ROBE, BODY_ARMOUR, BODY_STRIPES, BODY_TEE };
+       TOP_PROPELLER, TOP_BEANIE, TOP_TOP_HAT, TOP_HEADPHONES, TOP_CROWN, TOP_MOHAWK };
+enum { EXTRA_NONE, EXTRA_VISOR, EXTRA_BEARD, EXTRA_EYE_PATCH, EXTRA_GLASSES, EXTRA_MUSTACHE, EXTRA_FRECKLES,
+       EXTRA_MONOCLE };
+enum { BODY_NONE, BODY_GHOST, BODY_ROBOT, BODY_ROBE, BODY_ARMOUR, BODY_STRIPES, BODY_TEE, BODY_SCARF, BODY_BOW_TIE,
+       BODY_CAPE };
 struct voice_face {
     char grid[FACE_N][FACE_N];
     uint8_t mouth_y, mouth_w, eyes, top, extra, body;
@@ -208,8 +216,10 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     const struct face_candidate bodies[] = {
         {BODY_GHOST, z[T_AIR], t[T_AIR] > 600},     {BODY_ROBOT, z[T_CRUSH], t[T_CRUSH] > 400},
         {BODY_ROBE, z[T_ROOM], t[T_ROOM] > 500},    {BODY_ARMOUR, drilled, t[T_EFFORT] > 600},
-        {BODY_STRIPES, z[T_JITTER], t[T_JITTER] > 600}, {BODY_TEE, z[T_PITCH], t[T_PITCH] > 450}};
-    int body = f->body = face_pick(bodies, 6, 90);
+        {BODY_STRIPES, z[T_JITTER], t[T_JITTER] > 600}, {BODY_TEE, z[T_PITCH], t[T_PITCH] > 450},
+        {BODY_SCARF, z[T_AIR], t[T_AIR] > 350 && t[T_AIR] <= 600}, {BODY_BOW_TIE, z[T_DICTION], t[T_DICTION] > 550},
+        {BODY_CAPE, z[T_GLIDE], t[T_GLIDE] > 400 && t[T_AIR] <= 600}};
+    int body = f->body = face_pick(bodies, 9, 90);
     if (body == BODY_ROBOT) {
         if (t[T_RADIO] > 200) f->top = TOP_ANTENNA;
         face_robot(f, t, size);
@@ -224,20 +234,27 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         {TOP_SPIKES, z[T_SPEED], t[T_SPEED] > 400},      {TOP_CAP, z[T_DICTION], t[T_DICTION] > 500},
         {TOP_HELMET, drilled, t[T_EFFORT] > 600},        {TOP_BANDANA, z[T_JITTER], t[T_JITTER] > 600},
         {TOP_LONG_HAIR, z[T_VIBRATO], t[T_VIBRATO] > 350}, {TOP_BALD, z[T_WOBBLE], t[T_WOBBLE] > 400},
-        {TOP_PROPELLER, z[T_GLIDE], t[T_GLIDE] > 350},   {TOP_BEANIE, z[T_PITCH], t[T_PITCH] > 450}};
+        {TOP_PROPELLER, z[T_GLIDE], t[T_GLIDE] > 350},   {TOP_BEANIE, z[T_PITCH], t[T_PITCH] > 450},
+        {TOP_TOP_HAT, (z[T_DICTION] - z[T_PITCH]) / 2, t[T_DICTION] > 500 && t[T_PITCH] < 300},
+        {TOP_HEADPHONES, z[T_ECHO], t[T_ECHO] > 350},  {TOP_CROWN, z[T_TUNE], t[T_TUNE] > 650},
+        {TOP_MOHAWK, (z[T_SPEED] + z[T_EFFORT]) / 2, t[T_SPEED] > 450 && t[T_EFFORT] > 550}};
     const struct face_candidate extras[] = {
         {EXTRA_VISOR, z[T_CRUSH], t[T_CRUSH] > 500},
         {EXTRA_BEARD, z[T_WOBBLE] - z[T_PITCH] * 7 / 10, t[T_WOBBLE] > 400},
         {EXTRA_EYE_PATCH, (z[T_JITTER] + z[T_EFFORT]) * 6 / 10 - z[T_MOUTH] * 4 / 10, t[T_JITTER] > 600},
-        {EXTRA_GLASSES, z[T_DICTION] * 8 / 10, z[T_DICTION] > 120}};
-    int top = f->top = face_pick(tops, 10, 90), extra = f->extra = face_pick(extras, 4, 70);
+        {EXTRA_GLASSES, z[T_DICTION] * 8 / 10, z[T_DICTION] > 120},
+        {EXTRA_MUSTACHE, (z[T_EFFORT] - z[T_PITCH]) / 2, t[T_PITCH] < 250 && t[T_EFFORT] > 450},
+        {EXTRA_FRECKLES, (z[T_PITCH] + z[T_JITTER]) / 2, t[T_PITCH] > 350 && t[T_JITTER] > 450},
+        {EXTRA_MONOCLE, (z[T_DICTION] - z[T_SPEED]) / 2, t[T_DICTION] > 500 && t[T_SPEED] < 450}};
+    int top = f->top = face_pick(tops, 14, 90), extra = f->extra = face_pick(extras, 7, 70);
     int machine = extra == EXTRA_VISOR;
 
     /* Proportions, in whole pixels: half the head's width (its left side at
      * 12 - half), its height to the chin line (row 16), the jaw's steps. */
     int half = 6 * size + 3 * t[T_EFFORT] - 5 * high < 500 ? 6 : (size > 900 && high < 400) ? 8 : 7;
     int h = 11 + face_rnd(3 * face_min(1000, face_max(0, 250 + (8 * size - 3 * high) / 10)), 1000);
-    int tall_top = top == TOP_CAP || top == TOP_BANDANA || top == TOP_HELMET || top == TOP_BEANIE || top == TOP_PROPELLER;
+    int tall_top = top == TOP_CAP || top == TOP_BANDANA || top == TOP_HELMET || top == TOP_BEANIE || top == TOP_PROPELLER ||
+                   top == TOP_TOP_HAT;
     if (tall_top) h = face_min(h, 11);
     int yc = 16, yt = yc - h + 1, xl = 12 - half, xr = 11 + half;
     int jaw = machine ? 0 : (high > 550 && t[T_EFFORT] < 600) ? 2 : 1;
@@ -267,8 +284,15 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     if (machine) {
         face_rect(f, xl - 2, ey - 1, 2, 4, 'm', 1);
         face_rect(f, xl - 1, ey, 1, 2, '.', 1);
-    } else if (top != TOP_HOOD && top != TOP_LONG_HAIR && top != TOP_HELMET) {
+    } else if (top != TOP_HOOD && top != TOP_LONG_HAIR && top != TOP_HELMET && top != TOP_HEADPHONES) {
         face_both(f, xl - 1, ey, 'w'), face_both(f, xl - 2, ey + 1, 'w'), face_both(f, xl - 1, ey + 2, 'w');
+    }
+    if (!machine && t[T_AIR] > 450 && eh == 2) face_rect(f, left, ey, ew, 1, 'm', 1);   /* sleepy: lids half down */
+    if (!machine && top != TOP_HELMET) {          /* brows: cross with effort, up with glide */
+        if (t[T_EFFORT] > 650)
+            face_both(f, left - 1, ey - 3, 'w'), face_both(f, left, ey - 2, 'w'), face_both(f, left + 1, ey - 2, 'w');
+        else if (t[T_GLIDE] > 550)
+            face_both(f, left - 1, ey - 2, 'w'), face_both(f, left, ey - 3, 'w'), face_both(f, left + 1, ey - 3, 'w');
     }
 
     /* Nose, cheeks, mouth. */
@@ -281,6 +305,8 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     int my = face_min(ey + 4, yc - 2);
     face_rect(f, 12 - mw / 2, my, mw / 2, 1, 'w', 1);
     f->mouth_y = (uint8_t)my, f->mouth_w = (uint8_t)mw;
+    if (t[T_EFFORT] > 700) face_both(f, 12 - mw / 2 - 1, my + 1, 'w');         /* a frown, a strained voice */
+    else if (t[T_TUNE] > 600) face_both(f, 12 - mw / 2 - 1, my - 1, 'w');      /* a smile, a lively one */
 
     /* The face's extra. */
     if (extra == EXTRA_VISOR) {
@@ -298,6 +324,17 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         face_rect(f, left + 3, ey - 1, 2, 1, 'm', 0), face_set(f, left + 5, ey - 2, 'm');
         for (unsigned k = 0; k < 4; ++k) f->eye[0][k] = f->eye[1][k];
         f->eyes = 1;
+    } else if (extra == EXTRA_MUSTACHE) {
+        face_rect(f, 12 - mw / 2 - 1, my - 1, mw / 2 + 1, 1, 'm', 1);
+        face_both(f, 12 - mw / 2 - 1, my, 'm');
+    } else if (extra == EXTRA_FRECKLES) {
+        face_rect(f, left - 1, ey + 3, 2, 1, '.', 1);
+        face_both(f, left - 2, ey + 3, 'o'), face_both(f, left, ey + 3, 'o'), face_both(f, left - 1, ey + 4, 'o');
+    } else if (extra == EXTRA_MONOCLE) {
+        int rx = FACE_N - left - ew;
+        for (int i = -1; i < ew + 1; ++i) face_set(f, rx + i, ey - 1, 'o'), face_set(f, rx + i, ey + eh, 'o');
+        face_set(f, rx - 1, ey, 'o'), face_set(f, rx + ew, ey, 'o');
+        face_line(f, rx + ew, ey + eh, rx + ew + 1, yc + 1, 'm', 0);
     } else if (extra == EXTRA_GLASSES) {
         for (unsigned e = 0; e < 2; ++e) {
             int x = f->eye[e][0], y = f->eye[e][1], ww = f->eye[e][2], hh = f->eye[e][3];
@@ -308,7 +345,23 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     }
 
     /* On top. */
-    if (top == TOP_BEANIE || top == TOP_PROPELLER) {   /* a knitted hat with a bobble, or a propeller */
+    if (top == TOP_TOP_HAT) {                     /* tall, a band round it, a brim */
+        face_rect(f, xl + 2, yt - 5, 2 * half - 4, 1, 'w', 0);
+        face_line(f, xl + 2, yt - 4, xl + 2, yt - 1, 'w', 1);
+        face_rect(f, xl + 3, yt - 1, 2 * half - 6, 1, 'o', 0);
+        face_rect(f, xl - 1, yt, 2 * half + 2, 1, 'w', 0);
+    } else if (top == TOP_HEADPHONES) {           /* a band over the head, cups on the ears */
+        face_rect(f, xl + 2, yt - 1, 2 * half - 4, 1, 'm', 0);
+        face_both(f, xl + 1, yt, 'm'), face_line(f, xl, yt + 1, xl, ey - 2, 'm', 1);
+        face_rect(f, xl - 2, ey - 1, 2, 4, 'b', 1);
+    } else if (top == TOP_CROWN) {
+        face_rect(f, xl + 2, yt - 1, 2 * half - 4, 1, 'o', 0);
+        face_line(f, xl + 2, yt - 3, xl + 2, yt - 2, 'o', 1), face_line(f, 11, yt - 3, 11, yt - 2, 'o', 1);
+        face_both(f, 11, yt - 1, 'b');
+    } else if (top == TOP_MOHAWK) {
+        face_rect(f, 11, yt - 4, 2, 5, 'o', 0);
+        face_both(f, 10, yt - 2, 'o'), face_both(f, 10, yt - 1, 'o');
+    } else if (top == TOP_BEANIE || top == TOP_PROPELLER) {   /* a knitted hat with a bobble, or a propeller */
         if (top == TOP_BEANIE) face_rect(f, 11, yt - 6, 2, 2, 'o', 0);
         else face_rect(f, 8, yt - 6, 8, 1, 'o', 0), face_rect(f, 11, yt - 5, 2, 1, 'w', 0);
         face_rect(f, xl + 3, yt - 4, 2 * half - 6, 1, 'b', 0);
@@ -360,9 +413,22 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
         face_line(f, xl - 1, yt, xl - 1, yc, 'b', 1);
         face_line(f, xl - 1, yc + 1, xl - 3, yc + 3, 'b', 1);
         face_line(f, xl - 3, yc + 3, xl - 3, FACE_N - 1, 'b', 1);
-    } else if (!machine) {
-        face_rect(f, xl + 3, yt + 1, 2 * half - 6, 1, 'm', 0);                   /* a fringe */
-        face_both(f, xl + 1, yt + 2, 'm');
+    } else if (!machine) {                        /* hair, one of four, from the voice */
+        int style = ((int)v->value[T_SPEED] + 2 * (int)v->value[T_TUNE] + 3 * (int)v->value[T_MOUTH]) % 4;
+        if (style == 0) {                                                        /* a fringe */
+            face_rect(f, xl + 3, yt + 1, 2 * half - 6, 1, 'm', 0);
+            face_both(f, xl + 1, yt + 2, 'm');
+        } else if (style == 1) {                                                 /* parted at the side */
+            face_rect(f, xl + 1, yt + 1, 2 * half - 2, 1, 'm', 0);
+            face_rect(f, xl + 1, yt + 2, 3, 1, 'm', 0);
+            face_set(f, xl + 4, yt + 1, '.');
+        } else if (style == 2) {                                                 /* curls */
+            for (int x = xl + 1; x < xr; ++x) face_set(f, x, yt - 1 + (x % 2), 'm');
+            face_both(f, xl + 1, yt + 2, 'm'), face_both(f, xl + 2, yt + 2, 'm');
+        } else {                                                                 /* a tuft */
+            face_set(f, 13, yt - 1, 'w'), face_set(f, 14, yt - 2, 'w'), face_set(f, 12, yt - 2, 'w');
+            face_rect(f, xl + 3, yt + 1, 2 * half - 6, 1, 'm', 0);
+        }
     }
 
     /* The body. */
@@ -389,6 +455,10 @@ static void voice_face_build(const struct mumble_voice *v, struct voice_face *f)
     } else {
         face_both(f, 11, sy, '.'), face_both(f, 10, sy + 1, 'w'), face_both(f, 11, sy + 2, 'w');   /* a collar */
         face_line(f, 5, sy + 3, 5, FACE_N - 1, 'm', 1);
+        if (body == BODY_SCARF) face_rect(f, 9, yc + 1, 6, 2, 'o', 0), face_rect(f, 14, yc + 3, 2, 3, 'o', 0);
+        else if (body == BODY_BOW_TIE)
+            face_both(f, 10, sy, 'o'), face_both(f, 10, sy + 2, 'o'), face_rect(f, 10, sy + 1, 4, 1, 'o', 0);
+        else if (body == BODY_CAPE) face_line(f, 3, sy + 1, 0, FACE_N - 1, 'b', 1), face_rect(f, 11, sy, 2, 1, 'o', 0);
     }
 }
 

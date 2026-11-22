@@ -20,11 +20,17 @@ slot takes the part of the setting that stands out most, past a threshold.
   top    ROOM a hood, RADIO an antenna, SPEED spikes and a headband, DICTION a
          cap, a drilled voice (pushed, low, crisp, steady) a helmet, JITTER a
          bandana, VIBRATO long hair, WOBBLE bald, GLIDE a propeller beanie,
-         PITCH a beanie with a bobble
+         PITCH a beanie with a bobble, a crisp low voice a top hat, ECHO
+         headphones, TUNE a crown, a fast pushed one a mohawk; else one of four
+         hairstyles
   face   CRUSH a visor, WOBBLE a beard (low voices), JITTER + EFFORT an eye
-         patch, a very crisp DICTION glasses
+         patch, a very crisp DICTION glasses, a low pushed voice a mustache, a
+         high rough one freckles, a crisp slow one a monocle
   body   AIR a ghost, CRUSH a robot, ROOM a robe, a drilled voice armour,
-         JITTER stripes, PITCH a tee
+         JITTER stripes, PITCH a tee, a little AIR a scarf, DICTION a bow tie,
+         GLIDE a cape
+and the voice sets the face: brows (crossed with EFFORT, raised with GLIDE),
+the mouth (a frown when strained, a smile with TUNE), sleepy lids with AIR.
 The face also says where its mouth and eyes are (the rig the talking and
 blinking overlays need), so nothing is placed by hand.
 
@@ -227,7 +233,7 @@ def build_ghost(f, t, size):
             f.set(x, y, "b")
 
 
-def build(values, top_override=None) -> Face:
+def build(values, top_override=None, extra_override=None, body_override=None) -> Face:
     """A figure in the hand-drawn cast's construction: a head with straight
     sides, a rounded or flat top and a chin cut in 45-degree steps, ears at
     the eyes, 2x2 eyes, a nose, cheeks and a short mouth; a two-pixel neck;
@@ -242,7 +248,11 @@ def build(values, top_override=None) -> Face:
     drilled = z["effort"] - tdiv(z["pitch"], 2) - tdiv(z["jitter"], 2) + tdiv(z["diction"], 2)
     body = pick([("ghost", z["air"], t["air"] > 600), ("robot", z["crush"], t["crush"] > 400),
                  ("robe", z["room"], t["room"] > 500), ("armour", drilled, t["effort"] > 600),
-                 ("stripes", z["jitter"], t["jitter"] > 600), ("tee", z["pitch"], t["pitch"] > 450)])
+                 ("stripes", z["jitter"], t["jitter"] > 600), ("tee", z["pitch"], t["pitch"] > 450),
+                 ("scarf", z["air"], 350 < t["air"] <= 600), ("bow tie", z["diction"], t["diction"] > 550),
+                 ("cape", z["glide"], t["glide"] > 400 and t["air"] <= 600)])
+    if body_override:
+        body = body_override
     if body == "robot":
         f.parts = ["antenna", "robot"] if t["radio"] > 200 else ["robot"]
         build_robot(f, t, size)
@@ -255,13 +265,22 @@ def build(values, top_override=None) -> Face:
                 ("spikes", z["speed"], t["speed"] > 400), ("cap", z["diction"], t["diction"] > 500),
                 ("helmet", drilled, t["effort"] > 600), ("bandana", z["jitter"], t["jitter"] > 600),
                 ("long hair", z["vibrato"], t["vibrato"] > 350), ("bald", z["wobble"], t["wobble"] > 400),
-                ("propeller", z["glide"], t["glide"] > 350), ("beanie", z["pitch"], t["pitch"] > 450)])
+                ("propeller", z["glide"], t["glide"] > 350), ("beanie", z["pitch"], t["pitch"] > 450),
+                ("top hat", tdiv(z["diction"] - z["pitch"], 2), t["diction"] > 500 and t["pitch"] < 300),
+                ("headphones", z["echo"], t["echo"] > 350), ("crown", z["tune"], t["tune"] > 650),
+                ("mohawk", tdiv(z["speed"] + z["effort"], 2), t["speed"] > 450 and t["effort"] > 550)])
     extra = pick([("visor", z["crush"], t["crush"] > 500),
                   ("beard", z["wobble"] - tdiv(z["pitch"] * 7, 10), t["wobble"] > 400),
                   ("eye patch", tdiv((z["jitter"] + z["effort"]) * 6, 10) - tdiv(z["mouth"] * 4, 10), t["jitter"] > 600),
-                  ("glasses", tdiv(z["diction"] * 8, 10), z["diction"] > 120)], threshold=70)
+                  ("glasses", tdiv(z["diction"] * 8, 10), z["diction"] > 120),
+                  ("mustache", tdiv(z["effort"] - z["pitch"], 2), t["pitch"] < 250 and t["effort"] > 450),
+                  ("freckles", tdiv(z["pitch"] + z["jitter"], 2), t["pitch"] > 350 and t["jitter"] > 450),
+                  ("monocle", tdiv(z["diction"] - z["speed"], 2), t["diction"] > 500 and t["speed"] < 450)],
+                 threshold=70)
     if top_override:
         top = top_override
+    if extra_override:
+        extra = extra_override
     machine = extra == "visor"
     f.parts = [p for p in (top, extra, body) if p]
 
@@ -269,14 +288,14 @@ def build(values, top_override=None) -> Face:
     # 12 - half), its height to the chin line (row 16), the jaw's steps.
     half = 6 if 6 * size + 3 * t["effort"] - 5 * high < 500 else 8 if (size > 900 and high < 400) else 7
     h = 11 + rnd(3 * min(1000, max(0, 250 + tdiv(8 * size - 3 * high, 10))), 1000)
-    tall_top = top in ("cap", "bandana", "helmet", "beanie", "propeller")
+    tall_top = top in ("cap", "bandana", "helmet", "beanie", "propeller", "top hat")
     if tall_top:
         h = min(h, 11)
     yc = 16
     yt = yc - h + 1
     xl, xr = 12 - half, 11 + half
     jaw = 0 if machine else 2 if (high > 550 and t["effort"] < 600) else 1
-    rounded = not machine and top not in ("cap", "bandana", "spikes", "beanie", "propeller", "helmet")
+    rounded = not machine and top not in ("cap", "bandana", "spikes", "beanie", "propeller", "helmet", "top hat")
 
     # The head.
     if rounded:
@@ -301,8 +320,15 @@ def build(values, top_override=None) -> Face:
     if machine:
         f.rect(xl - 2, ey - 1, 2, 4, "m", mirror=True)
         f.rect(xl - 1, ey, 1, 2, ".", mirror=True)
-    elif top not in ("hood", "long hair", "helmet"):
+    elif top not in ("hood", "long hair", "helmet", "headphones"):
         f.both(xl - 1, ey, "w"), f.both(xl - 2, ey + 1, "w"), f.both(xl - 1, ey + 2, "w")
+    if not machine and t["air"] > 450 and eh == 2:                     # sleepy: lids half down
+        f.rect(left, ey, ew, 1, "m", mirror=True)
+    if not machine and top != "helmet":                                 # brows: cross with effort, up with glide
+        if t["effort"] > 650:
+            f.both(left - 1, ey - 3, "w"), f.both(left, ey - 2, "w"), f.both(left + 1, ey - 2, "w")
+        elif t["glide"] > 550:
+            f.both(left - 1, ey - 2, "w"), f.both(left, ey - 3, "w"), f.both(left + 1, ey - 3, "w")
 
     # Nose, cheeks, mouth.
     if not machine:
@@ -315,6 +341,10 @@ def build(values, top_override=None) -> Face:
     my = min(ey + 4, yc - 2)
     f.rect(12 - mw // 2, my, mw // 2, 1, "w", mirror=True)
     f.mouth, f.mouth_w = (12, my), mw
+    if t["effort"] > 700:                                               # a frown, a strained voice
+        f.both(12 - mw // 2 - 1, my + 1, "w")
+    elif t["tune"] > 600:                                               # a smile, a lively one
+        f.both(12 - mw // 2 - 1, my - 1, "w")
 
     # The face's extra.
     if extra == "visor":
@@ -331,6 +361,18 @@ def build(values, top_override=None) -> Face:
         f.rect(left - 1, ey + 1, 3, 2, "m")
         f.rect(left + 3, ey - 1, 2, 1, "m"), f.set(left + 5, ey - 2, "m")
         f.eyes = f.eyes[1:]
+    elif extra == "mustache":
+        f.rect(12 - mw // 2 - 1, my - 1, mw // 2 + 1, 1, "m", mirror=True)
+        f.both(12 - mw // 2 - 1, my, "m")
+    elif extra == "freckles":
+        f.rect(left - 1, ey + 3, 2, 1, ".", mirror=True)
+        f.both(left - 2, ey + 3, "o"), f.both(left, ey + 3, "o"), f.both(left - 1, ey + 4, "o")
+    elif extra == "monocle":
+        rx = 24 - left - ew
+        for i in range(-1, ew + 1):
+            f.set(rx + i, ey - 1, "o"), f.set(rx + i, ey + eh, "o")
+        f.set(rx - 1, ey, "o"), f.set(rx + ew, ey, "o")
+        f.line(rx + ew, ey + eh, rx + ew + 1, yc + 1, "m")
     elif extra == "glasses":
         for (x, y, ww, hh) in f.eyes:
             for i in range(-1, ww + 1):
@@ -339,7 +381,23 @@ def build(values, top_override=None) -> Face:
         f.rect(left + ew + 1, ey - 1, 2 * (12 - left - ew - 1), 1, "o")
 
     # On top.
-    if top == "beanie":                          # a knitted hat with a bobble
+    if top == "top hat":                         # tall, a band round it, a brim
+        f.rect(xl + 2, yt - 5, 2 * half - 4, 1, "w")
+        f.line(xl + 2, yt - 4, xl + 2, yt - 1, "w", mirror=True)
+        f.rect(xl + 3, yt - 1, 2 * half - 6, 1, "o")
+        f.rect(xl - 1, yt, 2 * half + 2, 1, "w")
+    elif top == "headphones":                    # a band over the head, cups on the ears
+        f.rect(xl + 2, yt - 1, 2 * half - 4, 1, "m")
+        f.both(xl + 1, yt, "m"), f.line(xl, yt + 1, xl, ey - 2, "m", mirror=True)
+        f.rect(xl - 2, ey - 1, 2, 4, "b", mirror=True)
+    elif top == "crown":
+        f.rect(xl + 2, yt - 1, 2 * half - 4, 1, "o")
+        f.line(xl + 2, yt - 3, xl + 2, yt - 2, "o", mirror=True), f.line(11, yt - 3, 11, yt - 2, "o", mirror=True)
+        f.both(11, yt - 1, "b")
+    elif top == "mohawk":
+        f.rect(11, yt - 4, 2, 5, "o")
+        f.both(10, yt - 2, "o"), f.both(10, yt - 1, "o")
+    elif top == "beanie":                          # a knitted hat with a bobble
         f.rect(11, yt - 6, 2, 2, "o")
         f.rect(xl + 3, yt - 4, 2 * half - 6, 1, "b")
         f.both(xl + 2, yt - 3, "b"), f.line(xl + 1, yt - 2, xl + 1, yt - 1, "b", mirror=True)
@@ -399,9 +457,22 @@ def build(values, top_override=None) -> Face:
         f.line(xl - 1, yt, xl - 1, yc, "b", mirror=True)
         f.line(xl - 1, yc + 1, xl - 3, yc + 3, "b", mirror=True)
         f.line(xl - 3, yc + 3, xl - 3, N - 1, "b", mirror=True)
-    elif top is None and not machine:
-        f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")                       # a fringe
-        f.both(xl + 1, yt + 2, "m")
+    elif top is None and not machine:            # hair, one of four, from the voice
+        style = (values[4] + 2 * values[7] + 3 * values[2]) % 4
+        if style == 0:                                                  # a fringe
+            f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")
+            f.both(xl + 1, yt + 2, "m")
+        elif style == 1:                                                # parted at the side
+            f.rect(xl + 1, yt + 1, 2 * half - 2, 1, "m")
+            f.rect(xl + 1, yt + 2, 3, 1, "m")
+            f.set(xl + 4, yt + 1, ".")
+        elif style == 2:                                                # curls
+            for x in range(xl + 1, xr):
+                f.set(x, yt - 1 + (x % 2), "m")
+            f.both(xl + 1, yt + 2, "m"), f.both(xl + 2, yt + 2, "m")
+        else:                                                           # a tuft
+            f.set(13, yt - 1, "w"), f.set(14, yt - 2, "w"), f.set(12, yt - 2, "w")
+            f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")
 
     # The body.
     sy = yc + 2
@@ -427,6 +498,13 @@ def build(values, top_override=None) -> Face:
     else:
         f.both(11, sy, "."), f.both(10, sy + 1, "w"), f.both(11, sy + 2, "w")   # a collar
         f.line(5, sy + 3, 5, N - 1, "m", mirror=True)
+        if body == "scarf":
+            f.rect(9, yc + 1, 6, 2, "o"), f.rect(14, yc + 3, 2, 3, "o")
+        elif body == "bow tie":
+            f.both(10, sy, "o"), f.both(10, sy + 2, "o"), f.rect(10, sy + 1, 4, 1, "o")
+        elif body == "cape":
+            f.line(3, sy + 1, 0, N - 1, "b", mirror=True)
+            f.rect(11, sy, 2, 1, "o")
     return f
 
 
@@ -571,14 +649,39 @@ def main():
         cells.append((build(v).grid, label(name + " rolled", build(v))))
     sheet(cells, 8, title="rolled voices (LFO): halfway between the character and random").save(out / "rolled.png")
 
-    # 4. The rig: each face talking and blinking where the generator put its parts.
+    # 4. Every part on four of the cast (forced, whatever their voices pick).
+    cells = []
+    for slot, parts in (("top", ("top hat", "headphones", "crown", "mohawk", "beanie", "propeller", "cap", "spikes")),
+                        ("extra", ("mustache", "freckles", "monocle", "glasses", "beard", "eye patch")),
+                        ("body", ("scarf", "bow tie", "cape", "robe", "armour", "stripes", "tee"))):
+        for part in parts:
+            for n in ("HERO", "SISTER", "KID", "ELDER"):
+                v = dict(CAST)[n]
+                f = build(v, **{slot + "_override": part})
+                cells.append((f.grid, f"{n}\n{part}"))
+    sheet(cells, 12, title="every part on HERO, SISTER, KID and ELDER (three parts a row)").save(out / "parts.png")
+    # The hair (no hat): the four styles, and the brows, mouths and lids the voice sets.
+    cells = []
+    hero = list(CAST[0][1])
+    for k in range(4):
+        v = list(hero)
+        while (v[4] + 2 * v[7] + 3 * v[2]) % 4 != k:
+            v[4] += 1
+        cells.append((build(v).grid, f"hair {k}"))
+    for name, i, val in (("angry", 15, 90), ("raised", 12, 300), ("smile", 7, 120), ("frown", 15, 95), ("sleepy", 3, 55)):
+        v = list(hero)
+        v[i] = val
+        cells.append((build(v, "bald").grid, name))
+    sheet(cells, 9, title="no hat: the four hairstyles; brows, mouth and lids from the voice").save(out / "features.png")
+
+    # 5. The rig: each face talking and blinking where the generator put its parts.
     cells = []
     for name, v in CAST:
         f = build(v)
         for vowel, blink in ((None, False), ("AH", False), ("EE", False), ("OO", False), (None, True)):
             cells.append((pose(f, vowel, blink), f"{name}\n{vowel or ('blink' if blink else 'still')}"))
     sheet(cells, 10, title="the rig: talking (AH EE OO) and blinking, two characters a row").save(out / "rig.png")
-    print("\n".join(str(out / n) for n in ("cast.png", "sweep.png", "rolled.png", "rig.png")))
+    print("\n".join(str(out / n) for n in ("cast.png", "sweep.png", "rolled.png", "parts.png", "features.png", "rig.png")))
 
 
 if __name__ == "__main__":
