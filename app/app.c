@@ -184,6 +184,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "recording")) *got = (int)voice_recording;
     else if (!strcmp(what, "metronome")) *got = (int)voice_click;
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;
+    else if (!strcmp(what, "pitch_class")) *got = (int)(voice_sung_note % 12U);   /* the last note sung: 0 C .. 11 B */
+    else if (!strcmp(what, "scale")) *got = (int)voice_scale;               /* 0 none, 1 C major ... */
     else if (!strcmp(what, "lyric")) *got = (int)voice_lyric_at;
     else if (!strcmp(what, "lyrics")) *got = (int)voice_lyric_count;
     else if (!strcmp(what, "lyric_next")) *got = (int)voice_lyric_next();

@@ -72,6 +72,18 @@ release EDIT
 wait 50
 expect edited 0
 expect length >20
+# SCL (the simulator's SEL): a scale the keys keep to. F# (key 1) sings F in C major; off again, F#.
+tap SEL
+expect scale 1
+tapkey 1
+expect pitch_class 5
+tap SEL
+tap SEL
+tap SEL
+tap SEL
+expect scale 0
+tapkey 1
+expect pitch_class 6
 # GLO on to LOOP mode: the lanes, and the knobs set the loop; EDIT held with
 # K4 turned puts the BPM back.
 tap GLO

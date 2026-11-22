@@ -36,7 +36,7 @@
  *       K2 changes only the letter under it; EDIT let go unspent clears
  *       exactly the selected singer's notes (SING, LOOP) or cuts the word
  *       before the cursor (TYPE), held 1 s it clears the loop (SING, LOOP)
- *       or the line, then the loop (TYPE); FX rewinds the line (SING); with nothing pressed or turned no
+ *       or the line, then the loop (TYPE); FX rewinds the line (SING), SCL steps the scale (SING, LOOP); with nothing pressed or turned no
  *       setting changes, TYPE types exactly the keys' letters at the cursor,
  *       SING holds exactly the
  *       keys still down and the new ones, the last key pressed is sung at
@@ -187,6 +187,7 @@ static void check_state(void)
     if (!voice_ready) fail("S1 the page is not open");
     if (voice_cast >= MUMBLE_CAST) fail("S1 cast out of range");
     if (voice_page >= VOICE_PAGES) fail("S1 page out of range");
+    if (voice_scale >= VOICE_SCALES) fail("S1 the scale out of range");
     if (voice_mode >= VOICE_MODES || voice_play != (voice_mode != VOICE_TYPE)) fail("S1 the mode out of range");
     if (voice_caps > 1 || voice_play > 1 || voice_song_dirty > 1 || voice_recording > 1 || voice_loop != 1)
         fail("S1 a flag is not 0 or 1 (or the loop not looping)");
@@ -243,6 +244,7 @@ static void check_state(void)
     if (!!(lit_buttons & (1u << B_REC)) != voice_recording) fail("S1 REC's light disagrees with recording");
     if (!!(lit_buttons & (1u << B_SAVE)) != voice_track()->choir) fail("S1 SAVE's light disagrees with the choir");
     if (!!(lit_buttons & (1u << B_GLO)) != voice_play) fail("S1 GLO's light disagrees with the mode");
+    if (!!(lit_buttons & (1u << B_SEL)) != (voice_play && voice_scale)) fail("S1 SCL's light disagrees with the scale");
     /* (The keys' lights from the frame's own snapshot of the keys, as app.c
      * hands them on: the vowels in TYPE, else just the keys held.) */
     uint32_t vowels = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 14) | (1u << 20) | (1u << 24);
@@ -255,7 +257,7 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
-    unsigned length, cursor, cast, page, caps, mode, play, bars, bpm, demo, song, recording;
+    unsigned length, cursor, cast, page, caps, scale, mode, play, bars, bpm, demo, song, recording;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
@@ -271,7 +273,7 @@ static void step_before(void)
     memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
     memcpy(before.text, voice_text, sizeof voice_text);
     before.length = voice_length, before.cursor = voice_cursor, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
-    before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
+    before.scale = voice_scale, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
     before.song = voice_song, before.recording = voice_recording, before.octave = voice_octave;
     before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count, before.lyric_started = voice_lyric_started;
     before.lyric_lead = voice_lyric_lead, before.lyric_sig = voice_lyric_sig, before.song_ms = voice_now.song_ms;
@@ -319,6 +321,9 @@ static void step_after(void)
         if (voice_recording != (before.play ? !before.recording : 1u)) fail("S2 REC did not flip recording");
         if (voice_recording && !voice_song) fail("S2 recording without the loop running");
     }
+    if (pressed == BUTTON(SCL) && alone && before.play && voice_scale != (before.scale + 1u) % VOICE_SCALES)
+        fail("S2 SCL did not step the scale");
+    if (voice_scale != before.scale && !(pressed & BUTTON(SCL))) fail("S2 the scale changed with SCL not pressed");
     if (pressed == BUTTON(PLAY) && alone) {
         if (before.song && voice_song) fail("S2 PLAY did not stop the loop");
         if (!before.song && !voice_song) fail("S2 PLAY did not start the loop");

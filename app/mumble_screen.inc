@@ -22,7 +22,7 @@
  *         OCT- delete   OCT+ CAPS   FX ,  SCL .  ENV ?  LFO !
  *         EDIT a word back; held 1 s: clear the line, then the loop
  *   SING  ALGO / SEQ page (SING only)   K1..K4 sound (EDIT held: back to the character's)
- *         OCT- OCT+ octave   FX from the top of the line
+ *         OCT- OCT+ octave   FX from the top of the line   SCL the scale the keys keep to
  *         EDIT clear the selected character's notes; held 1 s: the whole loop
  *   LOOP  K1 the character muted  K2 its level  K3 bars  K4 BPM
  *         (EDIT held: back to where they start); OCT, FX and EDIT as in SING
@@ -70,7 +70,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "SELECT: WHO  REC: SING AND RECORD"},
     {"KEYS SING THE LINE  HELD: A CHORD",
      "PLAY: LOOP  REC: RECORD  GLO: LOOP",
-     "OCT- OCT+ OCTAVE  FX: FROM THE TOP",
+     "OCT- OCT+ OCTAVE  FX: TOP  SCL: SCALE",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
      "SELECT: WHO  SAVE: CHOIR"},
@@ -95,6 +95,12 @@ static struct voice_track voice_tracks[MUMBLE_CAST];
 static char voice_text[MUMBLE_TEXT + 1];
 static unsigned voice_length;
 static unsigned voice_cast, voice_page, voice_caps, voice_demo, voice_ready;
+/* SCL where the keys sing: the scale (in C) a key's note keeps to, the note
+ * under it if it is not in it; 0: none. A bit for each pitch class. */
+static const uint16_t voice_scales[] = {0xFFF, 0xAB5, 0x5AD, 0x295, 0x4E9};
+static const char *const voice_scale_names[] = {"OFF", "C MAJOR", "C MINOR", "C PENTA", "C BLUES"};
+enum { VOICE_SCALES = sizeof voice_scales / sizeof voice_scales[0] };
+static unsigned voice_scale;
 /* The loop: BARS and BPM size it, it always loops. song is 1 when started, 2
  * once it was heard (the audio task adopts it a block later). */
 static unsigned voice_loop = 1, voice_song, voice_song_dirty, voice_bars = 2, voice_bpm = 120;
@@ -492,6 +498,7 @@ static void voice_note_on(unsigned who, unsigned key)
     static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM, MUMBLE_VOWELS, 0, 0, 0, 0};
     const struct mumble_voice *v = &voice_tracks[who].sound;
     int pitch = clamp(53 + (int)key + 12 * (voice_octave + mumble_register(v)), 0, 127);   /* lowest key is F3 */
+    while (!(voice_scales[voice_scale] >> (pitch % 12) & 1U)) --pitch;                   /* (C is in every scale) */
     /* Straight on from its last note (within 60 ms): slide from it. */
     int bend = 0;
     if (voice_sing_pitch[who] && frame_time - voice_sing_end[who] <= 60U)
@@ -722,7 +729,10 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         if (pressed & BUTTON(marks[i][0])) {
             char mark[2] = {(char)marks[i][1], 0};
             if (!voice_play) voice_type(mark[0]);
-            else if (i) voice_say(mark_names[i], " TYPES ", mark), strcat(voice_said, " IN TYPE MODE");
+            else if (marks[i][0] == SCL) {
+                voice_scale = (voice_scale + 1U) % VOICE_SCALES;
+                voice_say("SCALE: ", voice_scale_names[voice_scale], voice_scale ? " (THE KEYS KEEP TO IT)" : NULL);
+            } else if (i) voice_say(mark_names[i], " TYPES ", mark), strcat(voice_said, " IN TYPE MODE");
         }
     uint32_t typed = key_down & ~blocked_keys;
     if (voice_play) voice_sing(c, typed);
@@ -753,7 +763,7 @@ static uint32_t voice_button_bits(void)
     uint32_t octave = voice_play ? ((voice_octave > 0) << OCT_UP) | ((voice_octave < 0) << OCT_DOWN)
                                  : voice_caps << OCT_UP;
     return ((voice_song != 0) << PLAY) | octave | (voice_play << GLO) | ((uint32_t)voice_track()->choir << SAVE) |
-           (voice_recording << REC) | (1U << ARP);
+           (voice_recording << REC) | (1U << ARP) | ((voice_play && voice_scale) << SCL);
 }
 
 /* Control-side snapshot, taken once per frame before marking damage: the
@@ -1150,6 +1160,7 @@ static void voice_play_status(unsigned singers, unsigned notes)
     if (voice_octave > 0) strcat(octave, "+");
     strcat(octave, value);
     text(10, 172, octave, 1, voice_octave ? AMBER : DIM, BACK);
+    if (voice_scale) text(52, 172, voice_scale_names[voice_scale], 1, ACCENT, BACK);
     if (singers > 1) {
         char choir[16] = "CHOIR ";
         decimal(value, (int)singers, 1);
@@ -1192,6 +1203,7 @@ static void voice_line_draw(void)
                                  (voice_cast << 12) | (singers << 15) | (voice_recording << 19) | (voice_sung_note << 20),
                              &notes, sizeof notes);
     sig = signature(sig, &voice_lyric_sig, sizeof voice_lyric_sig);
+    sig = signature(sig, &voice_scale, sizeof voice_scale);
     /* The TYPE rows share this area: make them redraw on return. */
     cache->voice_cache[4] = cache->voice_cache[5] = 0xfffffffeU;
     if (cache->voice_cache[3] == sig) return;
