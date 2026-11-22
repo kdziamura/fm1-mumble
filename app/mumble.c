@@ -474,7 +474,7 @@ struct hum {
      * ending's place; the onset's kind and length, the ending's. */
     uint8_t onset, coda, has_glide, breath, vowel2;
     uint32_t onset_len;
-    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2, nlp;
+    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2, nx1, nx2;
     /* The diphthong's second vowel, a nasal ending's closed formants. */
     float target2[4], nasal[4];
     /* A sung note's slide from the last one (semitones, over porta frames),
@@ -1084,12 +1084,17 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.13f;
         if (w && what == MUMBLE_CODA_HISS) level *= 0.7f;              /* an ending's hiss trails off quieter */
         if (!w && voiced) level *= 0.5f;
-        /* The same loudness at any centre: divide out the resonator's power
-         * gain for white noise, (1 - c) / ((1 + c)((1 - c)^2 - b^2)). */
-        float power = (1.0f - c) / ((1.0f + c) * ((1.0f - c) * (1.0f - c) - b * b));
+        /* A band-pass, (1 - z^-2) / (1 - b z^-1 - c z^-2): zeros at DC and
+         * Nyquist, so nothing below or far above the band (an all-pole
+         * resonator alone lets the lows through: a hush). The same loudness
+         * at any centre: divide out its power gain for white noise, the
+         * poles' 2 g0 (1 - rho2), g0 = (1 - c) / ((1 + c)((1 - c)^2 - b^2)),
+         * rho2 = b^2 / (1 - c) + c. */
+        float g0 = (1.0f - c) / ((1.0f + c) * ((1.0f - c) * (1.0f - c) - b * b));
+        float power = 2.0f * g0 * (1.0f - (b * b / (1.0f - c) + c));
         h->nz_a[w] = level * diction * inv_sqrt(power);
     }
-    h->ny1 = h->ny2 = h->nlp = 0.0f;
+    h->ny1 = h->ny2 = h->nx1 = h->nx2 = 0.0f;
     /* An ending's noise rings on past the voice: a stop's burst, a hiss. */
     h->tail = s->coda == MUMBLE_CODA_STOP ? 1764U : s->coda == MUMBLE_CODA_HISS ? 3969U : 0U;
     if (!diction) h->tail = 0;
@@ -1259,10 +1264,10 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                 float white = noise(&h->noise);
                 if (h->breath && !band) y += white * ne * h->noise_level * 1.6f;   /* an h: breath through the vowel */
                 else {
-                    float v = h->nz_a[band] * white + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
+                    float v = h->nz_a[band] * (white - h->nx2) + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
+                    h->nx2 = h->nx1; h->nx1 = white;
                     h->ny2 = h->ny1; h->ny1 = v;
-                    h->nlp += 0.47f * (v - h->nlp);   /* a low-pass at about 4.5 kHz: no fizz on top */
-                    hiss = h->nlp * ne;
+                    hiss = v * ne;
                 }
             }
             for (unsigned k = 0; k < 4; ++k) {
