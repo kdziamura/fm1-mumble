@@ -29,6 +29,7 @@ The face also says where its mouth and eyes are (the rig the talking and
 blinking overlays need), so nothing is placed by hand.
 
   base/.venv/bin/python tools/faces.py [OUTDIR]   contact sheets into OUTDIR (app/build/faces)
+  base/.venv/bin/python tools/faces.py --dump     the check's faces as text (tests/faces.sh)
 """
 from __future__ import annotations
 
@@ -56,27 +57,49 @@ def read_voices():
 
 
 PARAMS, CAST = read_voices()
-MEAN = [sum(v[i] for _, v in CAST) / len(CAST) for i in range(len(PARAMS))]
-SPREAD = [max((sum((v[i] - MEAN[i]) ** 2 for _, v in CAST) / len(CAST)) ** 0.5, 0.12 * (hi - lo))
+
+
+# All of it in integers, as the firmware (app/mumble_faces.inc) does it, and with
+# C's division (towards zero): the two draw the same pixels.
+def tdiv(a, b):
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b > 0) else -q
+
+
+def isqrt(n):
+    r = 0
+    while (r + 1) * (r + 1) <= n:
+        r += 1
+    return r
+
+
+K = len(CAST)
+SUM = [sum(v[i] for _, v in CAST) for i in range(len(PARAMS))]
+# The cast's spread of each setting, K x (its standard deviation), at least 12 % of its range.
+SPREAD = [max(isqrt(sum((K * v[i] - SUM[i]) ** 2 for _, v in CAST) // K), K * (hi - lo) * 12 // 100)
           for i, (_, lo, hi) in enumerate(PARAMS)]
 
 
 def traits(values):
-    """Each setting as 0..1 of its range, by name (lower case)."""
-    return {n.lower(): (v - lo) / (hi - lo) for (n, lo, hi), v in zip(PARAMS, values)}
+    """Each setting in thousandths of its range, by name (lower case)."""
+    return {n.lower(): (v - lo) * 1000 // (hi - lo) for (n, lo, hi), v in zip(PARAMS, values)}
 
 
 def standing(values):
-    """How far each setting stands out from the cast: in spreads from its average."""
-    return {n.lower(): (v - MEAN[i]) / SPREAD[i] for i, ((n, _, _), v) in enumerate(zip(PARAMS, values))}
+    """How far each setting stands out from the cast: in hundredths of its spread from its average."""
+    return {n.lower(): tdiv((K * v - SUM[i]) * 100, SPREAD[i]) for i, ((n, _, _), v) in enumerate(zip(PARAMS, values))}
 
 
-def pick(candidates, threshold=0.9):
-    """The part whose setting stands out most, past the threshold (else None);
-    a candidate (part, standing, level) needs its setting at least that high
-    too (0..1 of its range), so a little of a rare setting is not a part."""
-    best = max(candidates, key=lambda c: c[1] if len(c) < 3 or c[2] else -9)
-    return best[0] if best[1] >= threshold and (len(best) < 3 or best[2]) else None
+def pick(candidates, threshold=90):
+    """The part whose setting stands out most, past the threshold (else None):
+    candidates (part, standing, allowed), the first of equals; a candidate is
+    allowed when its setting is high enough in itself (so a little of a rare
+    setting is not a part)."""
+    best, score = None, None
+    for part, z, allowed in candidates:
+        if allowed and (score is None or z > score):
+            best, score = part, z
+    return best if score is not None and score >= threshold else None
 
 
 def read_portraits():
@@ -130,16 +153,9 @@ class Face:
                 y0 += sy
 
 
-def outline(shape, face, colour, broken=False, open_below=False):
-    """The cells of a shape with an outside neighbour, drawn as its line
-    (open_below: the screen's bottom edge is not an edge of it)."""
-    for (x, y) in shape:
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            nx, ny = x + dx, y + dy
-            if (nx, ny) not in shape and not (open_below and ny >= N):
-                if not broken or (x + y) % 2 == 0:
-                    face.set(x, y, colour)
-                break
+def rnd(num, den):
+    """num / den to the nearest whole, halves up (num, den >= 0)."""
+    return (2 * num + den) // (2 * den)
 
 
 def build_robot(f, t, size):
@@ -147,10 +163,10 @@ def build_robot(f, t, size):
     bolts at the sides, a screen with green eyes (and mouth), an antenna with
     a lamp, a jointed neck, shoulders over a chest panel. Size sets the
     head's width and height; RADIO the antenna; MOUTH the mouth."""
-    half = 6 if size < 0.4 else 7
-    xl, xr = 12 - half, 11 + half
+    half = 6 if size < 400 else 7
+    xl = 12 - half
     yb = 13
-    yt = yb - (8 + round(2 * min(1.0, size + 0.3)))
+    yt = yb - (8 + rnd(2 * min(1000, size + 300), 1000))
     f.rect(xl + 1, yt, 2 * half - 2, 1, "w"), f.rect(xl + 1, yb, 2 * half - 2, 1, "w")
     f.line(xl, yt + 1, xl, yb - 1, "w", mirror=True)
     ey = yt + 4
@@ -158,14 +174,13 @@ def build_robot(f, t, size):
     f.line(xl - 2, ey, xl - 2, ey + 1, "m", mirror=True)
     f.rect(xl + 3, yt + 2, 2 * half - 6, 1, "m"), f.rect(xl + 3, yt + 8, 2 * half - 6, 1, "m")
     f.line(xl + 2, yt + 3, xl + 2, yt + 7, "m", mirror=True)
-    gap = 1 + round(t["tune"])
-    left = 12 - gap - 2
+    left = 12 - 2 - (1 + rnd(t["tune"], 1000))
     f.rect(left, ey, 2, 2, "g", mirror=True)
     f.eyes = [(left, ey, 2, 2), (24 - left - 2, ey, 2, 2)]
-    mw = 2 if t["mouth"] < 0.6 else 4
+    mw = 2 if t["mouth"] < 600 else 4
     f.rect(12 - mw // 2, ey + 3, mw // 2, 1, "g", mirror=True)
     f.mouth, f.mouth_w = (12, ey + 3), mw
-    if t["radio"] > 0.2:
+    if t["radio"] > 200:
         f.rect(11, yt - 1, 2, 1, "w")
         f.rect(11, yt - 3, 2, 2, "o")
     for y in range(yb + 1, yb + 4):
@@ -177,7 +192,7 @@ def build_robot(f, t, size):
     f.line(2, sy + 2, 2, N - 1, "w", mirror=True)
     f.rect(6, sy + 2, 12, 1, "b")
     f.line(6, sy + 3, 6, N - 1, "b", mirror=True)
-    if t["crush"] > 0.7:
+    if t["crush"] > 700:
         f.rect(9, sy + 4, 2, 1, "o"), f.rect(13, sy + 4, 2, 1, "g")
 
 
@@ -185,8 +200,8 @@ def build_ghost(f, t, size):
     """The hand-drawn GHOST's construction: a dome, tall eyes, little arms out
     at the sides, a body narrowing to a wavy hem with feet. Size sets its
     width; ECHO hangs dots about it; PITCH cheeks; MOUTH the mouth."""
-    xl = 4 if size > 0.35 else 5
-    xr, half = 23 - xl, 12 - xl
+    xl = 4 if size > 350 else 5
+    half = 12 - xl
     yt = 1
     f.rect(xl + 5, yt, 2 * half - 10, 1, "w")
     f.both(xl + 3, yt + 1, "w"), f.both(xl + 4, yt + 1, "w")
@@ -200,17 +215,16 @@ def build_ghost(f, t, size):
     f.rect(xl + 2, 22, 2, 1, "w", mirror=True)
     f.rect(xl + 5, 22, 12 - (xl + 5), 1, "w", mirror=True)
     ey = yt + 6
-    eh = 3 if t["pitch"] > 0.15 else 2
-    gap = 1 + round(2 * t["tune"])
-    left = 12 - gap - 2
+    eh = 3 if t["pitch"] > 150 else 2
+    left = 12 - 2 - (1 + rnd(2 * t["tune"], 1000))
     f.rect(left, ey, 2, eh, "w", mirror=True)
     f.eyes = [(left, ey, 2, eh), (24 - left - 2, ey, 2, eh)]
-    if t["pitch"] > 0.15:
+    if t["pitch"] > 150:
         f.rect(left - 1, ey + 3, 2, 1, "o", mirror=True)
-    mw = 2 if t["mouth"] < 0.6 else 4
+    mw = 2 if t["mouth"] < 600 else 4
     f.rect(12 - mw // 2, ey + 4, mw // 2, 1, "w", mirror=True)
     f.mouth, f.mouth_w = (12, ey + 4), mw
-    if t["echo"] > 0.4:
+    if t["echo"] > 400:
         for (x, y) in ((1, 3), (22, 5), (2, 19), (21, 18), (0, 9), (23, 11)):
             f.set(x, y, "b")
 
@@ -223,51 +237,47 @@ def build(values, top_override=None) -> Face:
     proportions in whole pixels and picks the parts."""
     t, z = traits(values), standing(values)
     f = Face()
-    size, high = 1 - t["tube"], t["pitch"]
+    size, high = 1000 - t["tube"], t["pitch"]
 
     # The parts, from what stands out. A drilled voice (pushed, low, crisp,
     # steady) is a soldier's; a pushed, rough one is not.
-    drilled = z["effort"] - 0.5 * z["pitch"] - 0.5 * z["jitter"] + 0.5 * z["diction"]
-    body = pick([("ghost", z["air"], t["air"] > 0.6), ("robot", z["crush"], t["crush"] > 0.4),
-                 ("robe", z["room"], t["room"] > 0.5), ("armour", drilled, t["effort"] > 0.6),
-                 ("stripes", z["jitter"], t["jitter"] > 0.6), ("tee", z["pitch"], t["pitch"] > 0.45)])
-    top = pick([("hood", z["room"], t["room"] > 0.55 and body != "ghost"), ("antenna", z["radio"], t["radio"] > 0.35),
-                ("spikes", z["speed"], t["speed"] > 0.4), ("cap", z["diction"], t["diction"] > 0.5),
-                ("helmet", drilled, t["effort"] > 0.6 and body != "ghost"),
-                ("bandana", z["jitter"], t["jitter"] > 0.6 and body != "ghost"),
-                ("long hair", z["vibrato"], t["vibrato"] > 0.35), ("bald", z["wobble"], t["wobble"] > 0.4),
-                ("propeller", z["glide"], t["glide"] > 0.35 and body != "ghost"),
-                ("beanie", z["pitch"], t["pitch"] > 0.45)])
-    extra = pick([("visor", z["crush"], t["crush"] > 0.5),
-                  ("beard", z["wobble"] - z["pitch"] * 0.7, t["wobble"] > 0.4 and body != "ghost"),
-                  ("eye patch", (z["jitter"] + z["effort"]) * 0.6 - z["mouth"] * 0.4, t["jitter"] > 0.6),
-                  ("glasses", z["diction"] * 0.8, z["diction"] > 1.2)], threshold=0.7)
-    if top_override:
-        top = top_override
-    if body == "robot" and top not in ("antenna", "cap", "helmet", "propeller"):
-        top = "antenna" if t["radio"] > 0.2 else None
-    machine = body == "robot" or extra == "visor"
-    f.parts = [p for p in (top, extra, body) if p]
+    drilled = z["effort"] - tdiv(z["pitch"], 2) - tdiv(z["jitter"], 2) + tdiv(z["diction"], 2)
+    body = pick([("ghost", z["air"], t["air"] > 600), ("robot", z["crush"], t["crush"] > 400),
+                 ("robe", z["room"], t["room"] > 500), ("armour", drilled, t["effort"] > 600),
+                 ("stripes", z["jitter"], t["jitter"] > 600), ("tee", z["pitch"], t["pitch"] > 450)])
     if body == "robot":
-        f.parts = ["antenna", "robot"] if t["radio"] > 0.2 else ["robot"]
+        f.parts = ["antenna", "robot"] if t["radio"] > 200 else ["robot"]
         build_robot(f, t, size)
         return f
     if body == "ghost":
         f.parts = ["ghost"]
         build_ghost(f, t, size)
         return f
+    top = pick([("hood", z["room"], t["room"] > 550), ("antenna", z["radio"], t["radio"] > 350),
+                ("spikes", z["speed"], t["speed"] > 400), ("cap", z["diction"], t["diction"] > 500),
+                ("helmet", drilled, t["effort"] > 600), ("bandana", z["jitter"], t["jitter"] > 600),
+                ("long hair", z["vibrato"], t["vibrato"] > 350), ("bald", z["wobble"], t["wobble"] > 400),
+                ("propeller", z["glide"], t["glide"] > 350), ("beanie", z["pitch"], t["pitch"] > 450)])
+    extra = pick([("visor", z["crush"], t["crush"] > 500),
+                  ("beard", z["wobble"] - tdiv(z["pitch"] * 7, 10), t["wobble"] > 400),
+                  ("eye patch", tdiv((z["jitter"] + z["effort"]) * 6, 10) - tdiv(z["mouth"] * 4, 10), t["jitter"] > 600),
+                  ("glasses", tdiv(z["diction"] * 8, 10), z["diction"] > 120)], threshold=70)
+    if top_override:
+        top = top_override
+    machine = extra == "visor"
+    f.parts = [p for p in (top, extra, body) if p]
 
     # Proportions, in whole pixels: half the head's width (its left side at
     # 12 - half), its height to the chin line (row 16), the jaw's steps.
-    half = 6 if (0.6 * size + 0.3 * t["effort"] - 0.5 * high) < 0.05 else 8 if (size > 0.9 and high < 0.4) else 7
-    h = 11 + round(3 * min(1.0, max(0.0, 0.25 + 0.8 * size - 0.3 * high)))
+    half = 6 if 6 * size + 3 * t["effort"] - 5 * high < 500 else 8 if (size > 900 and high < 400) else 7
+    h = 11 + rnd(3 * min(1000, max(0, 250 + tdiv(8 * size - 3 * high, 10))), 1000)
     tall_top = top in ("cap", "bandana", "helmet", "beanie", "propeller")
     if tall_top:
         h = min(h, 11)
-    yc = 16 if body != "ghost" else 14
+    yc = 16
     yt = yc - h + 1
     xl, xr = 12 - half, 11 + half
-    jaw = 0 if machine else 2 if (high > 0.55 and t["effort"] < 0.6) else 1
+    jaw = 0 if machine else 2 if (high > 550 and t["effort"] < 600) else 1
     rounded = not machine and top not in ("cap", "bandana", "spikes", "beanie", "propeller", "helmet")
 
     # The head.
@@ -285,28 +295,25 @@ def build(values, top_override=None) -> Face:
     f.rect(xl + 1 + jaw, yc, 2 * (half - 1 - jaw), 1, "w")
 
     # Eyes (TUNE sets them apart), ears or a machine's bolts at them.
-    ey = yt + (4 if top == "cap" else 3) if tall_top else yt + round(h * 0.42)
-    gap = 1 + round(2 * t["tune"])
-    ew, eh = 2, (1 if high < 0.05 else 2)
-    left = 12 - gap - ew
-    if left <= xl + 1:
-        left = xl + 2
+    ey = yt + (4 if top == "cap" else 3) if tall_top else yt + rnd(h * 42, 100)
+    ew, eh = 2, (1 if high < 50 else 2)
+    left = max(12 - ew - (1 + rnd(2 * t["tune"], 1000)), xl + 2)
     f.rect(left, ey, ew, eh, "w", mirror=True)
-    f.eyes = [(left, ey, ew, eh), (23 - left - ew + 1, ey, ew, eh)]
+    f.eyes = [(left, ey, ew, eh), (24 - left - ew, ey, ew, eh)]
     if machine:
         f.rect(xl - 2, ey - 1, 2, 4, "m", mirror=True)
         f.rect(xl - 1, ey, 1, 2, ".", mirror=True)
-    elif body != "ghost" and top not in ("hood", "long hair", "helmet"):
+    elif top not in ("hood", "long hair", "helmet"):
         f.both(xl - 1, ey, "w"), f.both(xl - 2, ey + 1, "w"), f.both(xl - 1, ey + 2, "w")
 
     # Nose, cheeks, mouth.
     if not machine:
         f.set(12, ey + 2, "m")
-        if t["tube"] < 0.3:
+        if t["tube"] < 300:
             f.set(12, ey + 3, "m")
-    if not machine and high > 0.15 and extra not in ("beard",) and top != "helmet":
+    if not machine and high > 150 and extra != "beard" and top != "helmet":
         f.rect(left - 1, ey + 3, 2, 1, "o", mirror=True)
-    mw = 2 if t["mouth"] < 0.45 else 4 if t["mouth"] < 0.85 else 6
+    mw = 2 if t["mouth"] < 450 else 4 if t["mouth"] < 850 else 6
     my = min(ey + 4, yc - 2)
     f.rect(12 - mw // 2, my, mw // 2, 1, "w", mirror=True)
     f.mouth, f.mouth_w = (12, my), mw
@@ -388,30 +395,20 @@ def build(values, top_override=None) -> Face:
             f.both(xl - 1 - (y > ey + 2), y, "m")
     elif top == "bald":
         f.both(xl + 1, ey - 2, "m"), f.both(xl + 1, ey - 3, "m"), f.both(xl + 2, ey - 3, "m")
-    elif top is None and body not in ("ghost", "robot") and not machine:
-        f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")                       # a fringe
-        f.both(xl + 1, yt + 2, "m")
-    if top == "hood":
+    elif top == "hood":
         f.rect(xl + 2, yt - 3, 2 * half - 4, 1, "b")
         f.both(xl + 1, yt - 2, "b"), f.both(xl, yt - 1, "b")
         f.line(xl - 1, yt, xl - 1, yc, "b", mirror=True)
         f.line(xl - 1, yc + 1, xl - 3, yc + 3, "b", mirror=True)
         f.line(xl - 3, yc + 3, xl - 3, N - 1, "b", mirror=True)
+    elif top is None and not machine:
+        f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")                       # a fringe
+        f.both(xl + 1, yt + 2, "m")
 
     # The body.
     sy = yc + 2
-    if body == "ghost":
-        f.line(xl, yc, xl, 20, "w", mirror=True)
-        f.rect(xl - 2, yc - 2, 2, 1, "w", mirror=True), f.both(xl - 3, yc - 1, "w"), f.rect(xl - 2, yc, 2, 1, "w", mirror=True)
-        for x in range(xl, 12):
-            f.both(x, 21 + (x - xl) % 2, "w")
-        f.rect(xl + 1, yc, 2 * half - 2, 1, ".")
-        f.line(xl, yc - 1, xl, yc, "w", mirror=True)
-        return f
     f.both(10, yc + 1, "w")                                                   # the neck
-    wear = "w" if body == "stripes" else "b" if body in ("robe", "robot") else "g" if high > 0.3 else "b"
-    if body == "armour":
-        wear = "m"
+    wear = "w" if body == "stripes" else "m" if body == "armour" else "b" if body == "robe" else "g" if high > 300 else "b"
     f.rect(4, sy, 6, 1, wear, mirror=True)
     f.both(3, sy + 1, wear)
     f.line(2, sy + 2, 2, N - 1, wear, mirror=True)
@@ -425,10 +422,6 @@ def build(values, top_override=None) -> Face:
         f.line(5, sy + 3, 5, N - 1, "m", mirror=True)
     elif body == "stripes":
         f.rect(3, sy + 2, 9, 1, "b", mirror=True), f.rect(3, sy + 4, 9, 1, "b", mirror=True)
-    elif body == "robot":
-        f.rect(6, sy + 1, 12, 1, "b")
-        f.line(6, sy + 1, 6, N - 1, "b", mirror=True)
-        f.rect(10, sy + 3, 4, 1, "o")
     elif body == "tee":
         f.rect(3, sy + 3, 9, 1, "o", mirror=True)
         f.line(5, sy + 4, 5, N - 1, "m", mirror=True)
@@ -437,6 +430,24 @@ def build(values, top_override=None) -> Face:
         f.both(11, sy, "."), f.both(10, sy + 1, "w"), f.both(11, sy + 2, "w")   # a collar
         f.line(5, sy + 3, 5, N - 1, "m", mirror=True)
     return f
+
+
+ICON_ORDER = "obgwm"
+
+
+def icon(grid):
+    """The 16x16 icon: each of its pixels the strongest stroke of the 1 or 2
+    x 1 or 2 portrait pixels under it (orange, blue, green, white, grey: the
+    rule the hand-drawn icons follow)."""
+    out = []
+    for j in range(16):
+        row = []
+        for i in range(16):
+            under = [grid[y][x] for y in range(j * 3 // 2, ((j + 1) * 3 - 1) // 2 + 1)
+                     for x in range(i * 3 // 2, ((i + 1) * 3 - 1) // 2 + 1)]
+            row.append(next((c for c in ICON_ORDER if c in under), "."))
+        out.append(row)
+    return out
 
 
 # ------------------------------------------------------- talking, blinking ---
@@ -502,7 +513,38 @@ def label(name, face):
     return name + "\n" + (" ".join(p.replace(" ", "-") for p in face.parts) or "-")
 
 
+def check_voices(n=400):
+    """The voices tests/faces.sh draws both ways: the cast, then n rolled from
+    them (halfway to random, a fixed LCG), then every setting at both ends."""
+    voices = [v for _, v in CAST]
+    x = 1
+    for k in range(n):
+        base = CAST[k % len(CAST)][1]
+        v = []
+        for b, (_, lo, hi) in zip(base, PARAMS):
+            x = (x * 1103515245 + 12345) & 0x7FFFFFFF
+            v.append((b + lo + (x >> 8) % (hi - lo + 1)) // 2)
+        voices.append(v)
+    for i, (_, lo, hi) in enumerate(PARAMS):
+        for end in (lo, hi):
+            v = list(CAST[0][1])
+            v[i] = end
+            voices.append(v)
+    return voices
+
+
+def dump(f):
+    """A face as text: its grid, its rig, its icon."""
+    lines = ["".join(r) for r in f.grid]
+    lines.append(f"mouth {f.mouth[1]} {f.mouth_w} eyes " + " ".join(f"{x},{y},{w},{h}" for x, y, w, h in f.eyes))
+    lines += ["".join(r) for r in icon(f.grid)]
+    return "\n".join(lines)
+
+
 def main():
+    if sys.argv[1:2] == ["--dump"]:
+        print("\n".join(dump(build(v)) for v in check_voices()))
+        return
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "app/build/faces"
     out.mkdir(parents=True, exist_ok=True)
     hand = read_portraits()
