@@ -27,8 +27,8 @@
  *   body   AIR a ghost, CRUSH a robot (each built as the hand-drawn GHOST and
  *          BOT are), ROOM a robe, a drilled voice armour, JITTER stripes,
  *          PITCH a tee, a little AIR a scarf, DICTION a bow tie, GLIDE a cape
- * A woman's voice (an adult's pitch and tract in their usual range) has her
- * own hair (long, a ponytail, a bun or a bob, dark or ginger; long hair under
+ * A woman's voice (an adult's pitch and tract in their usual range) has
+ * their own hair (long, a ponytail, a bun or a bob, dark or ginger; long hair under
  * a hat), lashes, earrings and for some coloured lips, and no beard.
  * And the voice sets the face: brows (crossed with EFFORT, raised with
  * GLIDE), the mouth (a frown when strained, a smile with TUNE), sleepy lids
