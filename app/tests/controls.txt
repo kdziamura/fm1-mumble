@@ -212,6 +212,30 @@ wait 300
 expect sounding 0
 tap PLAY
 wait 100
+# ENV held: everyone's own voice back (HERO was rolled above).
+press ENV
+wait 1100
+release ENV
+wait 50
+expect edited 0
 turn SELECT 1
 wait 300
 expect sounding 1
+expect edited 0
+# LFO held: everyone rolls a new voice; ENV tapped: HERO's own again.
+press LFO
+wait 1100
+release LFO
+wait 50
+expect edited 1
+tap ENV
+wait 50
+expect edited 0
+# In TYPE, LFO types a random syllable at the cursor.
+expect mode 0
+expect length >0
+tap FX
+expect cursor 0
+tap LFO
+wait 50
+expect cursor >1

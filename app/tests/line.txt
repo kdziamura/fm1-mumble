@@ -1,4 +1,4 @@
-# SING mode: the keys sing the line ("hey you, come here": HEY, YOU, COME,
+# SING mode: the keys sing the line ("hey you come here": HEY, YOU, COME,
 # HERE) a syllable at a time, round and round. The key
 # that starts a syllable leads it: keys pressed while it is held sing the same
 # syllable; once it is let go, the next key moves on. FX goes back to the start.
@@ -10,7 +10,6 @@ tapkey 26
 tapkey 24
 tapkey 14
 tapkey 20
-tap FX
 tapkey 26
 tapkey 2
 tapkey 14
@@ -21,7 +20,7 @@ tapkey 7
 tapkey 4
 tapkey 17
 tapkey 4
-expect length 18
+expect length 17
 wait 800
 tap GLO
 expect mode 1

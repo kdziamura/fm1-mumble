@@ -71,7 +71,7 @@ enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill t
 static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
     {"KEYS TYPE AT THE CURSOR   GLO: SING",
      "K1 CURSOR  K2 LETTER  OCT- DELETE",
-     "OCT+ CAPS  FX ,  SCL .  ENV ?  LFO !",
+     "OCT+ CAPS  FX: START  LFO: SYLLABLE",
      "EDIT: A WORD BACK  HOLD: CLEAR",
      "PRESET: DEMO  SAVE: CHOIR  PLAY: LOOP",
      "SELECT: WHO  REC: SING AND RECORD"},
@@ -80,7 +80,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "OCT- OCT+ OCTAVE  FX: TOP  SCL: SCALE",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
-     "SELECT: WHO  SAVE: CHOIR  LFO: ROLL"},
+     "SAVE: CHOIR  LFO: ROLL  ENV: UNROLL"},
     {"A LANE A SINGER  KEYS SING  GLO: TYPE",
      "K1 MUTE  K2 LEVEL  K3 BARS  K4 BPM",
      "EDIT+KNOB: AS IT WAS",
@@ -157,6 +157,20 @@ static uint32_t voice_cursor_ms;
  * (held long enough to clear, or a knob turned with it): a tap acts on release. */
 static unsigned voice_help, voice_edit_down, voice_edit_spent;
 static uint32_t voice_edit_since;
+/* LFO and ENV: a tap acts as it is let go, held VOICE_HOLD_MS it acts on the
+ * whole cast (as EDIT: since, spent once it acted, down last frame). */
+struct voice_hold { uint32_t since; uint8_t down, spent; };
+static struct voice_hold voice_lfo_hold, voice_env_hold;
+enum { HOLD_NONE, HOLD_TAP, HOLD_LONG };
+static unsigned voice_hold_step(struct voice_hold *h, unsigned held, unsigned pressed)
+{
+    unsigned what = HOLD_NONE;
+    if (pressed) h->since = frame_time, h->spent = 0;
+    if (held && !h->spent && frame_time - h->since >= VOICE_HOLD_MS) h->spent = 1, what = HOLD_LONG;
+    if (!held && h->down && !h->spent) what = HOLD_TAP;
+    h->down = (uint8_t)held;
+    return what;
+}
 static char voice_said[40];
 static void voice_rec_stop(void);
 static void voice_notice(const char *message);
@@ -547,24 +561,46 @@ static void voice_reset(unsigned col)
     strcat(voice_said, " AS IT WAS");
     voice_notice(voice_said);
 }
-/* LFO where the keys sing: a voice rolled for the selected character, each
- * setting halfway between the character's own and a random one (so it is
- * still somebody). EDIT with a knob puts a setting back. */
+/* LFO: a voice rolled for a character, each setting halfway between the
+ * character's own and a random one (so it is still somebody); ENV: their own
+ * voice back. EDIT with a knob puts a single setting back. */
 static uint32_t voice_dice = 0x9E3779B9U;
-static void voice_reroll(void)
+static uint32_t voice_random(void)
 {
-    struct voice_track *t = voice_track();
-    voice_dice ^= frame_time * 2654435761U;
+    voice_dice ^= voice_dice << 13;
+    voice_dice ^= voice_dice >> 17;
+    voice_dice ^= voice_dice << 5;
+    return voice_dice;
+}
+static void voice_reroll(unsigned who)
+{
+    struct voice_track *t = &voice_tracks[who];
+    voice_dice ^= frame_time * 2654435761U + who;
     for (unsigned p = 0; p < MUMBLE_PARAMS; ++p) {
-        voice_dice ^= voice_dice << 13;
-        voice_dice ^= voice_dice >> 17;
-        voice_dice ^= voice_dice << 5;
         const struct mumble_param_info *info = &mumble_params[p];
-        unsigned r = info->min + voice_dice % (info->max - info->min + 1U);
-        t->sound.value[p] = (uint16_t)((mumble_cast[voice_cast].voice.value[p] + r) / 2U);
+        unsigned r = info->min + voice_random() % (info->max - info->min + 1U);
+        t->sound.value[p] = (uint16_t)((mumble_cast[who].voice.value[p] + r) / 2U);
     }
     voice_touch();
-    voice_say(mumble_cast[voice_cast].name, " ROLLED A NEW VOICE", NULL);
+}
+static void voice_restore(unsigned who)
+{
+    voice_tracks[who].sound = mumble_cast[who].voice;
+    voice_touch();
+}
+/* LFO in TYPE: a random syllable at the cursor (a consonant or two and a
+ * vowel or two: "ka", "moo", "shee"). */
+static void voice_type(char c);
+static void voice_type_syllable(void)
+{
+    static const char *const onsets[] = {"b", "d", "f", "g", "h", "k", "l", "m", "n", "p", "r", "s", "t", "v", "w",
+                                         "y", "z", "sh", "ch", "th", "bl", "gr", "st"};
+    static const char *const vowels[] = {"a", "e", "i", "o", "u", "ee", "oo", "ai", "ay", "oy", "ow"};
+    voice_dice ^= frame_time * 2654435761U;
+    const char *parts[2] = {onsets[voice_random() % (sizeof onsets / sizeof onsets[0])],
+                            vowels[voice_random() % (sizeof vowels / sizeof vowels[0])]};
+    for (unsigned k = 0; k < 2; ++k)
+        for (const char *p = parts[k]; *p; ++p) voice_type(voice_caps ? (char)(*p - 'a' + 'A') : *p);
 }
 static unsigned voice_edited(void)
 {
@@ -1035,9 +1071,8 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     } else if (voice_mode == VOICE_SING) {      /* the sound pages: SING's alone */
         unsigned paged = voice_page;
         if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
-        if (pressed & BUTTON(SEQ)) voice_page = (voice_page + 1U) % VOICE_PAGES;
-        if (voice_page != paged || (pressed & BUTTON(SEQ))) voice_say(voice_page_names[voice_page], " PAGE", NULL);
-    } else if (c->encoders[1] || (pressed & BUTTON(SEQ))) voice_notice("THE SOUND PAGES ARE IN SING");
+        if (voice_page != paged) voice_say(voice_page_names[voice_page], " PAGE", NULL);
+    } else if (c->encoders[1]) voice_notice("THE SOUND PAGES ARE IN SING");
     for (unsigned i = 0; i < 4; ++i) {
         int turned = c->encoders[2 + i];
         if (!turned || arp) continue;
@@ -1056,7 +1091,10 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         voice_notice(said[voice_mode]);
     }
     if ((pressed & BUTTON(REC)) && !voice_play) voice_mode_to(VOICE_SING);  /* REC sings: to SING mode */
-    if ((pressed & BUTTON(FX)) && voice_play) { voice_lyric_rewind(); voice_notice("FROM THE TOP OF THE LINE"); }
+    if (pressed & BUTTON(FX)) {                  /* FX: back to the top (TYPE: the cursor to the line's start) */
+        if (voice_play) voice_lyric_rewind(), voice_notice("FROM THE TOP OF THE LINE");
+        else voice_cursor = 0, voice_cursor_ms = frame_time, voice_notice("THE CURSOR TO THE START");
+    }
     if (pressed & BUTTON(SAVE)) {
         struct voice_track *t = voice_track();
         t->choir ^= 1U;
@@ -1093,18 +1131,25 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
                                : "ARPEGGIATOR OFF");
     }
     voice_arp_down = arp;
-    static const uint8_t marks[4][2] = {{FX, ','}, {SCL, '.'}, {ENV, '?'}, {LFO, '!'}};
-    static const char *const mark_names[4] = {"FX", "SCL", "ENV", "LFO"};
-    for (unsigned i = 0; i < 4; ++i)
-        if (pressed & BUTTON(marks[i][0])) {
-            char mark[2] = {(char)marks[i][1], 0};
-            if (!voice_play) voice_type(mark[0]);
-            else if (marks[i][0] == SCL) {
-                voice_scale = (voice_scale + 1U) % VOICE_SCALES;
-                voice_say("SCALE: ", voice_scale_names[voice_scale], voice_scale ? " (THE KEYS KEEP TO IT)" : NULL);
-            } else if (marks[i][0] == LFO) voice_reroll();
-            else if (i) voice_say(mark_names[i], " TYPES ", mark), strcat(voice_said, " IN TYPE MODE");
-        }
+    /* SCL: the next scale. LFO: a new voice (TYPE: a syllable), held, new
+     * voices for everyone; ENV: their own voice back, held, everyone's. */
+    if (pressed & BUTTON(SCL)) {
+        voice_scale = (voice_scale + 1U) % VOICE_SCALES;
+        voice_say("SCALE: ", voice_scale_names[voice_scale], voice_scale ? " (THE KEYS KEEP TO IT)" : NULL);
+    }
+    unsigned lfo = voice_hold_step(&voice_lfo_hold, (c->buttons & BUTTON(LFO)) != 0, (pressed & BUTTON(LFO)) != 0);
+    if (lfo == HOLD_TAP && !voice_play) voice_type_syllable();
+    else if (lfo == HOLD_TAP) voice_reroll(voice_cast), voice_say(mumble_cast[voice_cast].name, " ROLLED A NEW VOICE", NULL);
+    else if (lfo == HOLD_LONG) {
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_reroll(i);
+        voice_notice("EVERYONE ROLLED A NEW VOICE");
+    }
+    unsigned env = voice_hold_step(&voice_env_hold, (c->buttons & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0);
+    if (env == HOLD_TAP) voice_restore(voice_cast), voice_say(mumble_cast[voice_cast].name, " HAS THEIR OWN VOICE", NULL);
+    else if (env == HOLD_LONG) {
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_restore(i);
+        voice_notice("EVERYONE HAS THEIR OWN VOICE");
+    }
     uint32_t typed = key_down & ~blocked_keys;
     if (voice_play) voice_sing(c, typed);
     else
@@ -1134,7 +1179,7 @@ static uint32_t voice_button_bits(void)
     uint32_t octave = voice_play ? ((voice_octave > 0) << OCT_UP) | ((voice_octave < 0) << OCT_DOWN)
                                  : voice_caps << OCT_UP;
     return ((voice_song != 0) << PLAY) | octave | (voice_play << GLO) | ((uint32_t)voice_track()->choir << SAVE) |
-           ((voice_recording | (voice_rec_armed & ((frame_time / 250U) & 1U))) << REC) | (voice_arp << ARP) | ((voice_play && voice_scale) << SCL);
+           ((voice_recording | (voice_rec_armed & ((frame_time / 250U) & 1U))) << REC) | (voice_arp << ARP) | ((voice_scale != 0) << SCL);
 }
 
 /* Control-side snapshot, taken once per frame before marking damage: the
@@ -1806,7 +1851,13 @@ static __attribute__((noinline)) void voice_draw(void)
      * notice of what a control did, or the mode's tip. */
     uint32_t held = frame_time - voice_edit_since, progress = 0;
     unsigned holding = voice_edit_down && !voice_edit_spent && held >= 150U;
-    const char *hint = holding ? (voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP")
+    const char *keep = voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP";
+    const struct voice_hold *holds[2] = {&voice_lfo_hold, &voice_env_hold};
+    static const char *const keeps[2] = {"KEEP HOLDING: ROLL EVERYONE", "KEEP HOLDING: EVERYONE'S OWN VOICE"};
+    for (unsigned k = 0; k < 2 && !holding; ++k)
+        if (holds[k]->down && !holds[k]->spent && frame_time - holds[k]->since >= 150U)
+            holding = 1, held = frame_time - holds[k]->since, keep = keeps[k];
+    const char *hint = holding ? keep
                      : notice ? notice : voice_arp_down ? "TURN: SET ARP  LET GO: ARP ON/OFF" : voice_tips[voice_mode];
     if (holding) progress = (held >= VOICE_HOLD_MS ? VOICE_HOLD_MS : held) * 228U / VOICE_HOLD_MS;
     uint32_t hint_sig = signature(1 + holding + (progress << 1), hint, (unsigned)strlen(hint));
