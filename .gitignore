@@ -2,3 +2,4 @@
 /app/web/
 /firmware*.json
 /fuzz-*.log
+__pycache__/
