@@ -18,7 +18,7 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 | `app/paint.inc` | The damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn (adapted from FM1 Open, see `LICENSE.md`) |
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
-| `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and LOOP mode's lanes; screenshots and a WAV |
+| `app/tests/basic.txt` | Host simulator script: the first line, typing the shared line, SING, the loop and LOOP mode's lanes; screenshots and a WAV |
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
 | `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back, LOOP mode's knobs; screenshots of each |
 | `app/tests/save.txt` | Host simulator script: a line, a sound, a scale, a recorded loop, a mute and a tempo saved on their own and back after a reboot |
