@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
-/* VOICE page (HOME+ARP): the MUMBLE retro-game voice synthesizer.
+/* The VOICE page: the MUMBLE retro-game voice synthesizer.
  *
  * One line, sung by eight characters. GLO switches mode:
  *   TYPE  keys type the line; a vowel speaks the moment it is typed.
@@ -20,7 +20,7 @@
  *   ARP / PRESETS demo lines   SELECT character   K1/SEQ page   K2..K5 sound
  *   GLO TYPE/SING   HOME exit
  *
- * Included by screen.c: uses its paint helpers and draw cache. */
+ * Included by app.c: uses paint.inc's helpers and draw cache. */
 #include "mumble.h"
 
 enum { VOICE_TRACE = 21, VOICE_ROWS = 3, VOICE_COLUMNS = 18 };

@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
-/* MUMBLE as its own FM-1 firmware. The engine (app/mumble.c, built as
- * engine.c) and the page (app/mumble_screen.inc, with the cast's art) are the
- * ones FM1 Open's browser preview runs; this file gives them what FM1 Open's
- * screen.c gives them there, on fm1-base: the panel's controls in FM1 Open's
- * order, the painting (paint.inc) and the 1 kHz-free frame loop.
+/* MUMBLE, a voice synth firmware for the FM-1 on fm1-base. The engine
+ * (app/mumble.c, built as engine.c) and the page (app/mumble_screen.inc, with
+ * the cast's art); this file gives the page the panel's controls, the
+ * painting (paint.inc) and the 1 kHz-free frame loop.
  * Part of the unity build (device/unity.c, host/plat_host.c), after the
  * platform. */
 #define MUMBLE_PORT "mumble_port.h"
@@ -28,9 +27,9 @@ static void *mumble_memmove(void *d, const void *s, unsigned n)
 
 #include "paint.inc"
 
-/* ------------------------------------------------------------ FM1 Open --- */
-/* The page reads the panel as FM1 Open's screen.c hands it over: its button
- * order, the keys, seven encoders (SELECT, K1, K2..K5, PRESETS). */
+/* ------------------------------------------------------------ controls --- */
+/* The page reads the panel in its own button order, the keys, and seven
+ * encoders (SELECT, K1, K2..K5, PRESETS). */
 enum { OCT_DOWN, OCT_UP, FX, SCL, ENV, LFO, EDIT, GLO, HOME, SAVE, ARP, SEQ, PLAY, REC, BUTTONS };
 #define BUTTON(b) (1U << (b))
 struct fm1_controls {
@@ -43,19 +42,18 @@ static const uint8_t button_of[BUTTONS] = {
     [EDIT] = B_EDIT, [GLO] = B_GLO, [HOME] = B_HOME, [SAVE] = B_SAVE, [ARP] = B_ARP, [SEQ] = B_SEQ,
     [PLAY] = B_PLAY, [REC] = B_REC};
 static const uint8_t encoder_of[7] = {EN_SELECT, EN_ALGO, EN_K1, EN_K2, EN_K3, EN_K4, EN_PRESET};
-/* The page leaves to FM1 Open's overview on HOME; here it is the whole
+/* The page could leave to an overview on HOME; here it is the whole
  * firmware, so HOME never reaches it. */
 enum { OVERVIEW, VOICE };
 static unsigned page = VOICE;
 static uint32_t blocked_keys;
-/* FM1 Open's sequencer, which the loop follows there: none here yet (a later
- * milestone follows MIDI clock instead). */
+/* A sequencer for the loop to follow: none yet (MIDI clock is the plan). */
 static struct { unsigned tempo, playing, play_step; } frame_views[1];
 static uint32_t frame_time;
 static const char *notice;
 static uint32_t notice_until;
 static uint8_t encoder_speed[7];
-/* A quick turn moves further, as FM1 Open's encoders do. */
+/* A quick turn moves further (adapted from FM1 Open; see LICENSE.md). */
 static int fm_encoder_delta(unsigned encoder, int16_t value)
 {
     int amount = value < 0 ? -(int)value : value;

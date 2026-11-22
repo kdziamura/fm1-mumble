@@ -1,38 +1,40 @@
-# MUMBLE firmware
+# MUMBLE
 
-MUMBLE as its own FM-1 firmware, instead of a page inside FM1 Open: the whole FM-1 becomes the voice synth. It is built
-on [fm1-base](https://github.com/charlesvestal/fm1-base) (MPL-2.0, pinned as the `base/` submodule), which runs on
-JieLi's open AC79 SDK and its Linux toolchain rather than M-VAVE's binary SDK, so MUMBLE gets fm1-base's 581 KB app
-slot instead of what is left of FM1 Open's.
+A retro-game voice synth as an FM-1 firmware: the whole FM-1 becomes MUMBLE. Eight characters sing one line of text a
+syllable at a time, from formant synthesis (no recordings): type a line, sing it on the keys (chords spread over the
+choir), and record what is sung into a loop of pitches that sings whatever the line says now.
 
-The engine and the page are not copies: `app/engine.c` builds the repository's `app/mumble.c`, and `app/app.c`
-includes `app/mumble_screen.inc` (with the cast's art) and gives it what FM1 Open's `screen.c` gives it in the
-preview: the panel in FM1 Open's order, its painting (`app/paint.inc`, the same 5x7 font and colours) and the frame
-loop. A change to MUMBLE shows in the browser preview and in the firmware alike.
+It is built on [fm1-base](https://github.com/charlesvestal/fm1-base) (MPL-2.0, pinned as the `base/` submodule),
+which runs on JieLi's open AC79 SDK and its Linux toolchain, with a 581 KB app slot. `app/engine.c` builds the voice
+engine (`app/mumble.c`) as an -O2 unit, and `app/app.c` includes the page (`app/mumble_screen.inc`, with the cast's
+art) and gives it the panel's controls, its painting (`app/paint.inc`) and the frame loop.
 
 | Path | What |
 |---|---|
 | `app/app.c` | The app's contract with fm1-base (`app_init`, `app_render`, `app_frame` ...) and the controls adapter |
-| `app/paint.inc` | FM1 Open's damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn |
+| `app/mumble.c`, `app/mumble.h` | The voice engine: text to syllables, the glottal source, formants, consonants, the choir, the loop, effects and the master compressor |
+| `app/mumble_screen.inc`, `app/mumble_sprites.inc` | The page: TYPE and SING, the choir, recording, the knob pages; the cast's art |
+| `app/paint.inc` | The damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn (adapted from FM1 Open, see `LICENSE.md`) |
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
 | `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and its LOOP page; screenshots and a WAV |
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT undoing pass by pass |
+| `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
 
 ## Build and test
 
 The JieLi toolchain is Linux x86-64 only. On GitHub, `.github/workflows/mumble-fm1.yml` runs the host tests and builds
-the package on every push that touches MUMBLE; the run's **mumble-fm1** artifact has `mumble.fwsc`, its checksum, the
+the package on every push to `main`; the run's **mumble-fm1** artifact has `mumble.fwsc`, its checksum, the
 test screenshots and a recording.
 
 Locally (Linux x86-64; on a Mac the build runs the toolchain in Docker, see fm1-base's README):
 
 ~~~sh
 git submodule update --init --recursive
-cd firmware/mumble-fm1
+tests/engine.sh app/build/engine                                 # the engine's tests (any cc), a WAV per character
 base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python   # pinned, checked downloads into base/.toolchain
 base/.venv/bin/python base/tools/build.py app --host             # the host simulator: any cc, no toolchain
 app/build/host/mumble_host app/tests/basic.txt app/build/host
@@ -75,13 +77,16 @@ firmware or M-VAVE's own goes back on the same way.
 ## Status
 
 Played on an FM-1 (November 2026). One shared line, TYPE and SING modes, the choir, the recorded loop (pitches,
-timing and syllable slots, singing the line as it is) and the master compressor; the same page runs in the browser
-preview.
+timing and syllable slots, singing the line as it is), consonants, glides and the master compressor.
 
-The last measured device build (with per-character takes, before the loop sang the shared line; CI, November 2026):
-app image 109,748 B of the 581 KB slot; RAM `.data`+`.bss` 77,996 of 98,304 B; RAM code 12,332 of 32,768 B (the
-engine's audio path 7,232 B of it); pool 84,484 of 344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
+The last measured device build (with consonants and glides, before the voice's top; CI, November 2026): app image
+112,024 B of the 581 KB slot; RAM `.data`+`.bss` 73,568 of 98,304 B; RAM code 15,400 of 32,768 B; pool 84,484 of
+344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
 
 - **Nothing is saved.** The line, the loop and the sounds are lost at power-off (a store object is reserved for them).
-- **No clock.** The loop runs on its own BPM; FM1 Open's sequencer sync is not there (MIDI clock is the plan).
+- **No clock.** The loop runs on its own BPM (MIDI clock is the plan).
 - **HOME does nothing**, and Bluetooth MIDI is off.
+
+## License
+
+GPL-3.0-only with an additional permission; see `LICENSE.md`, which also notes the code adapted from FM1 Open.

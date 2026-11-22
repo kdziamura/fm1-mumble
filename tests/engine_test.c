@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
 /* Host test for app/mumble.c: text analysis checks plus a block-by-block
- * render through mumble_render, exactly as fm1_output_mix calls it.
+ * render through mumble_render, as app_render calls it.
  *
- *   cc -std=c11 -O2 -DFM1_HOST_TEST -Iapp -Iapp/synth -Isdk/include \
- *      app/mumble.c tools/mumble-test.c -o mumble-test && ./mumble-test [wav-dir]
+ *   tests/engine.sh [wav-dir]
  */
 #include "mumble.h"
 #include <math.h>

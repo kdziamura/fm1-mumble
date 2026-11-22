@@ -568,7 +568,7 @@ static uint32_t play(const uint8_t *data, size_t size)
     return result;
 }
 
-/* The panel's buttons in FM1 Open's order and back: every combination. */
+/* The panel's buttons in the page's order and back: every combination. */
 static void check_button_order(void)
 {
     uint32_t all = (1u << NB) - 1u;

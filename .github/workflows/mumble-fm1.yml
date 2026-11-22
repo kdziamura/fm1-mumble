@@ -1,5 +1,5 @@
-# MUMBLE as its own FM-1 firmware (firmware/mumble-fm1, on fm1-base): the host
-# simulator's tests, then the device package with JieLi's Linux toolchain,
+# MUMBLE, an FM-1 firmware on fm1-base: the engine's tests, the host
+# simulator's tests and the fuzzer, then the device package with JieLi's Linux toolchain,
 # fetched and checked against fm1-base's tools/toolchain.lock. The package is
 # attached to the run as the "mumble-fm1" artifact, with the test screenshots.
 name: MUMBLE firmware
@@ -7,10 +7,6 @@ name: MUMBLE firmware
 on:
   push:
     branches: [main]
-    paths:
-      - 'app/mumble*'
-      - 'firmware/mumble-fm1/**'
-      - '.github/workflows/mumble-fm1.yml'
   workflow_dispatch:
 
 permissions:
@@ -20,9 +16,6 @@ jobs:
   firmware:
     runs-on: ubuntu-24.04          # the JieLi toolchain is Linux x86-64 only
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: firmware/mumble-fm1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,14 +26,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            firmware/mumble-fm1/base/.toolchain
-            firmware/mumble-fm1/base/.venv
-          key: fm1-toolchain-${{ hashFiles('firmware/mumble-fm1/base/tools/toolchain.lock', 'firmware/mumble-fm1/base/uv.lock') }}
+            base/.toolchain
+            base/.venv
+          key: fm1-toolchain-${{ hashFiles('base/tools/toolchain.lock', 'base/uv.lock') }}
 
       - name: JieLi toolchain, AC79 SDK files and the build's Python (pinned)
         run: |
           base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python
           echo "$PWD/base/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Engine tests (tests/engine_test.c)
+        run: tests/engine.sh app/build/engine
 
       - name: Host simulator tests
         run: |
@@ -75,11 +71,12 @@ jobs:
         with:
           name: mumble-fm1
           path: |
-            firmware/mumble-fm1/app/build/*.fwsc
-            firmware/mumble-fm1/app/build/*.bin
-            firmware/mumble-fm1/app/build/SHA256SUMS.txt
-            firmware/mumble-fm1/app/build/host/*.png
-            firmware/mumble-fm1/app/build/host/*.wav
-            firmware/mumble-fm1/app/build/fuzz/crashes/
-            firmware/mumble-fm1/app/build/fuzz/fuzz.log
+            app/build/*.fwsc
+            app/build/*.bin
+            app/build/SHA256SUMS.txt
+            app/build/host/*.png
+            app/build/host/*.wav
+            app/build/fuzz/crashes/
+            app/build/fuzz/fuzz.log
+            app/build/engine/*.wav
           if-no-files-found: warn

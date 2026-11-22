@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
-/* FM1 Open's panel painting (app/screen.c), for the shared MUMBLE screen code
- * (app/mumble_screen.inc) on fm1-base: the same colours, 5x7 font, damage
- * marking and 16-row bands, sent with fm1-base's lcd_blit. Part of app.c. */
+/* The panel's painting for the MUMBLE page (app/mumble_screen.inc) on
+ * fm1-base: colours, a 5x7 font, damage marking and 16-row bands, sent with
+ * fm1-base's lcd_blit. Part of app.c.
+ *
+ * Adapted from the panel painting in FM1 Open (app/screen.c), Copyright (c)
+ * 2026 M-VAVE, GPL-3.0-only with its linking exception; modified for MUMBLE
+ * on fm1-base, November 2026. See LICENSE.md. */
 
 enum {
     BACK = 0x0000,

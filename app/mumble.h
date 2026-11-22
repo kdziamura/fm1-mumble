@@ -17,24 +17,12 @@
  * into the finished instrument block. */
 #ifndef FM1_MUMBLE_H
 #define FM1_MUMBLE_H
-/* The platform: FM1 Open's SDK, or a port header (firmware/mumble-fm1) that
- * defines FM1_SAMPLE_RATE, FM1_BLOCK_FRAMES, FM1_AUDIO_CODE and FM1_AUDIO_DATA. */
-#ifdef MUMBLE_PORT
+/* The platform: a port header (mumble_port.h, on fm1-base) that defines
+ * FM1_SAMPLE_RATE, FM1_BLOCK_FRAMES, FM1_AUDIO_CODE and FM1_AUDIO_DATA. */
+#ifndef MUMBLE_PORT
+#define MUMBLE_PORT "mumble_port.h"
+#endif
 #include MUMBLE_PORT
-#else
-#include "fm1.h"
-#endif
-/* FM1_MUMBLE: whether this build has MUMBLE. The browser preview and the host
- * tests (FM1_HOST_TEST) and MUMBLE's own firmware (MUMBLE_PORT) do. FM1 Open's
- * device build does not: without it the app image is 345 bytes under its
- * limit, with it 30,543 over, so on the FM-1 it ships as firmware/mumble-fm1. */
-#ifndef FM1_MUMBLE
-#if defined(MUMBLE_PORT) || defined(FM1_HOST_TEST)
-#define FM1_MUMBLE 1
-#else
-#define FM1_MUMBLE 0
-#endif
-#endif
 
 enum { MUMBLE_TEXT = 96, MUMBLE_SYLLABLES = 48, MUMBLE_CAST = 8 };
 /* AH, EH, EE, AW, OO, UH, then IH ("sit"), UU ("book"), ER ("her"). */
