@@ -10,5 +10,5 @@ companion = false
 tagline = "retro-game character voices from text"
 licence = "GPL-3.0-only"
 author = "MUMBLE contributors"
-description = "Eight retro-game characters who speak what you type on the keys: TYPE, PLAY (sung letters), SAMPLE (a line per key) and a multitrack LOOP, with per-character CRUSH, RADIO, ECHO and ROOM."
+description = "Eight retro-game characters sing a line you type: TYPE it on the keys, SING it a syllable a key with a choir on chords, and record it into a multitrack LOOP, with per-character CRUSH, RADIO, ECHO and ROOM."
 tags = ["synth"]

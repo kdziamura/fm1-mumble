@@ -38,7 +38,7 @@ static const uint16_t voice_knob_colors[4] = {0x2b7b, 0x2d8d, 0xf7be, 0xf325};
 /* AH EH EE AW OO UH, then IH UU ER (each near the vowel it sits between) */
 static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf7be, 0xb47f, 0xfe87,
                                                      0x2c5f, 0xd51f, 0xfc90};
-static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX", "SING"};
+static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX", "STYLE"};
 /* GLO steps TYPE -> SING -> LOOP; the keys sing in both of the last two. */
 enum { VOICE_TYPE, VOICE_SING, VOICE_LOOP, VOICE_MODES };
 static const char *const voice_mode_names[VOICE_MODES] = {"TYPE", "SING", "LOOP"};
@@ -925,7 +925,8 @@ static void voice_header(void)
     const struct mumble_character *who = &mumble_cast[voice_cast];
     /* (cast: 3 bits, page: 3 bits, then one bit each) */
     uint32_t sig = voice_cast | (voice_page << 3) | (voice_caps << 6) | (voice_edited() << 7) |
-                   (voice_mode << 8) | ((voice_song != 0) << 10) | ((uint32_t)voice_track()->choir << 11);
+                   (voice_mode << 8) | ((voice_song != 0) << 10) | ((uint32_t)voice_track()->choir << 11) |
+                   (voice_bars << 12) | (voice_tempo() << 16) | ((uint32_t)voice_fm1_playing << 24);
     if (cache->voice_cache[0] == sig) return;
     cache->voice_cache[0] = sig;
     paint_fill(0, 0, 240, 28, BACK);
@@ -940,6 +941,15 @@ static void voice_header(void)
     for (unsigned k = 0, x = 8; voice_mode == VOICE_SING && k < VOICE_PAGES; ++k) {
         text(x, 16, voice_page_names[k], 1, k == voice_page ? mode_colors[VOICE_SING] : PANEL, BACK);
         x += ((unsigned)strlen(voice_page_names[k]) + 1U) * 6U;
+    }
+    if (voice_mode == VOICE_LOOP) {                 /* the loop's size: "2 BARS  120 BPM" (SYNC: the clock's) */
+        char size[32], value[12];
+        decimal(size, (int)voice_bars, 1);
+        strcat(size, voice_bars == 1 ? " BAR  " : " BARS  ");
+        decimal(value, (int)voice_tempo(), 1);
+        strcat(size, value);
+        strcat(size, voice_fm1_playing ? " SYNC" : " BPM");
+        text(8, 16, size, 1, mode_colors[VOICE_LOOP], BACK);
     }
     unsigned n = (unsigned)strlen(who->name);
     unsigned x = 232 - n * 12U;
