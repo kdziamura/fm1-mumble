@@ -29,13 +29,14 @@
  *       none held unsung while a choir member is free, recording only in
  *       SING or LOOP, the metronome exactly while recording, sounds in
  *       range ...);
- *   S2  the frame did what a model of the controls says: GLO steps TYPE,
- *       SING, LOOP, REC records (from TYPE: to SING first; the loop stopped,
- *       it arms, and the first key starts the loop recording), PLAY starts or
- *       stops the loop, SELECT and ALGO move by their detents, in SING a knob
- *       moves its parameter of the selected sound by the accelerated amount
- *       (with EDIT held, back to the character's), ALGO turns SING's pages and
- *       LOOP's tabs, in LOOP the knobs set the tab's settings (MIX level,
+ *   S2  the frame did what a model of the controls says: SELECT turns the
+ *       character, ALGO the mode (TYPE, SING, LOOP), PRESET SING's pages and
+ *       LOOP's tabs, each by its detents; GLO opens and closes the system
+ *       screen, where EDIT twice resets everything to the first boot; REC
+ *       records (from TYPE: to SING first; the loop stopped, it arms, and the
+ *       first key starts the loop recording), PLAY starts or stops the loop,
+ *       in SING a knob moves its parameter of the selected sound by the
+ *       accelerated amount (with EDIT held, back to the character's), in LOOP the knobs set the tab's settings (MIX level,
  *       swing, bars, BPM; ARP rate, pattern, octaves, gate; CHORD shape,
  *       inversion, spread; SCALE root and scale; EDIT held: back), SEQ
  *       switches auto-chord, in TYPE K1 moves the cursor and K2 changes only the
@@ -154,6 +155,12 @@ static int inside_band_buffers(const uint16_t *px, uint32_t n)
 }
 
 uint32_t plat_ms(void) { return now_ms; }
+/* The system screen's readings: fixed, so an input plays the same twice. */
+uint32_t plat_cpu_pct(void) { return 23; }
+uint32_t plat_xruns(void) { return 0; }
+int plat_battery(void) { return 2; }
+int32_t plat_battery_raw(void) { return 570; }
+int plat_battery_charging(void) { return 0; }
 uint32_t plat_buttons(void) { return held_buttons; }
 uint32_t plat_keys(void) { return held_keys; }
 int32_t plat_enc(int role)
@@ -238,7 +245,7 @@ static void check_state(void)
     if (voice_caps > 1 || voice_play > 1 || voice_song_dirty > 1 || voice_recording > 1 || voice_loop != 1)
         fail("S1 a flag is not 0 or 1 (or the loop not looping)");
     if (voice_song > 2) fail("S1 song state out of range");
-    if (voice_demo >= VOICE_LINES) fail("S1 demo line out of range");
+    if (voice_system > 1 || voice_reset_armed > 1) fail("S1 the system screen's state out of range");
     if (voice_bars != 1 && voice_bars != 2 && voice_bars != 4 && voice_bars != 8) fail("S1 bars not 1, 2, 4 or 8");
     if (voice_bpm < 40 || voice_bpm > 240) fail("S1 BPM out of 40..240");
     if (voice_octave < -2 || voice_octave > 2) fail("S1 octave out of -2..2");
@@ -312,7 +319,7 @@ static struct {
     char text[MUMBLE_TEXT + 1];
     unsigned arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing, tab, root, chord, chord_shape, chord_inversion,
         chord_spread;
-    unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, demo, song, recording, armed;
+    unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, song, recording, armed, system, resets;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
@@ -332,7 +339,8 @@ static void step_before(void)
     before.chord_inversion = voice_chord_inversion, before.chord_spread = voice_chord_spread;
     before.arp_rate = voice_arp_rate, before.arp_pattern = voice_arp_pattern, before.arp_octaves = voice_arp_octaves;
     before.arp_gate = voice_arp_gate, before.arp_swing = voice_arp_swing;
-    before.scale = voice_scale, before.arp = voice_arp, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
+    before.scale = voice_scale, before.arp = voice_arp, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm;
+    before.system = voice_system, before.resets = voice_resets;
     before.song = voice_song, before.recording = voice_recording, before.armed = voice_rec_armed, before.octave = voice_octave;
     before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count, before.lyric_started = voice_lyric_started;
     before.lyric_lead = voice_lyric_lead, before.lyric_sig = voice_lyric_sig, before.song_ms = voice_now.song_ms;
@@ -378,6 +386,7 @@ static void step_after(void)
     unsigned alone = !turned_any && !before.key_down && !before.midi;
     unsigned edit = (before.held & BUTTON(EDIT)) != 0, edit_tap = 0, edit_hold = 0;
     if (pressed & BUTTON(EDIT)) edit_since = now_ms, edit_spent = 0;
+    if (before.system) edit_spent = 1;          /* (on the system screen EDIT is the reset's: no tap, no hold) */
     if (edit && turned_any) edit_spent = 1;
     if (edit && !edit_spent && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
     if (!edit && edit_was && !edit_spent) edit_tap = 1;
@@ -387,12 +396,26 @@ static void step_after(void)
     unsigned env = hold_model_step(&env_model, (before.held & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0);
     /* (A recorded note let go in the same frame joins the loop after EDIT acts.) */
     unsigned let_go = (before.letters & ~before.keys) != 0;
-    /* One control at a time, as each does. */
-    if (pressed == BUTTON(GLO) && alone) {
-        if (voice_mode != (before.mode + 1u) % VOICE_MODES) fail("S2 GLO did not step TYPE, SING, LOOP");
-        if (!voice_play && voice_recording) fail("S2 recording went on into TYPE");
-        if (before.mode == VOICE_SING && voice_recording != before.recording) fail("S2 GLO from SING to LOOP stopped recording");
+    /* The system screen's reset (EDIT twice there): everything as at the first
+     * boot; the rest of the model has nothing to say about that frame. */
+    if (voice_resets != before.resets) {
+        if (!before.system || !(pressed & BUTTON(EDIT))) fail("S2 a reset without EDIT on the system screen");
+        if (voice_length != sizeof voice_first_line - 1u || memcmp(voice_text, voice_first_line, voice_length) ||
+            voice_seq_count || voice_song || voice_recording || voice_scale || voice_chord || voice_arp)
+            fail("S2 the reset left something as it was");
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i)
+            if (memcmp(&voice_tracks[i].sound, &mumble_cast[i].voice, sizeof voice_tracks[i].sound) || voice_tracks[i].choir ||
+                voice_tracks[i].level != 100)
+                fail("S2 the reset left a character as they were");
+        return;
     }
+    /* GLO: the system screen, open or closed. */
+    if (!!(pressed & BUTTON(GLO)) != (voice_system != before.system)) fail("S2 the system screen opened or closed but by GLO");
+    /* ALGO: the mode, by its detents (round); into TYPE the recording stops. */
+    unsigned mode = before.turned[1] ? (unsigned)(((int)before.mode + before.turned[1] % (int)VOICE_MODES + (int)VOICE_MODES) % (int)VOICE_MODES)
+                                     : before.mode;
+    if (!(pressed & BUTTON(REC)) && voice_mode != mode) fail("S2 the mode moved but by ALGO's detents");
+    if (!voice_play && voice_recording) fail("S2 recording went on into TYPE");
     if (pressed == BUTTON(REC) && alone) {
         if (voice_mode != (before.play ? before.mode : (unsigned)VOICE_SING)) fail("S2 REC did not go to SING");
         /* recording or armed: stop (disarm); the loop running: record; else arm. */
@@ -403,7 +426,7 @@ static void step_after(void)
     }
     /* LFO tapped: a new voice for the selected one alone (TYPE: a syllable,
      * no voice); ENV tapped: their own voice back; held, everyone's. */
-    if (lfo == 1 && !pressed && !turned_any)
+    if (lfo == 1 && !env && !pressed && !turned_any)
         for (unsigned i = 0; i < MUMBLE_CAST; ++i)
             if ((i != before.cast || !before.play) && memcmp(&before.tracks[i].sound, &voice_tracks[i].sound, sizeof voice_tracks[i].sound))
                 fail("S2 LFO tapped changed a voice not the selected one's (or in TYPE)");
@@ -460,16 +483,16 @@ static void step_after(void)
         if (!before.key_down && (voice_length != before.length || memcmp(voice_text, before.text, voice_length)))
             fail("S2 another character did not keep the line");
     }
-    if (before.turned[1] && before.mode == VOICE_SING &&
-        voice_page != (unsigned)(((int)before.page + before.turned[1] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
-        fail("S2 ALGO did not move the page by its detents");
-    /* (ALGO and SEQ are read before GLO: the mode the frame began in decides.) */
-    if (before.mode != VOICE_SING && voice_page != before.page) fail("S2 the sound page changed outside SING");
-    /* ALGO in LOOP: its tabs, by their detents; else they stay. */
-    if (before.mode == VOICE_LOOP && before.turned[1]) {
-        if (voice_tab != (unsigned)(((int)before.tab + before.turned[1] % (int)VOICE_TABS + (int)VOICE_TABS) % (int)VOICE_TABS))
-            fail("S2 ALGO did not move LOOP's tab by its detents");
-    } else if (voice_tab != before.tab) fail("S2 LOOP's tab changed without ALGO in LOOP");
+    /* PRESET: SING's sound page or LOOP's tab, by its detents, in the mode ALGO
+     * left (it is read after ALGO); else they stay. */
+    if (mode == VOICE_SING && before.turned[6]) {
+        if (voice_page != (unsigned)(((int)before.page + before.turned[6] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
+            fail("S2 PRESET did not move the page by its detents");
+    } else if (voice_page != before.page) fail("S2 the sound page changed but by PRESET in SING");
+    if (mode == VOICE_LOOP && before.turned[6]) {
+        if (voice_tab != (unsigned)(((int)before.tab + before.turned[6] % (int)VOICE_TABS + (int)VOICE_TABS) % (int)VOICE_TABS))
+            fail("S2 PRESET did not move LOOP's tab by its detents");
+    } else if (voice_tab != before.tab) fail("S2 LOOP's tab changed but by PRESET in LOOP");
     /* SING, the knobs on a sound page: the selected sound, those parameters, by
      * the accelerated amount, kept in range; with EDIT held, the character's. */
     unsigned knobs_alone = !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && !lfo && !env;
@@ -548,7 +571,7 @@ static void step_after(void)
     /* Nothing pressed or turned: only the keys act, and only as the mode says. */
     if (voice_cast != before.cast || voice_page != before.page || voice_caps != before.caps ||
         voice_mode != before.mode || voice_bars != before.bars || voice_bpm != before.bpm ||
-        voice_demo != before.demo || voice_octave != before.octave || voice_recording != before.recording)
+        voice_octave != before.octave || voice_recording != before.recording)
         fail("S2 a setting changed with nothing pressed or turned");
     if (!before.song && voice_song) fail("S2 the loop started with nothing pressed");
     if (memcmp(before.tracks, voice_tracks, sizeof voice_tracks)) fail("S2 a character changed with nothing pressed or turned");

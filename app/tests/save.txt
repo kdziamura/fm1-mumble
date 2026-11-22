@@ -2,6 +2,13 @@
 # loop's notes and size, the scale. Saved 3 s after the last change (not while
 # a key is held or recording, nor while the loop plays); a reboot brings it all back.
 wait 600
+# The first line ("Our princess is in another castle!") cleared: EDIT held.
+expect length 34
+press EDIT
+wait 1100
+release EDIT
+wait 50
+expect length 0
 tapkey 7
 tapkey 4
 tapkey 24
@@ -14,7 +21,7 @@ expect store_writes 0
 tap PLAY
 wait 100
 # SING: K1 moves HERO's PITCH; SCL C major; REC two notes into the loop.
-tap GLO
+turn ALGO 1
 expect mode 1
 turn K1 6
 wait 50
@@ -36,7 +43,7 @@ tap PLAY
 wait 100
 expect song 0
 # LOOP: HERO muted (level 0), the loop 4 bars at 100 BPM.
-tap GLO
+turn ALGO 1
 expect mode 2
 spin K1 -100
 turn K3 1

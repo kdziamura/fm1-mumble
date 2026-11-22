@@ -3,6 +3,13 @@
 # that starts a syllable leads it: keys pressed while it is held sing the same
 # syllable; once it is let go, the next key moves on. FX goes back to the start.
 wait 600
+# The first line ("Our princess is in another castle!") cleared: EDIT held.
+expect length 34
+press EDIT
+wait 1100
+release EDIT
+wait 50
+expect length 0
 tapkey 7
 tapkey 4
 tapkey 24
@@ -22,7 +29,7 @@ tapkey 17
 tapkey 4
 expect length 17
 wait 800
-tap GLO
+turn ALGO 1
 expect mode 1
 expect lyrics 4
 expect lyric 0
@@ -86,17 +93,19 @@ wait 50
 expect take 1
 tap REC
 expect recording 0
-# PRESET: another line; the queue starts over on it.
+# A changed line (a letter typed in TYPE): the queue starts over on it.
 tapkey 2
 wait 100
 expect lyric 2
-turn PRESET 1
+turn ALGO -1
+tapkey 0
+turn ALGO 1
 wait 100
 expect lyric 0
 # The loop keeps no words: it sings the line as it is. A note recorded on
 # "ma" sings "moo" once the line is changed, while the loop plays on.
-tap GLO
-tap GLO
+turn ALGO 1
+turn ALGO 1
 expect mode 0
 # EDIT held a second clears the line, held again the loop.
 press EDIT
@@ -111,7 +120,7 @@ expect takes 0
 tapkey 12
 tapkey 0
 expect length 2
-tap GLO
+turn ALGO 1
 expect mode 1
 # (The loop still plays: REC records at once.)
 tap REC
@@ -129,8 +138,8 @@ wait 3500
 expect sounding 1
 expect vowel 0
 # A new line, typed while the loop plays.
-tap GLO
-tap GLO
+turn ALGO 1
+turn ALGO 1
 tap OCT-
 tap OCT-
 expect length 0
@@ -142,9 +151,16 @@ expect length 3
 wait 3550
 expect sounding 1
 expect vowel 4
-# Each pass of the loop sings from the top of the line (a longer one: PRESET).
-turn PRESET 1
-tap GLO
+# Each pass of the loop sings from the top of the line (a longer one: "moo hey you").
+tapkey 26
+tapkey 7
+tapkey 4
+tapkey 24
+tapkey 26
+tapkey 24
+tapkey 14
+tapkey 20
+turn ALGO 1
 tapkey 2
 tapkey 3
 expect lyric_next 2

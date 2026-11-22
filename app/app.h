@@ -8,6 +8,7 @@
 #define APP_NAME "MUMBLE"
 #define APP_SPLASH_RGB RGB(60, 150, 250)
 #define APP_BLOCK 256u                   /* frames per audio block: two of the engine's 128 */
+#define APP_BATTERY_RAW                  /* the battery's reading and the charger (the system screen) */
 
 /* the store: the panel calibration (the platform's), and the app's settings (the line, the cast's sounds, the loop:
  * mumble_screen.inc's struct voice_store) */

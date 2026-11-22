@@ -229,6 +229,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "help")) *got = (int)voice_help;                 /* HOME held: the help card */
     else if (!strcmp(what, "edited")) *got = (int)voice_edited();           /* the selected sound moved from its character's */
     else if (!strcmp(what, "page")) *got = (int)voice_page;
+    else if (!strcmp(what, "system")) *got = (int)voice_system;             /* the system screen open */
+    else if (!strcmp(what, "resets")) *got = (int)voice_resets;
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
     else if (!strcmp(what, "bpm")) *got = (int)voice_bpm;
     else if (!strcmp(what, "tempo")) *got = (int)voice_tempo();             /* the loop's: a MIDI clock's while it plays */

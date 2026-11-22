@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
 /* The VOICE page: the MUMBLE retro-game voice synthesizer.
  *
- * One line, sung by eight characters. GLO steps through three modes:
+ * One line, sung by eight characters. ALGO turns between three modes:
  *   TYPE  keys type the line; a vowel speaks the moment it is typed.
  *   SING  keys sing the line a syllable at a time at their pitch, held while
  *         held. The key that starts a syllable leads it: keys pressed while
@@ -18,7 +18,8 @@
  *
  *   PLAY loop on/off   REC record (from TYPE: to SING first; the loop stopped,
  *        it waits, lit blinking, and starts with the first key)   GLO the mode
- *   SELECT character   SAVE choir   PRESET demo lines   HOME held: help
+ *   SELECT character   ALGO mode   PRESET page (SING) or tab (LOOP)   SAVE choir
+ *   GLO   the system screen (load, battery, EDIT twice: reset)   HOME held: help
  *   ARP   the arpeggiator (a tap, as it is let go): where the keys sing, the
  *         keys held are sung one at a time (on the loop's time while it runs),
  *         round the choir, a syllable each. Held, the knobs set it: K1 the
@@ -48,7 +49,7 @@ static const uint16_t voice_knob_colors[4] = {0x2b7b, 0x2d8d, 0xf7be, 0xf325};
 static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf7be, 0xb47f, 0xfe87,
                                                      0x2c5f, 0xd51f, 0xfc90};
 static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX", "STYLE"};
-/* GLO steps TYPE -> SING -> LOOP; the keys sing in both of the last two. */
+/* ALGO turns TYPE, SING, LOOP; the keys sing in both of the last two. */
 enum { VOICE_TYPE, VOICE_SING, VOICE_LOOP, VOICE_MODES };
 /* LOOP's tabs (ALGO turns them): the knobs set the mix, the arpeggiator, the scale. */
 enum { TAB_MIX, TAB_ARP, TAB_CHORD, TAB_SCALE, VOICE_TABS };
@@ -57,39 +58,30 @@ static const char *const voice_mode_names[VOICE_MODES] = {"TYPE", "SING", "LOOP"
 static const char *const voice_greetings[MUMBLE_CAST] = {
     "Hey there!", "Halt.", "Bless you, child.", "Hiya! Hiya!", "Arr...", "Hmm, yes... yes.",
     "Hello. Hello.", "Whooo..."};
-static const char *const voice_lines[] = {
-    "Well, hello there! Have you seen Sister Agnes?",
-    "The bridge is closed. Nobody gets through... nobody.",
-    "Arr, the sea be calm tonight, matey.",
-    "Ooh! Can I come too? Please? PLEASE?",
-    "Back in my day, we walked uphill. Both ways.",
-    "Beep boop. Your request is being processed.",
-    "You found the moon key! Wait... what moon key?",
-    "Bread, cheese, a lantern. That will be nine coins.",
-    "Who goes there? Is it... dinner time?"};
-enum { VOICE_LINES = sizeof voice_lines / sizeof voice_lines[0] };
+/* The line at the first boot (and after a reset): the user's to change or clear. */
+static const char voice_first_line[] = "Our princess is in another castle!";
 /* The hint line's tip in each mode, and HOME's help card. */
 static const char *const voice_tips[VOICE_MODES] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
                                                     "KEYS SING THE LINE  HOLD HOME: HELP",
-                                                    "ALGO: MIX ARP CHORD SCALE  HOME: HELP"};
+                                                    "PRESET: THE TAB  HOLD HOME: HELP"};
 enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
 static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
-    {"KEYS TYPE AT THE CURSOR   GLO: SING",
+    {"KEYS TYPE AT THE CURSOR  ALGO: MODE",
      "K1 CURSOR  K2 LETTER  OCT- DELETE",
      "OCT+ CAPS  FX: START  LFO: SYLLABLE",
      "EDIT: A WORD BACK  HOLD: CLEAR",
-     "PRESET: DEMO  SAVE: CHOIR  PLAY: LOOP",
-     "SELECT: WHO  REC: SING AND RECORD"},
+     "SELECT: WHO  SAVE: CHOIR  PLAY: LOOP",
+     "REC: SING AND RECORD  GLO: SYSTEM"},
     {"KEYS SING THE LINE  HELD: A CHORD",
-     "PLAY: LOOP  REC: RECORD  GLO: LOOP",
+     "PRESET: PAGE  K1-K4 SOUND  ALGO: MODE",
      "OCT- OCT+ OCTAVE  FX: TOP  SCL: SCALE",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
-     "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
+     "ARP: ARPEGGIO  SEQ: AUTO-CHORD",
      "SAVE: CHOIR  LFO: ROLL  ENV: UNROLL"},
-    {"A LANE A SINGER  KEYS SING  GLO: TYPE",
-     "ALGO TABS: MIX ARP CHORD SCALE",
+    {"A LANE EACH  KEYS SING  ALGO: MODE",
+     "PRESET: TAB  MIX ARP CHORD SCALE",
      "EDIT+KNOB: AS IT WAS",
-     "PLAY: LOOP  REC: RECORD",
+     "PLAY: LOOP  REC: RECORD  GLO: SYSTEM",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "SELECT: WHO  SAVE: CHOIR"}};
 /* K2's letters in TYPE mode, round and round. */
@@ -106,7 +98,7 @@ static struct voice_track voice_tracks[MUMBLE_CAST];
 /* The line, shared by everyone (empty: the demo line is sung). */
 static char voice_text[MUMBLE_TEXT + 1];
 static unsigned voice_length;
-static unsigned voice_cast, voice_page, voice_caps, voice_demo, voice_ready, voice_tab;
+static unsigned voice_cast, voice_page, voice_caps, voice_ready, voice_tab;
 /* SCL where the keys sing: the scale (in C) a key's note keeps to, the note
  * under it if it is not in it; 0: none. A bit for each pitch class. */
 static const uint16_t voice_scales[] = {0xFFF, 0xAB5, 0x5AD, 0x295, 0x4E9, 0x6AD, 0x6B5, 0x9AD};
@@ -304,12 +296,12 @@ static void voice_stop(void)
  * so it must not land in a performance. It is read back whole at power-on,
  * or not at all when any of it is out of range.
  * ---------------------------------------------------------------------- */
-enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 4, VOICE_SAVE_MS = 3000, VOICE_QUIET_MS = 1000 };
+enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 5, VOICE_SAVE_MS = 3000, VOICE_QUIET_MS = 1000 };
 struct voice_store {
     uint32_t magic;
     uint16_t version, size;
     char text[MUMBLE_TEXT + 1];
-    uint8_t length, cast, caps, demo, scale, arp, bars, bpm, seq_count;
+    uint8_t length, cast, caps, scale, arp, bars, bpm, seq_count;
     uint8_t arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing, root;
     uint8_t chord, chord_shape, chord_inversion, chord_spread;
     int8_t octave;
@@ -328,7 +320,7 @@ static void voice_store_fill(struct voice_store *k)
     k->size = (uint16_t)sizeof *k;
     memcpy(k->text, voice_text, voice_length);
     k->length = (uint8_t)voice_length;
-    k->cast = (uint8_t)voice_cast, k->caps = (uint8_t)voice_caps, k->demo = (uint8_t)voice_demo;
+    k->cast = (uint8_t)voice_cast, k->caps = (uint8_t)voice_caps;
     k->scale = (uint8_t)voice_scale, k->arp = (uint8_t)voice_arp;
     k->arp_rate = (uint8_t)voice_arp_rate, k->arp_pattern = (uint8_t)voice_arp_pattern;
     k->arp_octaves = (uint8_t)voice_arp_octaves, k->arp_gate = (uint8_t)voice_arp_gate, k->arp_swing = (uint8_t)voice_arp_swing;
@@ -352,7 +344,7 @@ static unsigned voice_store_valid(const struct voice_store *k)
         k->arp_gate < 10 || k->arp_gate > 100 || k->arp_swing > ARP_SWING_MAX || k->root > 11 ||
         k->chord > 1 || k->chord_shape >= CHORD_SHAPES || k->chord_inversion > 3 || k->chord_spread >= CHORD_SPREADS)
         return 0;
-    if (k->cast >= MUMBLE_CAST || k->caps > 1 || k->demo >= VOICE_LINES || k->scale >= VOICE_SCALES || k->arp > 1 ||
+    if (k->cast >= MUMBLE_CAST || k->caps > 1 || k->scale >= VOICE_SCALES || k->arp > 1 ||
         (k->bars != 1 && k->bars != 2 && k->bars != 4 && k->bars != 8) || k->bpm < 40 || k->bpm > 240 ||
         k->octave < -2 || k->octave > 2 || k->seq_count > VOICE_SEQ)
         return 0;
@@ -378,7 +370,7 @@ static void voice_store_load(void)
     const struct voice_store *k = &voice_kept;
     memcpy(voice_text, k->text, k->length + 1U);
     voice_length = voice_cursor = k->length;
-    voice_cast = k->cast, voice_caps = k->caps, voice_demo = k->demo, voice_scale = k->scale, voice_arp = k->arp;
+    voice_cast = k->cast, voice_caps = k->caps, voice_scale = k->scale, voice_arp = k->arp;
     voice_arp_rate = k->arp_rate, voice_arp_pattern = k->arp_pattern, voice_arp_octaves = k->arp_octaves;
     voice_arp_gate = k->arp_gate, voice_arp_swing = k->arp_swing, voice_root = k->root;
     voice_chord = k->chord, voice_chord_shape = k->chord_shape, voice_chord_inversion = k->chord_inversion;
@@ -430,6 +422,54 @@ static void voice_faces_update(void)
     }
 }
 
+/* The system screen (GLO): the audio's load (now and the most since boot),
+ * dropouts, the battery, how long it has been on, the store, the clock;
+ * snapshotted every half second on the control side. EDIT twice there
+ * resets everything (voice_resets counts them, for the tests). */
+static unsigned voice_system, voice_reset_armed, voice_resets;
+static uint32_t voice_reset_until, voice_sys_ms;
+static struct { uint32_t cpu, cpu_peak, xruns, up_s; int battery, raw, charging, sync; } voice_sys;
+static void voice_system_frame(uint32_t now)
+{
+    uint32_t cpu = plat_cpu_pct();
+    if (cpu > voice_sys.cpu_peak) voice_sys.cpu_peak = cpu;
+    if (now - voice_sys_ms < 500U && voice_sys_ms) return;
+    voice_sys_ms = now;
+    voice_sys.cpu = cpu;
+    voice_sys.xruns = plat_xruns();
+    voice_sys.up_s = now / 1000U;
+    voice_sys.battery = plat_battery();
+    voice_sys.raw = (int)plat_battery_raw();
+    voice_sys.charging = plat_battery_charging();
+    voice_sys.sync = (int)voice_fm1_playing;
+}
+static void voice_close(void);
+static void voice_stop(void);
+static void voice_seq_clear(void);
+/* Everything as at the first boot: the line, every voice, the choir, the
+ * loop, its size, the scale, the arpeggiator, auto-chord (then saved, once
+ * quiet, as any change). */
+static void voice_reset_everything(void)
+{
+    if (voice_song) voice_stop();
+    voice_close();
+    voice_seq_clear();
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
+        voice_tracks[i].sound = mumble_cast[i].voice;
+        voice_tracks[i].choir = 0;
+        voice_tracks[i].level = 100;
+    }
+    voice_set_text(voice_first_line);
+    voice_cast = voice_caps = voice_scale = voice_root = voice_arp = voice_page = voice_tab = 0;
+    voice_arp_rate = ARP_RATE, voice_arp_pattern = ARP_UP, voice_arp_octaves = 1, voice_arp_gate = ARP_GATE, voice_arp_swing = 0;
+    voice_chord = voice_chord_shape = voice_chord_inversion = voice_chord_spread = 0;
+    voice_bars = 2, voice_bpm = 120, voice_octave = 0;
+    voice_reset_armed = 0;
+    ++voice_resets;
+    voice_touch();
+    voice_notice("EVERYTHING IS RESET");
+}
+
 /* Power-off, as far as RAM goes: the page starts over (and loads what was
  * kept) at the next voice_open. */
 static void voice_forget(void)
@@ -438,7 +478,7 @@ static void voice_forget(void)
     voice_ready = 0;
     voice_set_text("");
     voice_seq_count = 0;
-    voice_cast = voice_caps = voice_demo = voice_scale = voice_arp = 0;
+    voice_cast = voice_caps = voice_scale = voice_arp = 0;
     voice_arp_rate = ARP_RATE, voice_arp_pattern = ARP_UP, voice_arp_octaves = 1, voice_arp_gate = ARP_GATE, voice_arp_swing = 0;
     voice_root = 0;
     voice_chord = voice_chord_shape = voice_chord_inversion = voice_chord_spread = 0;
@@ -457,7 +497,7 @@ static void voice_open(void)
             t->choir = 0;
             t->level = 100;
         }
-        voice_set_text("");
+        voice_set_text(voice_first_line);
         voice_seq_count = 0;
         voice_cast = 0;
         voice_store_load();
@@ -672,9 +712,8 @@ static unsigned voice_edited(void)
 /* The line the keys sing, planned again (and sung from its top) when it changes. */
 static const char *voice_lyric_text(unsigned *n)
 {
-    const char *line = voice_length ? voice_text : voice_lines[voice_demo % VOICE_LINES];
-    *n = voice_length ? voice_length : (unsigned)strlen(line);
-    return line;
+    *n = voice_length;
+    return voice_text;
 }
 static void voice_lyric_rewind(void)
 {
@@ -842,6 +881,7 @@ static int voice_keep_to_scale(int pitch)
 static void voice_notes_on(const uint8_t *who, const int8_t *shift, unsigned n, unsigned key)
 {
     static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM, MUMBLE_VOWELS, 0, 0, 0, 0};
+    if (!n) return;
     struct mumble_singer singers[MUMBLE_CAST];
     int pitches[MUMBLE_CAST];
     for (unsigned i = 0; i < n; ++i) {
@@ -1103,7 +1143,7 @@ static void voice_say_number(const char *a, int value, const char *c)
     decimal(number, value, 1);
     voice_say(a, number, c);
 }
-/* GLO: TYPE -> SING -> LOOP (recording stops in TYPE; between SING and LOOP
+/* The mode: TYPE, SING, LOOP (recording stops in TYPE; between SING and LOOP
  * the keys and the recording carry on). */
 static void voice_mode_to(unsigned mode)
 {
@@ -1113,15 +1153,6 @@ static void voice_mode_to(unsigned mode)
     }
     voice_mode = mode;
     voice_play = mode != VOICE_TYPE;
-}
-static void voice_demo_line(unsigned demo)
-{
-    voice_demo = demo;
-    voice_set_text(voice_lines[voice_demo]);
-    char of[12] = " OF ", count[12];
-    decimal(count, VOICE_LINES, 1);
-    strcat(of, count);
-    voice_say_number("DEMO LINE ", (int)voice_demo + 1, of);
 }
 /* EDIT let go before it was held 1 s, with no knob turned: where the keys
  * sing, the selected character's notes out of the loop; in TYPE a word back. */
@@ -1152,8 +1183,9 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
 {
     if (pressed & BUTTON(HOME)) { voice_close(); page = OVERVIEW; return 1; }
     voice_help = (c->buttons & BUTTON(HOME)) != 0;
-    unsigned edit = (c->buttons & BUTTON(EDIT)) != 0;
+    unsigned system = voice_system, edit = (c->buttons & BUTTON(EDIT)) != 0;
     if (pressed & BUTTON(EDIT)) { voice_edit_since = frame_time; voice_edit_spent = 0; }
+    if (system) voice_edit_spent = 1;            /* (on the system screen EDIT is the reset's: no tap, no hold) */
     for (unsigned i = 0; i < 7; ++i)
         if (edit && c->encoders[i]) voice_edit_spent = 1;
     if (c->encoders[0]) {
@@ -1167,16 +1199,23 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
             mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
         ++voice_lanes_version;
     }
-    /* ALGO: SING's sound pages, LOOP's tabs. */
+    /* The left knobs: SELECT the character (above), ALGO the mode, PRESET
+     * SING's sound page or LOOP's tab. */
+    if (c->encoders[1]) {
+        static const char *const said[VOICE_MODES] = {"TYPE: KEYS TYPE THE LINE", "SING: KEYS SING THE LINE",
+                                                      "LOOP: A LANE FOR EACH SINGER"};
+        voice_mode_to((unsigned)((int)voice_mode + c->encoders[1] % VOICE_MODES + VOICE_MODES) % VOICE_MODES);
+        voice_notice(said[voice_mode]);
+    }
     if (voice_mode == VOICE_LOOP) {
         unsigned tabbed = voice_tab;
-        if (c->encoders[1]) voice_tab = (unsigned)((int)voice_tab + c->encoders[1] % VOICE_TABS + VOICE_TABS) % VOICE_TABS;
+        if (c->encoders[6]) voice_tab = (unsigned)((int)voice_tab + c->encoders[6] % VOICE_TABS + VOICE_TABS) % VOICE_TABS;
         if (voice_tab != tabbed) voice_say(voice_tab_names[voice_tab], " TAB", NULL);
     } else if (voice_mode == VOICE_SING) {
         unsigned paged = voice_page;
-        if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
+        if (c->encoders[6]) voice_page = (unsigned)((int)voice_page + c->encoders[6] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
         if (voice_page != paged) voice_say(voice_page_names[voice_page], " PAGE", NULL);
-    } else if (c->encoders[1]) voice_notice("PAGES ARE IN SING, TABS IN LOOP");
+    } else if (c->encoders[6]) voice_notice("PAGES ARE IN SING, TABS IN LOOP");
     for (unsigned i = 0; i < 4; ++i) {
         int turned = c->encoders[2 + i];
         if (!turned) continue;
@@ -1186,13 +1225,15 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         } else if (edit) voice_reset(i);
         else voice_edit(i, fm_encoder_delta(2 + i, turned));    /* SING: the page's sounds; LOOP: the loop */
     }
-    if (c->encoders[6])
-        voice_demo_line((unsigned)((int)voice_demo + c->encoders[6] % (int)VOICE_LINES + (int)VOICE_LINES) % VOICE_LINES);
+    /* GLO: the system screen, open or closed; there, EDIT twice resets everything. */
+    if (system && (pressed & BUTTON(EDIT))) {
+        if (voice_reset_armed && (int32_t)(frame_time - voice_reset_until) < 0) voice_reset_everything();
+        else voice_reset_armed = 1, voice_reset_until = frame_time + 3000U, voice_notice("PRESS EDIT AGAIN: RESET EVERYTHING");
+    }
     if (pressed & BUTTON(GLO)) {
-        static const char *const said[VOICE_MODES] = {"TYPE: KEYS TYPE THE LINE", "SING: KEYS SING THE LINE",
-                                                      "LOOP: A LANE FOR EACH SINGER"};
-        voice_mode_to((voice_mode + 1U) % VOICE_MODES);
-        voice_notice(said[voice_mode]);
+        voice_system ^= 1U;
+        voice_reset_armed = 0;
+        voice_notice(voice_system ? "SYSTEM: EDIT TWICE RESETS ALL" : "SYSTEM CLOSED");
     }
     if ((pressed & BUTTON(REC)) && !voice_play) voice_mode_to(VOICE_SING);  /* REC sings: to SING mode */
     if (pressed & BUTTON(FX)) {                  /* FX: back to the top (TYPE: the cursor to the line's start) */
@@ -1299,6 +1340,7 @@ static void voice_frame(uint32_t now)
 {
     mumble_status(&voice_now);
     voice_store_frame(now);
+    voice_system_frame(now);
     voice_faces_update();
     /* The audio task adopts a song a block later: only a song that was
      * heard playing can be over. */
@@ -1644,7 +1686,7 @@ static void voice_lines_draw(void)
         cache->voice_cache[3 + r] = sig;
         paint_fill(4, y - 2, 232, 18, BACK);
         if (!shown && r == 0) {
-            text(10, y + 3, "* TYPE A LINE (PRESET: A DEMO)", 1, DIM, BACK);
+            text(10, y + 3, "* TYPE A LINE", 1, DIM, BACK);
             continue;
         }
         /* The font has no lower case: shouted (all-caps) words show in amber. */
@@ -1850,6 +1892,43 @@ static void voice_help_draw(void)
         text(10, 127U + r * 10U, voice_help_rows[voice_mode][r], 1, r ? TEXT : ACCENT, BACK);
 }
 
+/* GLO: the system card, over the dialogue box. */
+static void voice_system_draw(void)
+{
+    if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
+    uint32_t sig = signature(0x5157E, &voice_sys, sizeof voice_sys);
+    cache->voice_cache[4] = cache->voice_cache[5] = cache->voice_cache[8] = 0xfffffffeU;
+    if (cache->voice_cache[3] == sig) return;
+    cache->voice_cache[3] = sig;
+    paint_fill(4, BOX_TOP + 2, 232, BOX_BOTTOM - BOX_TOP - 4, BACK);
+    char row[48], value[12];
+    text(10, 126, "SYSTEM", 1, ACCENT, BACK);
+    strcpy(row, "AUDIO LOAD ");
+    decimal(value, (int)voice_sys.cpu, 1), strcat(row, value), strcat(row, "%  MOST ");
+    decimal(value, (int)voice_sys.cpu_peak, 1), strcat(row, value), strcat(row, "%");
+    text(10, 136, row, 1, voice_sys.cpu_peak > 85U ? AMBER : TEXT, BACK);
+    strcpy(row, "DROPOUTS ");
+    decimal(value, (int)voice_sys.xruns, 1), strcat(row, value);
+    text(10, 146, row, 1, voice_sys.xruns ? AMBER : TEXT, BACK);
+    if (voice_sys.battery == 4) strcpy(row, "POWER: USB");
+    else if (voice_sys.battery < 0) strcpy(row, "BATTERY: NOT READ YET");
+    else {
+        static const char *const bars[4] = {"EMPTY", "1 OF 3", "2 OF 3", "FULL"};
+        strcpy(row, "BATTERY ");
+        strcat(row, bars[voice_sys.battery]);
+        if (voice_sys.raw) strcat(row, " ("), decimal(value, voice_sys.raw, 1), strcat(row, value), strcat(row, ")");
+        if (voice_sys.charging == 2) strcat(row, " CHARGING");
+    }
+    text(10, 156, row, 1, voice_sys.battery == 0 ? AMBER : TEXT, BACK);
+    strcpy(row, "ON FOR ");
+    decimal(value, (int)(voice_sys.up_s / 3600U), 1), strcat(row, value), strcat(row, ":");
+    decimal(value, (int)(voice_sys.up_s / 60U % 60U), 2), strcat(row, value), strcat(row, ":");
+    decimal(value, (int)(voice_sys.up_s % 60U), 2), strcat(row, value);
+    strcat(row, voice_sys.sync ? "  MIDI CLOCK: SYNC" : "  NO MIDI CLOCK");
+    text(10, 166, row, 1, TEXT, BACK);
+    text(10, 176, "EDIT TWICE: RESET EVERYTHING", 1, DIM, BACK);
+}
+
 /* A knob: its name, its value (unit small after it), and over them a bar of
  * where the value sits in its range, ticked where the character has it. */
 enum { NO_TICK = 0xffffU };
@@ -1956,6 +2035,7 @@ static __attribute__((noinline)) void voice_draw(void)
     voice_choir_strip();
     voice_box();
     if (voice_help) voice_help_draw();
+    else if (voice_system) voice_system_draw();
     else if (voice_mode == VOICE_LOOP) voice_lanes_draw();
     else if (voice_play) {
         voice_line_draw();

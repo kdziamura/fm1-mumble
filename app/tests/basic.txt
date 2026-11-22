@@ -3,6 +3,13 @@ wait 600
 shot boot.png
 expect mode 0
 expect cast 0
+# The first line ("Our princess is in another castle!") cleared: EDIT held.
+expect length 34
+press EDIT
+wait 1100
+release EDIT
+wait 50
+expect length 0
 # TYPE: keys type the line; a vowel speaks as it is typed.
 tapkey 7
 tapkey 4
@@ -16,11 +23,8 @@ turn SELECT 1
 wait 300
 expect cast 1
 expect length 2
-# PRESET: a demo line.
-turn PRESET 1
-expect length >20
-# GLO: SING mode; a held key sings the line's first syllable.
-tap GLO
+# ALGO: SING mode; a held key sings the line's first syllable.
+turn ALGO 1
 expect mode 1
 key 0 down
 wait 300
@@ -29,12 +33,12 @@ expect lyric 0
 shot singing.png
 key 0 up
 wait 600
-# PLAY: the loop runs (always looping); GLO on to LOOP mode shows its lanes.
+# PLAY: the loop runs (always looping); ALGO on to LOOP mode shows its lanes.
 tap PLAY
 wait 100
 expect song 2
 expect loop 1
-tap GLO
+turn ALGO 1
 wait 30
 expect mode 2
 shot loop.png
@@ -45,6 +49,6 @@ wavstop
 tap PLAY
 wait 100
 expect song 0
-# GLO: round to TYPE.
-tap GLO
+# ALGO: round to TYPE.
+turn ALGO 1
 expect mode 0

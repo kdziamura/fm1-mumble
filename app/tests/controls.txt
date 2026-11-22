@@ -3,6 +3,13 @@
 # back, and the knobs' bars in each mode.
 wait 600
 expect mode 0
+# The first line ("Our princess is in another castle!") cleared: EDIT held.
+expect length 34
+press EDIT
+wait 1100
+release EDIT
+wait 50
+expect length 0
 # "hello", then the cursor two back: a space typed there splits it.
 tapkey 7
 tapkey 4
@@ -53,14 +60,32 @@ shot help-type.png
 release HOME
 wait 50
 expect help 0
-tap GLO
+# A line to sing: "hey you come here".
+tapkey 7
+tapkey 4
+tapkey 24
+tapkey 26
+tapkey 24
+tapkey 14
+tapkey 20
+tapkey 26
+tapkey 2
+tapkey 14
+tapkey 12
+tapkey 4
+tapkey 26
+tapkey 7
+tapkey 4
+tapkey 17
+tapkey 4
+expect length 17
+turn ALGO 1
 expect mode 1
 press HOME
 wait 100
 shot help-sing.png
 release HOME
 # SING: K1 moves PITCH; EDIT held with K1 turned puts it back, and the line stays.
-turn PRESET 1
 wait 50
 turn K1 12
 wait 50
@@ -71,7 +96,7 @@ turn K1 1
 release EDIT
 wait 50
 expect edited 0
-expect length >20
+expect length 17
 # SCL (the simulator's SEL): a scale the keys keep to. F# (key 1) sings F in C major; round the eight back to none, F#.
 tap SEL
 expect scale 1
@@ -117,9 +142,9 @@ expect edited 1
 tap ENV
 wait 50
 expect edited 0
-# GLO on to LOOP mode: the lanes; ALGO turns its tabs (the sound pages stay
+# ALGO on to LOOP mode: the lanes; PRESET turns its tabs (the sound pages stay
 # SING's). MIX: EDIT held with K4 turned puts the BPM back; K1 to 0 mutes.
-tap GLO
+turn ALGO 1
 expect mode 2
 expect tab 0
 turn K4 5
@@ -144,7 +169,7 @@ wait 100
 shot help-loop.png
 release HOME
 # The ARP tab: 1/8 (250 ms at 120 BPM), down the keys (which sing in LOOP too).
-turn ALGO 1
+turn PRESET 1
 wait 50
 expect tab 1
 expect page 0
@@ -155,8 +180,8 @@ shot controls-arp.png
 expect arp 1
 expect arp_rate 1
 expect arp_pattern 1
-key 0 down
 key 4 down
+key 0 down
 wait 40
 expect sung 4
 wait 250
@@ -191,7 +216,7 @@ tap ARP
 expect arp 0
 # The CHORD tab; SEQ turns auto-chord on: one key sings a triad, three
 # singers (the choir is one: two guests join), a seventh four.
-turn ALGO 1
+turn PRESET 1
 wait 50
 expect tab 2
 tap SEQ
@@ -224,7 +249,7 @@ expect singing 1
 key 0 up
 wait 50
 # The SCALE tab: D dorian (E flat, key 0 F: F is in it; F#, key 1: F).
-turn ALGO 1
+turn PRESET 1
 wait 50
 expect tab 3
 turn K1 2
@@ -242,8 +267,8 @@ release EDIT
 wait 50
 expect scale 0
 expect root 0
-# GLO round to TYPE.
-tap GLO
+# ALGO round to TYPE.
+turn ALGO 1
 expect mode 0
 # The faces are built from the voices: GHOST's is a ghost, BOT's a robot with an antenna.
 turn SELECT -1
@@ -285,9 +310,27 @@ wait 50
 expect edited 0
 # In TYPE, LFO types a random syllable at the cursor.
 expect mode 0
-expect length >0
 tap FX
 expect cursor 0
 tap LFO
 wait 50
 expect cursor >1
+# GLO: the system screen (load, battery, uptime). EDIT once arms the reset,
+# twice resets everything: the first line back, every voice its own.
+tap ENV
+tap GLO
+wait 600
+expect system 1
+shot system.png
+tap EDIT
+wait 50
+expect resets 0
+tap EDIT
+wait 50
+expect resets 1
+expect length 34
+expect edited 0
+expect scale 0
+tap GLO
+wait 50
+expect system 0

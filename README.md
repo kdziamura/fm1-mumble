@@ -52,14 +52,18 @@ ending; in a chord only the leading singer sings them, the others the vowel alon
 The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the top on the clock, its tempo sizes it
 (LOOP shows SYNC), Stop stops it; without a clock it keeps its own BPM.
 
-GLO steps through three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
+The first boot (and a reset) gives the line "Our princess is in another castle!", yours to change or clear.
+
+ALGO turns between three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
 view: a lane of the loop for each character, the keys singing as in SING). In TYPE the keys' lights mark the vowels; in SING and
 LOOP a key is lit while it is held.
 
 | Control | TYPE | SING | LOOP |
 |---|---|---|---|
 | Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord | As in SING |
-| ALGO | — | The sound page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | The tab the knobs set: MIX, ARP, CHORD, SCALE (tabs at the top) |
+| SELECT | The character | | |
+| ALGO | The mode: TYPE, SING, LOOP | | |
+| PRESET | — | The sound page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | The tab the knobs set: MIX, ARP, CHORD, SCALE (tabs at the top) |
 | K1–K4 | K1 the cursor, K2 the letter under it (at the end: a new one) | The page's four sounds, shown with a bar of where each sits and a tick at the character's own | MIX: the character's level (0: muted), swing, bars, BPM. ARP: rate (1/4 .. 1/32, triplets), pattern (up, down, up-down, random, as played), octaves (1-3), gate (10-100 %). CHORD: the shape (triad, 7th, power, sus2, sus4, add9), inversion, spread (close, open, wide). SCALE: the root (C .. B), the scale |
 | EDIT | A word back; held 1 s: clear the line, then the loop | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that setting back | As in SING |
 | OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
@@ -69,9 +73,8 @@ LOOP a key is lit while it is held.
 | ENV | The selected character's own voice back; held 1 s: everyone's | | |
 | ARP | The arpeggiator on or off (ARP lit; LOOP's ARP tab sets it) | The keys held sung one at a time in the pattern (on the loop's time while it runs), round the choir, a syllable each | As in SING |
 | SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it) | A key sings a chord built up the scale (no scale: major on the root), a note a singer: the choir first, then others join so the chord is whole | As in SING |
-| GLO | To SING | To LOOP (recording carries on) | To TYPE |
-| SELECT / SAVE | The character / in or out of the choir | | |
-| PRESET | A demo line | | |
+| GLO | The system screen, open or closed: the audio's load (now and the most since boot), dropouts, the battery, how long the FM-1 has been on, the MIDI clock. There EDIT twice resets everything to the first boot | | |
+| SAVE | The character in or out of the choir | | |
 | PLAY / REC | The loop on or off / record into it (from TYPE: to SING first). With the loop stopped REC waits, blinking, and the first key starts the loop and the recording | | |
 
 ## Build and test
