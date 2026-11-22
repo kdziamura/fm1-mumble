@@ -24,7 +24,7 @@
  *   SING  ALGO / SEQ page (SING only)   K1..K4 sound (EDIT held: back to the character's)
  *         OCT- OCT+ octave   FX from the top of the line
  *         EDIT clear the selected character's notes; held 1 s: the whole loop
- *   LOOP  K1 the character's start  K2 its level  K3 bars  K4 BPM
+ *   LOOP  K1 the character muted  K2 its level  K3 bars  K4 BPM
  *         (EDIT held: back to where they start); OCT, FX and EDIT as in SING
  * Every button says what it did on the hint line.
  *
@@ -59,7 +59,7 @@ enum { VOICE_LINES = sizeof voice_lines / sizeof voice_lines[0] };
 /* The hint line's tip in each mode, and HOME's help card. */
 static const char *const voice_tips[VOICE_MODES] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
                                                     "KEYS SING THE LINE  HOLD HOME: HELP",
-                                                    "K1 START  K2 LEVEL  HOLD HOME: HELP"};
+                                                    "K1 MUTE  K2 LEVEL  HOLD HOME: HELP"};
 enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
 static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
     {"KEYS TYPE AT THE CURSOR   GLO: SING",
@@ -75,7 +75,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
      "SELECT: WHO  SAVE: CHOIR"},
     {"A LANE A SINGER  KEYS SING  GLO: TYPE",
-     "K1 START  K2 LEVEL  K3 BARS  K4 BPM",
+     "K1 MUTE  K2 LEVEL  K3 BARS  K4 BPM",
      "EDIT+KNOB: AS IT WAS",
      "PLAY: LOOP  REC: RECORD",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
@@ -87,7 +87,7 @@ enum { VOICE_ALPHABET = sizeof voice_alphabet - 1, VOICE_HOLD_MS = 1000 };
 /* A character: sound, choir, and place in the loop. */
 enum { VOICE_PAGES = MUMBLE_PAGES, VOICE_SEQ = 128 };
 struct voice_track {
-    uint8_t choir, start, level;             /* start: 16th step in the loop; level: percent */
+    uint8_t choir, mute, level;              /* mute: its notes in the loop silent; level: percent */
     struct mumble_voice sound;
 };
 static struct voice_track voice_tracks[MUMBLE_CAST];
@@ -192,7 +192,7 @@ static void voice_publish(unsigned restart, uint32_t phase_ms)
         unsigned first = k;
         while (k < voice_seq_count && voice_seq_track[k] == i) ++k;
         struct voice_track *t = &voice_tracks[i];
-        parts[i] = (struct mumble_part){NULL, 0, &t->sound, (uint16_t)voice_step_ms(t->start), t->level,
+        parts[i] = (struct mumble_part){NULL, 0, &t->sound, 0, t->mute ? 0 : t->level,
                                         voice_seq + first, k - first, voice_line_sounds, voice_lyric_count};
     }
     voice_song_dirty = 0;
@@ -223,7 +223,7 @@ static void voice_open(void)
             struct voice_track *t = &voice_tracks[i];
             t->sound = mumble_cast[i].voice;
             t->choir = 0;
-            t->start = 0;
+            t->mute = 0;
             t->level = 100;
         }
         voice_set_text("");
@@ -327,14 +327,12 @@ static void voice_edit(unsigned col, int delta)
 {
     struct voice_track *t = voice_track();
     if (voice_mode == VOICE_LOOP) {
-        if (col == 0) t->start = (uint8_t)clamp((int)t->start + delta, 0, (int)voice_steps() - 1);
+        if (col == 0) t->mute = delta > 0;                      /* right: muted, left: heard */
         else if (col == 1) t->level = (uint8_t)clamp((int)t->level + delta, 0, 100);
         else if (col == 2) {
             unsigned i = 0;
             while (i < 3 && voice_bar_choices[i] != voice_bars) ++i;
             voice_bars = voice_bar_choices[clamp((int)i + (delta > 0 ? 1 : -1), 0, 3)];
-            for (unsigned k = 0; k < MUMBLE_CAST; ++k)
-                if (voice_tracks[k].start >= voice_steps()) voice_tracks[k].start = (uint8_t)(voice_steps() - 1U);
         } else voice_bpm = (unsigned)clamp((int)voice_bpm + delta, 40, 240);
         voice_touch();
         return;
@@ -349,13 +347,11 @@ static void voice_reset(unsigned col)
 {
     struct voice_track *t = voice_track();
     if (voice_mode == VOICE_LOOP) {
-        static const char *const names[4] = {"START", "LEVEL", "BARS", "BPM"};
-        if (col == 0) t->start = 0;
+        static const char *const names[4] = {"MUTE", "LEVEL", "BARS", "BPM"};
+        if (col == 0) t->mute = 0;
         else if (col == 1) t->level = 100;
         else if (col == 2) voice_bars = 2;
         else voice_bpm = 120;
-        for (unsigned k = 0; k < MUMBLE_CAST; ++k)
-            if (voice_tracks[k].start >= voice_steps()) voice_tracks[k].start = (uint8_t)(voice_steps() - 1U);
         voice_touch();
         strcpy(voice_said, names[col]);
     } else {
@@ -422,17 +418,16 @@ static unsigned voice_lyric_next(void)
     return (voice_lyric_at + 1U) % voice_lyric_count;
 }
 
-/* Recording: where the loop is now, from a track's start; -1 when it is not running. */
-static int32_t voice_rec_position(unsigned track)
+/* Recording: where the loop is now; -1 when it is not running. */
+static int32_t voice_rec_position(void)
 {
     int32_t at = mumble_song_position();
     if (at < 0) return -1;
-    uint32_t loop = voice_loop_ms();
-    return (int32_t)(((uint32_t)at + loop - voice_step_ms(voice_tracks[track].start) % loop) % loop);
+    return (int32_t)((uint32_t)at % voice_loop_ms());
 }
 static void voice_rec_press(unsigned who, unsigned slot, unsigned note)
 {
-    int32_t at = voice_rec_position(who);
+    int32_t at = voice_rec_position();
     if (at < 0 || at > 0xFFFF) return;
     voice_rec_held |= 1U << who;
     voice_rec_at[who] = (uint16_t)at;
@@ -1255,7 +1250,7 @@ static void voice_loop_bar(void)
 }
 
 /* LOOP mode: eight lanes over one loop, OP-1 tape style. Each lane shows
- * its character's notes in the sequence from its offset, each start marked
+ * its character's notes in the sequence (dim when muted), each start marked
  * white; the playhead sweeps while the loop plays. */
 static void voice_lanes_draw(void)
 {
@@ -1286,24 +1281,21 @@ static void voice_lanes_draw(void)
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
         const struct voice_track *t = &voice_tracks[i];
         int y = lane_top + (int)i * lane_h;
-        unsigned on = voice_in_choir(i) || voice_notes_of(i);
+        unsigned on = (voice_in_choir(i) || voice_notes_of(i)) && !t->mute;
         uint16_t color = on ? mumble_cast[i].color : dimmer(mumble_cast[i].color);
         if (i == voice_cast) vfill(6, y, 2, lane_h - 1, WHITE);
         vfill(12, y + 1, 7, lane_h - 3, color);                  /* the character's colour chip */
         vfill(x0, y + 3, x1 - x0, 1, PANEL);
-        uint32_t offset = voice_step_ms(t->start);
-        vfill(x0 + (int)(offset * (uint32_t)(x1 - x0) / loop), y, 1, lane_h - 1, color);
         for (unsigned k = 0; k < voice_seq_count; ++k) {
             const struct mumble_note *q = &voice_seq[k];
             if (voice_seq_track[k] != i || q->ms >= loop) continue;   /* (past the end of a shorter loop: not played) */
-            uint32_t at = offset + q->ms;
-            if (at >= loop) at -= loop;
+            uint32_t at = q->ms;
             int x = x0 + (int)(at * (uint32_t)(x1 - x0) / loop);
             int w = (int)(q->len_ms * (uint32_t)(x1 - x0) / loop);
             if (w < 2) w = 2;
             if (x + w > x1) w = x1 - x;
             vfill(x, y + 1, w, lane_h - 3, color);
-            vfill(x, y, 1, lane_h - 1, WHITE);
+            vfill(x, y, 1, lane_h - 1, t->mute ? DIM : WHITE);
         }
     }
     if (head >= 0) vfill(head, lane_top - 1, 1, 8 * lane_h + 1, voice_recording ? AMBER : WHITE);
@@ -1370,13 +1362,7 @@ static void voice_knobs(void)
     }
     if (voice_mode == VOICE_LOOP) {
         const struct voice_track *t = voice_track();
-        /* START as bar.step, like the FM1 step pages. */
-        char step[12];
-        decimal(value, t->start / 16U + 1U, 1);
-        decimal(step, t->start % 16U + 1U, 2);
-        strcat(value, ".");
-        strcat(value, step);
-        voice_meter(0, "START", value, "", voice_knob_colors[0], t->start, voice_steps() - 1U, 0);
+        voice_meter(0, "MUTE", t->mute ? "ON" : "OFF", "", voice_knob_colors[0], t->mute, 1, 0);
         decimal(value, t->level, 1);
         voice_meter(1, "LEVEL", value, "%", voice_knob_colors[1], t->level, 100, 100);
         unsigned bars = 0;

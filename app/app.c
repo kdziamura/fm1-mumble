@@ -169,6 +169,7 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "page")) *got = (int)voice_page;
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
     else if (!strcmp(what, "bpm")) *got = (int)voice_bpm;
+    else if (!strcmp(what, "mute")) *got = (int)voice_track()->mute;        /* the selected one's, in the loop */
     else if (!strcmp(what, "choir")) *got = t->choir;
     else if (!strcmp(what, "sounding")) *got = voice_now.vowel < MUMBLE_VOWELS;
     else if (!strcmp(what, "vowel")) *got = voice_now.vowel;                 /* the loudest sounding, 6: none */

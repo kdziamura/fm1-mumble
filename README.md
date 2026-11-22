@@ -36,7 +36,7 @@ LOOP a key is lit while it is held.
 | Control | TYPE | SING | LOOP |
 |---|---|---|---|
 | Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord | As in SING |
-| K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own | The character's start / level in the loop |
+| K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own | The character muted in the loop (right: muted) / its level |
 | K3 / K4 | — | | The loop's bars / BPM |
 | EDIT | A word back; held 1 s: clear the line, then the loop | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | As in SING; held with a knob turned: that setting back |
 | OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |

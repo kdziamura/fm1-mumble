@@ -89,6 +89,13 @@ turn K4 1
 release EDIT
 wait 50
 expect bpm 120
+# K1 mutes the selected character in the loop (right) and hears it again (left).
+turn K1 1
+wait 50
+expect mute 1
+turn K1 -1
+wait 50
+expect mute 0
 press HOME
 wait 100
 shot help-loop.png

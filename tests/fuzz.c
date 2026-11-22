@@ -31,7 +31,7 @@
  *       stops the loop, SELECT and ALGO move by their detents, in SING a knob
  *       moves its parameter of the selected sound by the accelerated amount
  *       (with EDIT held, back to the character's), ALGO turns the pages only
- *       in SING, in LOOP the knobs move the start, level, bars and BPM (EDIT
+ *       in SING, in LOOP the knobs set the mute, level, bars and BPM (EDIT
  *       held: back), in TYPE K1 moves the cursor and
  *       K2 changes only the letter under it; EDIT let go unspent clears
  *       exactly the selected singer's notes (SING, LOOP) or cuts the word
@@ -225,7 +225,7 @@ static void check_state(void)
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
         const struct voice_track *t = &voice_tracks[i];
         if (t->choir > 1) fail("S1 choir not 0 or 1");
-        if (t->start >= voice_steps()) fail("S1 a character starts after the loop's end");
+        if (t->mute > 1) fail("S1 mute not 0 or 1");
         if (t->level > 100) fail("S1 a level over 100");
         check_sound(&t->sound, "S1 a sound parameter out of its range");
     }
@@ -379,23 +379,21 @@ static void step_after(void)
         }
         if (memcmp(&want, &voice_tracks[before.cast].sound, sizeof want)) fail("S2 a knob moved the sound wrongly");
     }
-    /* LOOP, the knobs in turn: the selected one's start and level, the bars
-     * (a step of 1, 2, 4, 8), the BPM; with EDIT held, where they start. */
+    /* LOOP, the knobs in turn: the selected one's mute (right: on) and level,
+     * the bars (a step of 1, 2, 4, 8), the BPM; with EDIT held, where they start. */
     if (before.mode == VOICE_LOOP && knobs_alone) {
-        int start = before.tracks[before.cast].start, level = before.tracks[before.cast].level;
+        int mute = before.tracks[before.cast].mute, level = before.tracks[before.cast].level;
         int bars = (int)before.bars, bpm = (int)before.bpm;
         for (unsigned c = 0; c < 4; ++c) {
             int v = before.turned[2 + c];
             if (!v) continue;
             int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
-            int steps = bars * 16;
-            if (c == 0) start = edit ? 0 : clamp(start + v * gain, 0, steps - 1);
+            if (c == 0) mute = edit ? 0 : v > 0;
             else if (c == 1) level = edit ? 100 : clamp(level + v * gain, 0, 100);
             else if (c == 2) bars = edit ? 2 : clamp(v > 0 ? bars * 2 : bars / 2, 1, 8);
             else bpm = edit ? 120 : clamp(bpm + v * gain, 40, 240);
-            if (start >= bars * 16) start = bars * 16 - 1;
         }
-        if (voice_tracks[before.cast].start != start || voice_tracks[before.cast].level != level ||
+        if (voice_tracks[before.cast].mute != mute || voice_tracks[before.cast].level != level ||
             voice_bars != (unsigned)bars || voice_bpm != (unsigned)bpm)
             fail("S2 a LOOP knob moved the loop wrongly");
         for (unsigned i = 0; i < MUMBLE_CAST; ++i)
