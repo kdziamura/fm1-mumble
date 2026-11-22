@@ -32,18 +32,20 @@
  *       moves its parameter of the selected sound by the accelerated amount
  *       (with EDIT held, back to the character's), ALGO turns the pages only
  *       in SING, in LOOP the knobs set the mute, level, bars and BPM (EDIT
- *       held: back), in TYPE K1 moves the cursor and
- *       K2 changes only the letter under it; EDIT let go unspent clears
- *       exactly the selected singer's notes (SING, LOOP) or cuts the word
- *       before the cursor (TYPE), held 1 s it clears the loop (SING, LOOP)
- *       or the line, then the loop (TYPE); FX rewinds the line (SING), SCL steps the scale and LFO changes only the selected sound (SING, LOOP); with nothing pressed or turned no
- *       setting changes, TYPE types exactly the keys' letters at the cursor,
- *       SING holds exactly the
- *       keys still down and the new ones, the last key pressed is sung at
- *       once, the queue moves on only with a key pressed after the leading one
- *       was let go and goes back to the top as the loop wraps, and the
- *       sequence only gains notes, each from a singer being recorded, first
- *       with the slot it was singing.
+ *       held: back), in TYPE K1 moves the cursor and K2 changes only the
+ *       letter under it; EDIT let go unspent clears exactly the selected
+ *       singer's notes (SING, LOOP) or cuts the word before the cursor
+ *       (TYPE), held 1 s it clears the loop (SING, LOOP) or the line, then
+ *       the loop (TYPE); FX rewinds the line (SING), SCL steps the scale and
+ *       LFO changes only the selected sound (SING, LOOP), ARP switches the
+ *       arpeggiator (which sings one note at a time); with nothing pressed
+ *       or turned no setting changes, TYPE types exactly the keys' letters at
+ *       the cursor, SING holds exactly the keys still down and the new ones,
+ *       and without the arpeggiator the last key pressed is sung at once and
+ *       the queue moves on only with a key pressed after the leading one was
+ *       let go and goes back to the top as the loop wraps; the sequence only
+ *       gains notes, each from a singer being recorded, first with the slot
+ *       it was singing.
  * And once, at start-up, every button combination survives the panel's
  * button-order mapping both ways.
  *
@@ -212,7 +214,8 @@ static void check_state(void)
         sung_keys |= key;
         singing |= 1u << who;
     }
-    if (choir_free && (voice_held & ~sung_keys)) fail("S1 a key held unsung while a choir member is free");
+    if (!voice_arp && choir_free && (voice_held & ~sung_keys)) fail("S1 a key held unsung while a choir member is free");
+    if (voice_arp > 1 || (voice_arp && __builtin_popcount(singing) > 1)) fail("S1 the arpeggiator sings more than one note");
     if (voice_rec_held & ~singing) fail("S1 a character recorded while it sings nothing");
     if (voice_recording && !voice_play) fail("S1 recording outside SING");
     if (!voice_recording && voice_rec_held) fail("S1 singers recorded while not recording");
@@ -257,7 +260,7 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
-    unsigned length, cursor, cast, page, caps, scale, mode, play, bars, bpm, demo, song, recording;
+    unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, demo, song, recording;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
@@ -273,7 +276,7 @@ static void step_before(void)
     memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
     memcpy(before.text, voice_text, sizeof voice_text);
     before.length = voice_length, before.cursor = voice_cursor, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
-    before.scale = voice_scale, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
+    before.scale = voice_scale, before.arp = voice_arp, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
     before.song = voice_song, before.recording = voice_recording, before.octave = voice_octave;
     before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count, before.lyric_started = voice_lyric_started;
     before.lyric_lead = voice_lyric_lead, before.lyric_sig = voice_lyric_sig, before.song_ms = voice_now.song_ms;
@@ -328,12 +331,15 @@ static void step_after(void)
         for (unsigned i = 0; i < MUMBLE_CAST; ++i)
             if (i != before.cast && memcmp(&before.tracks[i], &voice_tracks[i], sizeof voice_tracks[i]))
                 fail("S2 LFO changed another character");
+    if (pressed == BUTTON(ARP) && alone && voice_arp == before.arp) fail("S2 ARP did not switch the arpeggiator");
+    if (voice_arp != before.arp && !(pressed & BUTTON(ARP))) fail("S2 the arpeggiator switched with ARP not pressed");
     if (pressed == BUTTON(PLAY) && alone) {
         if (before.song && voice_song) fail("S2 PLAY did not stop the loop");
         if (!before.song && !voice_song) fail("S2 PLAY did not start the loop");
     }
+    /* (With the arpeggiator its step may sing the top syllable in the same frame.) */
     if (pressed == BUTTON(FX) && alone && before.play &&
-        (voice_lyric_at || voice_lyric_started || voice_lyric_lead != MUMBLE_LETTERS))
+        (voice_lyric_at || (voice_lyric_started && !before.arp) || voice_lyric_lead != MUMBLE_LETTERS))
         fail("S2 FX in SING did not go back to the line's top");
     if (edit_tap && !pressed && alone && !(before.play && let_go)) {
         if (before.play) {
@@ -472,7 +478,7 @@ static void step_after(void)
     if (before.play && voice_held != ((before.letters & before.keys) | before.key_down))
         fail("S2 SING does not hold exactly the keys still down and the new ones");
     /* SING: the queue follows its leading key, and goes back to the top as the loop wraps. */
-    if (before.play && voice_lyric_sig == before.lyric_sig) {
+    if (before.play && !before.arp && voice_lyric_sig == before.lyric_sig) {
         unsigned at = before.lyric_at, started = before.lyric_started, lead = before.lyric_lead;
         uint32_t still = before.letters & before.keys;
         if (lead < MUMBLE_LETTERS && !(still & (1u << lead))) lead = MUMBLE_LETTERS;
@@ -487,7 +493,7 @@ static void step_after(void)
             fail("S2 the queue did not follow its leading key (or the loop's wrap)");
     }
     /* SING: the last key pressed is sung at once. */
-    if (before.play && before.key_down) {
+    if (before.play && !before.arp && before.key_down) {
         unsigned last = 31u - (unsigned)__builtin_clz(before.key_down), sung = 0;
         for (unsigned who = 0; who < MUMBLE_CAST; ++who) sung |= voice_sings[who] == last + 1u;
         if (!sung) fail("S2 the last key pressed is not sung");

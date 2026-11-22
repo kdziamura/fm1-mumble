@@ -83,11 +83,11 @@ wait 50
 expect take 1
 tap REC
 expect recording 0
-# ARP: another line; the queue starts over on it.
+# PRESET: another line; the queue starts over on it.
 tapkey 2
 wait 100
 expect lyric 2
-tap ARP
+turn PRESET 1
 wait 100
 expect lyric 0
 # The loop keeps no words: it sings the line as it is. A note recorded on
@@ -137,8 +137,8 @@ expect length 3
 wait 3550
 expect sounding 1
 expect vowel 4
-# Each pass of the loop sings from the top of the line (a longer one: ARP).
-tap ARP
+# Each pass of the loop sings from the top of the line (a longer one: PRESET).
+turn PRESET 1
 tap GLO
 tapkey 2
 tapkey 3

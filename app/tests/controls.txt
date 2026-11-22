@@ -60,7 +60,7 @@ wait 100
 shot help-sing.png
 release HOME
 # SING: K1 moves PITCH; EDIT held with K1 turned puts it back, and the line stays.
-tap ARP
+turn PRESET 1
 wait 50
 turn K1 12
 wait 50
@@ -84,6 +84,26 @@ tap SEL
 expect scale 0
 tapkey 1
 expect pitch_class 6
+# ARP: two keys held are sung in turn, a 16th each (125 ms at 120 BPM), a
+# syllable each; let go, nothing sings.
+tap ARP
+expect arp 1
+key 0 down
+key 4 down
+wait 40
+expect sung 0
+expect singing 1
+wait 125
+expect sung 4
+expect singing 1
+wait 125
+expect sung 0
+key 0 up
+key 4 up
+wait 50
+expect singing 0
+tap ARP
+expect arp 0
 # LFO rolls a new voice for the character.
 tap LFO
 wait 50

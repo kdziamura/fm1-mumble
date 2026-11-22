@@ -17,7 +17,10 @@
  * from the top of the line.
  *
  *   PLAY loop on/off   REC record (from TYPE: to SING first)   GLO the mode
- *   SELECT character   SAVE choir   ARP / PRESET demo lines   HOME held: help
+ *   SELECT character   SAVE choir   PRESET demo lines   HOME held: help
+ *   ARP   the arpeggiator: where the keys sing, the keys held are sung one at
+ *         a time, a 16th each (on the loop's while it runs), up the keys and
+ *         round the choir, a syllable each
  *   TYPE  keys type at the cursor   K1 cursor   K2 the letter under it
  *         OCT- delete   OCT+ CAPS   FX ,  SCL .  ENV ?  LFO !
  *         EDIT a word back; held 1 s: clear the line, then the loop
@@ -67,7 +70,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "K1 CURSOR  K2 LETTER  OCT- DELETE",
      "OCT+ CAPS  FX ,  SCL .  ENV ?  LFO !",
      "EDIT: A WORD BACK  HOLD: CLEAR",
-     "ARP: DEMO  SAVE: CHOIR  PLAY: LOOP",
+     "PRESET: DEMO  SAVE: CHOIR  PLAY: LOOP",
      "SELECT: WHO  REC: SING AND RECORD"},
     {"KEYS SING THE LINE  HELD: A CHORD",
      "PLAY: LOOP  REC: RECORD  GLO: LOOP",
@@ -158,6 +161,11 @@ static void voice_say(const char *a, const char *b, const char *c);
 
 static struct voice_track *voice_track(void) { return &voice_tracks[voice_cast]; }
 static unsigned voice_in_choir(unsigned i) { return i == voice_cast || voice_tracks[i].choir; }
+/* ARP: on, the step it sang last (-1: none yet), when the free-running
+ * clock steps next, when the note sung lets go, and the last key sung. */
+static unsigned voice_arp, voice_arp_key = MUMBLE_LETTERS, voice_arp_step;
+static int32_t voice_arp_index = -1;
+static uint32_t voice_arp_next, voice_arp_off;
 /* Notes in the sequence for track t (all of them for MUMBLE_CAST). */
 static unsigned voice_notes_of(unsigned t)
 {
@@ -572,10 +580,21 @@ static void voice_take_up(unsigned who)
 }
 /* A key pressed goes to a choir member singing nothing (the selected one
  * first), else to the one singing the oldest note. */
+static void voice_arp_tick(void);
 static void voice_sing(const struct fm1_controls *c, uint32_t down)
 {
     uint32_t up = voice_held & ~c->keys;
     voice_held &= c->keys;
+    if (voice_arp) {
+        /* The keys are only held: the arpeggiator sings them in turn. */
+        for (unsigned who = 0; who < MUMBLE_CAST; ++who)
+            if (voice_sings[who] && (up & (1U << (voice_sings[who] - 1U)))) voice_note_off(who);
+        if (!voice_held && down) voice_arp_index = -1, voice_arp_next = frame_time;   /* the first key: at once */
+        for (unsigned key = 0; key < MUMBLE_LETTERS; ++key)
+            if (down & (1U << key)) voice_held |= 1U << key, voice_key_order[key] = ++voice_order;
+        voice_arp_tick();
+        return;
+    }
     if (voice_lyric_lead < MUMBLE_LETTERS && !(voice_held & (1U << voice_lyric_lead))) voice_lyric_lead = MUMBLE_LETTERS;
     for (unsigned who = 0; who < MUMBLE_CAST; ++who)
         if (voice_sings[who] && (up & (1U << (voice_sings[who] - 1U)))) {
@@ -605,6 +624,54 @@ static void voice_sing(const struct fm1_controls *c, uint32_t down)
     }
 }
 
+/* The arpeggiator's step: on the loop's 16ths while it runs, else on its own
+ * clock at the loop's tempo. Each step the next key held up the keyboard
+ * (round to the lowest) is sung by the next of the choir, for half a step,
+ * on the next syllable. */
+static void voice_arp_tick(void)
+{
+    if (!voice_held) {
+        for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_note_off(who);
+        voice_arp_key = MUMBLE_LETTERS;
+        return;
+    }
+    uint32_t step_ms = voice_step_ms(1);
+    int32_t at = mumble_song_position(), index;
+    if (at >= 0) index = (int32_t)((uint32_t)at % voice_loop_ms() * voice_steps() / voice_loop_ms());
+    else if ((int32_t)(frame_time - voice_arp_next) >= 0) {
+        index = voice_arp_index + 1;
+        voice_arp_next = frame_time + step_ms;
+    } else index = voice_arp_index;
+    if ((int32_t)(frame_time - voice_arp_off) >= 0)
+        for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_note_off(who);
+    if (index == voice_arp_index) return;
+    voice_arp_index = index;
+    unsigned key = voice_arp_key < MUMBLE_LETTERS ? voice_arp_key + 1U : 0U;
+    while (!(voice_held & (1U << (key % MUMBLE_LETTERS)))) ++key;
+    key %= MUMBLE_LETTERS;
+    unsigned choir[MUMBLE_CAST], n = 0;
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i)
+        if (voice_in_choir((voice_cast + i) % MUMBLE_CAST)) choir[n++] = (voice_cast + i) % MUMBLE_CAST;
+    unsigned who = choir[voice_arp_step++ % n];
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_note_off(i);
+    voice_lyric_lead = MUMBLE_LETTERS;
+    voice_lyric_take(key);
+    voice_lyric_lead = MUMBLE_LETTERS;
+    voice_note_on(who, key);
+    voice_arp_key = key;
+    voice_arp_off = frame_time + step_ms / 2U;
+}
+/* ARP on or off: what sings lets go, the keys still held start again. */
+static void voice_arp_set(unsigned on)
+{
+    for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_note_off(who);
+    voice_lyric_lead = MUMBLE_LETTERS;
+    voice_arp = on;
+    voice_arp_key = MUMBLE_LETTERS;
+    voice_arp_index = -1;
+    voice_arp_next = frame_time;
+    voice_held = 0;
+}
 static void voice_notice(const char *message)
 {
     notice = message;
@@ -743,7 +810,11 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     }
     if (!edit && voice_edit_down && !voice_edit_spent) voice_edit_tap();
     voice_edit_down = edit;
-    if (pressed & BUTTON(ARP)) voice_demo_line((voice_demo + 1U) % VOICE_LINES);
+    if (pressed & BUTTON(ARP)) {
+        voice_arp_set(!voice_arp);
+        voice_notice(voice_arp ? (voice_play ? "ARPEGGIATOR: HOLD KEYS" : "ARPEGGIATOR ON (KEYS IN SING)")
+                               : "ARPEGGIATOR OFF");
+    }
     static const uint8_t marks[4][2] = {{FX, ','}, {SCL, '.'}, {ENV, '?'}, {LFO, '!'}};
     static const char *const mark_names[4] = {"FX", "SCL", "ENV", "LFO"};
     for (unsigned i = 0; i < 4; ++i)
@@ -785,7 +856,7 @@ static uint32_t voice_button_bits(void)
     uint32_t octave = voice_play ? ((voice_octave > 0) << OCT_UP) | ((voice_octave < 0) << OCT_DOWN)
                                  : voice_caps << OCT_UP;
     return ((voice_song != 0) << PLAY) | octave | (voice_play << GLO) | ((uint32_t)voice_track()->choir << SAVE) |
-           (voice_recording << REC) | (1U << ARP) | ((voice_play && voice_scale) << SCL);
+           (voice_recording << REC) | (voice_arp << ARP) | ((voice_play && voice_scale) << SCL);
 }
 
 /* Control-side snapshot, taken once per frame before marking damage: the
@@ -1146,7 +1217,7 @@ static void voice_lines_draw(void)
         cache->voice_cache[3 + r] = sig;
         paint_fill(4, y - 2, 232, 18, BACK);
         if (!shown && r == 0) {
-            text(10, y + 3, "* TYPE A LINE (ARP: A DEMO ONE)", 1, DIM, BACK);
+            text(10, y + 3, "* TYPE A LINE (PRESET: A DEMO)", 1, DIM, BACK);
             continue;
         }
         /* The font has no lower case: shouted (all-caps) words show in amber. */

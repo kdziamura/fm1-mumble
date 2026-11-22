@@ -44,7 +44,8 @@ LOOP a key is lit while it is held.
 | ALGO, SEQ | — | The page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | — |
 | GLO | To SING | To LOOP (recording carries on) | To TYPE |
 | SELECT / SAVE | The character / in or out of the choir | | |
-| ARP, PRESET | A demo line | | |
+| PRESET | A demo line | | |
+| ARP | The arpeggiator on or off (ARP lit) | The keys held sung one at a time, a 16th each (on the loop's while it runs), up the keys and round the choir, a syllable each | As in SING |
 | PLAY / REC | The loop on or off / record into it (from TYPE: to SING first) | | |
 
 ## Build and test

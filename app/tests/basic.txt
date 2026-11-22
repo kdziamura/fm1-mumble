@@ -16,8 +16,8 @@ turn SELECT 1
 wait 300
 expect cast 1
 expect length 2
-# ARP: a demo line.
-tap ARP
+# PRESET: a demo line.
+turn PRESET 1
 expect length >20
 # GLO: SING mode; a held key sings the line's first syllable.
 tap GLO
