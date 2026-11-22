@@ -165,20 +165,6 @@ static void note_name(unsigned note, char out[12])
     for (unsigned i = 0; oct[i]; ++i) out[n++] = oct[i];
     out[n] = 0;
 }
-/* One of the four knobs along the foot: its label, value and colour. */
-static void knob(unsigned col, const char *label, const char *value, uint16_t color)
-{
-    if (paint_rendering && (paint_top >= 227 || paint_top + PAINT_ROWS <= 195)) return;
-    uint32_t sig = signature(signature(color, label, paint_strlen(label)), value, paint_strlen(value));
-    if (cache->foot_cache[col] == sig) return;
-    cache->foot_cache[col] = sig;
-    unsigned x = 6 + 59 * col;
-    paint_fill(x, 195, 54, 32, BACK);
-    paint_fill(x, 195, 54, 2, color);
-    text(x, 200, label, 1, TEXT, BACK);
-    text(x, 212, value, paint_strlen(value) <= 4 ? 2 : 1, color, BACK);
-}
-
 /* Draw: mark the damage, then compose and send each damaged band. */
 static void paint_frame(void (*draw)(void))
 {

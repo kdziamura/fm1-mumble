@@ -27,11 +27,15 @@
  *       SING, the metronome exactly while recording, sounds in range ...);
  *   S2  the frame did what a model of the controls says: GLO switches TYPE
  *       and SING, REC records (from TYPE: to SING first), PLAY starts or stops
- *       the loop, SELECT and ALGO move by their detents, a knob moves its
- *       parameter of the selected sound by the accelerated amount, EDIT undoes
- *       exactly the last pass (SING) or clears the line, then the loop (TYPE),
- *       FX rewinds the line (SING); with nothing pressed or turned no setting
- *       changes, TYPE adds exactly the keys' letters, SING holds exactly the
+ *       the loop, SELECT and ALGO move by their detents, in SING a knob moves
+ *       its parameter of the selected sound by the accelerated amount (with
+ *       EDIT held, back to the character's), in TYPE K1 moves the cursor and
+ *       K2 changes only the letter under it; EDIT let go unspent undoes
+ *       exactly the last pass (SING) or cuts the word before the cursor
+ *       (TYPE), held 1 s it clears the loop (SING) or the line, then the loop
+ *       (TYPE); FX rewinds the line (SING); with nothing pressed or turned no
+ *       setting changes, TYPE types exactly the keys' letters at the cursor,
+ *       SING holds exactly the
  *       keys still down and the new ones, the last key pressed is sung at
  *       once, the queue moves on only with a key pressed after the leading one
  *       was let go and goes back to the top as the loop wraps, and the
@@ -188,6 +192,7 @@ static void check_state(void)
     if (voice_bpm < 40 || voice_bpm > 240) fail("S1 BPM out of 40..240");
     if (voice_octave < -2 || voice_octave > 2) fail("S1 octave out of -2..2");
     if (voice_length > MUMBLE_TEXT || voice_text[voice_length]) fail("S1 the line is not text of its length");
+    if (voice_cursor > voice_length) fail("S1 the cursor past the line's end");
     for (unsigned i = 0; i < voice_length; ++i)
         if ((unsigned char)voice_text[i] < 32u || (unsigned char)voice_text[i] > 126u) fail("S1 the line is not printable");
     if (voice_held & ~held_keys) fail("S1 a key held whose key is up");
@@ -243,7 +248,7 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
-    unsigned length, cast, page, caps, play, bars, bpm, demo, song, recording;
+    unsigned length, cursor, cast, page, caps, play, bars, bpm, demo, song, recording;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
@@ -258,7 +263,7 @@ static void step_before(void)
 {
     memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
     memcpy(before.text, voice_text, sizeof voice_text);
-    before.length = voice_length, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
+    before.length = voice_length, before.cursor = voice_cursor, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
     before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
     before.song = voice_song, before.recording = voice_recording, before.octave = voice_octave;
     before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count, before.lyric_started = voice_lyric_started;
@@ -280,12 +285,24 @@ static int same_note(unsigned k, unsigned j)
 {
     return voice_seq_track[k] == before.seq_track[j] && !memcmp(&voice_seq[k], &before.seq[j], sizeof voice_seq[k]);
 }
+/* EDIT as the model sees it: when it went down, whether it was spent (held
+ * 1 s, or a knob turned with it), whether it was down last frame. */
+static uint32_t edit_since;
+static unsigned edit_spent, edit_was;
 static void step_after(void)
 {
     uint32_t pressed = before.pressed;
     unsigned turned_any = 0;
     for (unsigned i = 0; i < 7; ++i) turned_any |= before.turned[i] != 0;
     unsigned alone = !turned_any && !before.key_down;
+    unsigned edit = (before.held & BUTTON(EDIT)) != 0, edit_tap = 0, edit_hold = 0;
+    if (pressed & BUTTON(EDIT)) edit_since = now_ms, edit_spent = 0;
+    if (edit && turned_any) edit_spent = 1;
+    if (edit && !edit_spent && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
+    if (!edit && edit_was && !edit_spent) edit_tap = 1;
+    edit_was = edit;
+    /* (A recorded note let go in the same frame joins the loop after EDIT acts.) */
+    unsigned let_go = (before.letters & ~before.keys) != 0;
     /* One control at a time, as each does. */
     if (pressed == BUTTON(GLO) && alone) {
         if (voice_play == before.play) fail("S2 GLO did not switch TYPE and SING");
@@ -303,7 +320,7 @@ static void step_after(void)
     if (pressed == BUTTON(FX) && alone && before.play &&
         (voice_lyric_at || voice_lyric_started || voice_lyric_lead != MUMBLE_LETTERS))
         fail("S2 FX in SING did not go back to the line's top");
-    if (pressed == BUTTON(EDIT) && alone) {
+    if (edit_tap && !pressed && alone && !(before.play && let_go)) {
         if (before.play) {
             unsigned last = 0, kept = 0;
             for (unsigned j = 0; j < before.seq_count; ++j)
@@ -314,10 +331,22 @@ static void step_after(void)
                     ++kept;
                 }
             if (kept != voice_seq_count) fail("S2 EDIT in SING did not undo the last pass");
-        } else if (before.length) {
-            if (voice_length || voice_seq_count != before.seq_count) fail("S2 EDIT did not clear just the line");
+        } else {
+            unsigned from = before.cursor;
+            while (from && before.text[from - 1u] == ' ') --from;
+            while (from && before.text[from - 1u] != ' ') --from;
+            unsigned cut = before.cursor - from;
+            if (voice_length != before.length - cut || voice_cursor != from || memcmp(voice_text, before.text, from) ||
+                memcmp(voice_text + from, before.text + before.cursor, before.length - before.cursor))
+                fail("S2 EDIT in TYPE did not cut just the word before the cursor");
+            if (voice_seq_count != before.seq_count) fail("S2 EDIT tapped in TYPE touched the loop");
+        }
+    }
+    if (edit_hold && !pressed && alone && !(before.play && let_go)) {
+        if (!before.play && before.length) {
+            if (voice_length || voice_seq_count != before.seq_count) fail("S2 EDIT held did not clear just the line");
         } else if (voice_seq_count)
-            fail("S2 EDIT on an empty line left notes in the loop");
+            fail("S2 EDIT held left notes in the loop");
     }
     if (pressed == 0 && before.turned[0] && !before.turned[6]) {
         int n = before.turned[0] % (int)MUMBLE_CAST;
@@ -329,19 +358,39 @@ static void step_after(void)
     if (!(pressed & BUTTON(SEQ)) && before.turned[1] &&
         voice_page != (unsigned)(((int)before.page + before.turned[1] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
         fail("S2 ALGO did not move the page by its detents");
-    /* The knobs on a sound page: the selected sound, those parameters, by the accelerated amount, kept in range. */
-    if (!pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && before.page != LOOP_PAGE) {
+    /* SING, the knobs on a sound page: the selected sound, those parameters, by
+     * the accelerated amount, kept in range; with EDIT held, the character's. */
+    if (before.play && !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && before.page != LOOP_PAGE) {
         struct mumble_voice want = before.tracks[before.cast].sound;
         for (unsigned c = 0; c < 4; ++c) {
             int v = before.turned[2 + c];
             if (!v) continue;
             int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
             unsigned p = before.page * 4u + c;
-            want.value[p] = (uint16_t)clamp((int)want.value[p] + v * gain, mumble_params[p].min, mumble_params[p].max);
+            want.value[p] = edit ? mumble_cast[before.cast].voice.value[p]
+                                 : (uint16_t)clamp((int)want.value[p] + v * gain, mumble_params[p].min, mumble_params[p].max);
         }
         if (memcmp(&want, &voice_tracks[before.cast].sound, sizeof want)) fail("S2 a knob moved the sound wrongly");
     }
-    if (pressed || turned_any) return;
+    /* TYPE, K1 then K2 alone: the cursor moved by the accelerated amount, then
+     * the letter under it changed (at the end, one added) and nothing else. */
+    if (!before.play && !pressed && !before.key_down && !before.turned[0] && !before.turned[6] && !edit_tap &&
+        !edit_hold && (before.turned[2] || before.turned[3])) {
+        if (memcmp(before.tracks, voice_tracks, sizeof voice_tracks)) fail("S2 a TYPE knob changed a sound");
+        int v = before.turned[2], a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4;
+        unsigned at = (unsigned)clamp((int)before.cursor + v * gain, 0, (int)before.length);
+        if (voice_cursor != at) fail("S2 K1 did not move the cursor by its detents");
+        unsigned grew = before.turned[3] && at == before.length && before.length < MUMBLE_TEXT;
+        if (voice_length != before.length + grew) fail("S2 K2 changed the line's length but at its end");
+        for (unsigned i = 0; i < before.length; ++i)
+            if (i != at && voice_text[i] != before.text[i]) fail("S2 K2 changed a letter not under the cursor");
+        if (before.turned[3] && (at < before.length || grew)) {
+            char c = voice_text[at];
+            if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            if (!memchr(voice_alphabet, c, VOICE_ALPHABET)) fail("S2 K2 made a letter not in its alphabet");
+        }
+    }
+    if (pressed || turned_any || edit_tap || edit_hold) return;
 
     /* Nothing pressed or turned: only the keys act, and only as the mode says. */
     if (voice_cast != before.cast || voice_page != before.page || voice_caps != before.caps ||
@@ -351,16 +400,23 @@ static void step_after(void)
     if (!before.song && voice_song) fail("S2 the loop started with nothing pressed");
     if (memcmp(before.tracks, voice_tracks, sizeof voice_tracks)) fail("S2 a character changed with nothing pressed or turned");
     if (!before.play) {
-        /* TYPE: each key down adds its letter (in key order), the oldest falling off a full line. */
+        /* TYPE: each key down types its letter at the cursor (in key order); on
+         * a full line the oldest falls off (at the end) or the last (inside). */
         char want[MUMBLE_TEXT + 1];
-        unsigned n = before.length;
+        unsigned n = before.length, at = before.cursor;
         memcpy(want, before.text, n);
         for (unsigned k = 0; k < 27; ++k) {
             if (!(before.key_down & (1u << k))) continue;
-            if (n >= MUMBLE_TEXT) { memmove(want, want + 1, MUMBLE_TEXT - 1); n = MUMBLE_TEXT - 1; }
-            want[n++] = k == 26 ? ' ' : (char)((before.caps ? 'A' : 'a') + k);
+            if (n >= MUMBLE_TEXT) {
+                if (at < n) --n;
+                else { memmove(want, want + 1, MUMBLE_TEXT - 1); n = at = MUMBLE_TEXT - 1; }
+            }
+            memmove(want + at + 1, want + at, n - at);
+            want[at++] = k == 26 ? ' ' : (char)((before.caps ? 'A' : 'a') + k);
+            ++n;
         }
-        if (voice_length != n || memcmp(voice_text, want, n)) fail("S2 typing did not add exactly the keys' letters");
+        if (voice_length != n || voice_cursor != at || memcmp(voice_text, want, n))
+            fail("S2 typing did not put exactly the keys' letters at the cursor");
     } else if (voice_length != before.length || memcmp(voice_text, before.text, voice_length))
         fail("S2 the line changed in SING with nothing pressed");
     /* The sequence: its notes kept, new ones only from singers being recorded,
@@ -478,6 +534,7 @@ static void boot(void)
     now_ms = 0, held_buttons = held_keys = lit_buttons = lit_keys = 0;
     memset(turned, 0, sizeof turned);
     master_q12 = 4096, audio_debt = 0, audio_sum = 0, audio_peak = 0;
+    edit_since = 0, edit_spent = 0, edit_was = 0;
     app_init();
     app_ui_init();
     frame();
@@ -593,6 +650,10 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
         fail("the app's state is not all in its sections");
 #endif
     check_button_order();
+    /* The help card's rows fit the dialogue box (a longer one draws over its border). */
+    for (unsigned m = 0; m < 2; ++m)
+        for (unsigned r = 0; r < VOICE_HELP_ROWS; ++r)
+            if (strlen(voice_help_rows[m][r]) > VOICE_HELP_COLUMNS) fail("a help row wider than the dialogue box");
     return 0;
 }
 

@@ -14,11 +14,15 @@
  * now, so a new line changes what the loop sings. Each pass of the loop sings
  * from the top of the line.
  *
- *   PLAY loop on/off   REC record (SING)   EDIT undo a pass (SING), clear line /
- *   then the loop (TYPE)   OCT-/OCT+ delete / CAPS (TYPE), octave (SING)
- *   FX , (TYPE) / from the top (SING)   SCL .  ENV ?  LFO !   SAVE choir
- *   ARP / PRESETS demo lines   SELECT character   K1/SEQ page   K2..K5 sound
- *   GLO TYPE/SING   HOME exit
+ *   PLAY loop on/off   REC record (from TYPE: to SING first)   GLO TYPE/SING
+ *   SELECT character   SAVE choir   ARP / PRESET demo lines   HOME held: help
+ *   TYPE  keys type at the cursor   K1 cursor   K2 the letter under it
+ *         OCT- delete   OCT+ CAPS   FX ,  SCL .  ENV ?  LFO !
+ *         EDIT a word back; held 1 s: clear the line, then the loop
+ *   SING  ALGO / SEQ page   K1..K4 sound (EDIT held: back to the character's)
+ *         OCT- OCT+ octave   FX from the top of the line
+ *         EDIT undo a pass; held 1 s: clear the loop
+ * Every button says what it did on the hint line.
  *
  * Included by app.c: uses paint.inc's helpers and draw cache. */
 #include "mumble.h"
@@ -45,18 +49,26 @@ static const char *const voice_lines[] = {
     "Bread, cheese, a lantern. That will be nine coins.",
     "Who goes there? Is it... dinner time?"};
 enum { VOICE_LINES = sizeof voice_lines / sizeof voice_lines[0] };
-static const char *const voice_hints[] = {
-    "KEYS TYPE THE LINE  GLO SING",
-    "FX ,  SCL .  ENV ?  LFO !  OCT+ CAPS",
-    "OCT- DEL  EDIT CLEAR  ARP DEMO LINE",
-    "PLAY LOOP  TYPE WHILE IT PLAYS",
-    "SELECT WHO  K1 PAGE  PRESETS LINES"};
-static const char *const voice_line_hints[] = {
-    "HOLD A KEY: A CHORD SINGS ITS SYLLABLE",
-    "LET IT GO: THE NEXT KEY MOVES ON",
-    "REC: RECORD  EDIT: UNDO A PASS",
-    "FX: FROM THE TOP  OCT- OCT+ OCTAVE",
-    "SAVE: CHOIR  GLO: TYPE A NEW LINE"};
+/* The hint line's tip in each mode (TYPE, SING), and HOME's help card. */
+static const char *const voice_tips[2] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
+                                          "KEYS SING THE LINE  HOLD HOME: HELP"};
+enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
+static const char *const voice_help_rows[2][VOICE_HELP_ROWS] = {
+    {"KEYS TYPE AT THE CURSOR   GLO: SING",
+     "K1 CURSOR  K2 LETTER  OCT- DELETE",
+     "OCT+ CAPS  FX ,  SCL .  ENV ?  LFO !",
+     "EDIT: A WORD BACK  HOLD: CLEAR",
+     "ARP: DEMO  SAVE: CHOIR  PLAY: LOOP",
+     "SELECT: WHO  REC: SING AND RECORD"},
+    {"KEYS SING THE LINE  HELD: A CHORD",
+     "PLAY: LOOP  REC: RECORD  GLO: TYPE",
+     "OCT- OCT+ OCTAVE  FX: FROM THE TOP",
+     "EDIT: UNDO A PASS  HOLD: CLEAR LOOP",
+     "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
+     "SELECT: WHO  SAVE: CHOIR"}};
+/* K2's letters in TYPE mode, round and round. */
+static const char voice_alphabet[] = "abcdefghijklmnopqrstuvwxyz ,.?!'-";
+enum { VOICE_ALPHABET = sizeof voice_alphabet - 1, VOICE_HOLD_MS = 1000 };
 
 /* A character: sound, choir, and place in the loop. */
 enum { VOICE_PAGES = MUMBLE_PAGES + 1, LOOP_PAGE = MUMBLE_PAGES, VOICE_SEQ = 128, VOICE_PASSES = 8 };
@@ -110,6 +122,15 @@ static uint32_t voice_rec_held, voice_rec_since[MUMBLE_CAST];
 static uint16_t voice_rec_at[MUMBLE_CAST];
 static uint8_t voice_rec_note[MUMBLE_CAST], voice_rec_slot[MUMBLE_CAST];
 static int32_t voice_loop_last_ms = -1;
+/* TYPE mode's cursor (0..voice_length: keys type before it, K2 changes the
+ * letter under it) and when it last moved (its blink starts lit). */
+static unsigned voice_cursor;
+static uint32_t voice_cursor_ms;
+/* HOME held: the help card. EDIT: when it went down, and whether it was spent
+ * (held long enough to clear, or a knob turned with it): a tap acts on release. */
+static unsigned voice_help, voice_edit_down, voice_edit_spent;
+static uint32_t voice_edit_since;
+static char voice_said[40];
 static void voice_rec_stop(void);
 static void voice_notice(const char *message);
 
@@ -135,6 +156,7 @@ static void voice_set_text(const char *s)
     memcpy(voice_text, s, n);
     voice_text[n] = 0;
     voice_length = n;
+    voice_cursor = n;
 }
 
 /* The loop follows the FM1 tempo while its sequencer plays. */
@@ -212,16 +234,78 @@ static void voice_close(void)
     voice_held = 0;
     voice_song = 0;
 }
+/* A letter typed at the cursor. On a full line the oldest letter falls off
+ * (typing at the end) or the last one does (typing inside the line). */
 static void voice_type(char c)
 {
     if (voice_length >= MUMBLE_TEXT) {
-        memmove(voice_text, voice_text + 1, MUMBLE_TEXT - 1);
-        voice_length = MUMBLE_TEXT - 1;
+        if (voice_cursor < voice_length) --voice_length;
+        else {
+            memmove(voice_text, voice_text + 1, MUMBLE_TEXT - 1);
+            voice_length = MUMBLE_TEXT - 1;
+            voice_cursor = voice_length;
+        }
     }
-    voice_text[voice_length++] = c;
-    voice_text[voice_length] = 0;
-    /* The live lane says it now; the loop sings the new line from the next syllable it reaches. */
-    mumble_type(voice_cast, voice_text, voice_length, &voice_track()->sound);
+    memmove(voice_text + voice_cursor + 1, voice_text + voice_cursor, voice_length - voice_cursor);
+    voice_text[voice_cursor++] = c;
+    voice_text[++voice_length] = 0;
+    voice_cursor_ms = frame_time;
+    /* The live lane says what ends at the cursor now; the loop sings the new
+     * line from the next syllable it reaches. */
+    mumble_type(voice_cast, voice_text, voice_cursor, &voice_track()->sound);
+}
+/* Letters from..to-1 out of the line, the cursor kept on what follows. */
+static void voice_cut(unsigned from, unsigned to)
+{
+    memmove(voice_text + from, voice_text + to, voice_length - to + 1U);
+    voice_length -= to - from;
+    voice_cursor = voice_cursor >= to ? voice_cursor - (to - from) : voice_cursor > from ? from : voice_cursor;
+    voice_cursor_ms = frame_time;
+}
+/* EDIT's tap in TYPE: the word before the cursor (and the spaces after it). */
+static unsigned voice_cut_word(void)
+{
+    unsigned from = voice_cursor;
+    while (from && voice_text[from - 1U] == ' ') --from;
+    while (from && voice_text[from - 1U] != ' ') --from;
+    if (from == voice_cursor) return 0;
+    voice_cut(from, voice_cursor);
+    return 1;
+}
+static void voice_move_cursor(int delta)
+{
+    voice_cursor = (unsigned)clamp((int)voice_cursor + delta, 0, (int)voice_length);
+    voice_cursor_ms = frame_time;
+}
+/* K2 in TYPE: the letter under the cursor round the alphabet (keeping its
+ * case); at the line's end, a new one. */
+static unsigned voice_letter_at(unsigned i)
+{
+    char c = i < voice_length ? voice_text[i] : 0;
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    unsigned at = 0;
+    while (at < VOICE_ALPHABET && voice_alphabet[at] != c) ++at;
+    return at;                                   /* VOICE_ALPHABET: none (the end, or another mark) */
+}
+static void voice_letter(int delta)
+{
+    unsigned at = voice_letter_at(voice_cursor), upper = voice_caps;
+    if (voice_cursor < voice_length) {
+        char was = voice_text[voice_cursor];
+        upper |= was >= 'A' && was <= 'Z';
+        if (at == VOICE_ALPHABET) at = delta > 0 ? VOICE_ALPHABET - 1U : 0U;   /* from either end */
+    } else {
+        if (voice_length >= MUMBLE_TEXT) { voice_notice("THE LINE IS FULL"); return; }
+        at = delta > 0 ? VOICE_ALPHABET - 1U : 0U;
+        memmove(voice_text + voice_cursor + 1, voice_text + voice_cursor, 1);
+        ++voice_length;
+    }
+    at = (unsigned)(((int)at + delta % (int)VOICE_ALPHABET + (int)VOICE_ALPHABET) % (int)VOICE_ALPHABET);
+    char c = voice_alphabet[at];
+    if (upper && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    voice_text[voice_cursor] = c;
+    voice_cursor_ms = frame_time;
+    mumble_type(voice_cast, voice_text, voice_cursor + 1U, &voice_track()->sound);
 }
 static unsigned voice_parameter(unsigned col) { return voice_page * 4U + col; }
 static const uint8_t voice_bar_choices[4] = {1, 2, 4, 8};
@@ -245,6 +329,29 @@ static void voice_edit(unsigned col, int delta)
     const struct mumble_param_info *info = &mumble_params[p];
     t->sound.value[p] = (uint16_t)clamp((int)t->sound.value[p] + delta, info->min, info->max);
     voice_touch();
+}
+/* EDIT held and a knob turned: that setting back to where it starts. */
+static void voice_reset(unsigned col)
+{
+    struct voice_track *t = voice_track();
+    if (voice_page == LOOP_PAGE) {
+        static const char *const names[4] = {"START", "LEVEL", "BARS", "BPM"};
+        if (col == 0) t->start = 0;
+        else if (col == 1) t->level = 100;
+        else if (col == 2) voice_bars = 2;
+        else voice_bpm = 120;
+        for (unsigned k = 0; k < MUMBLE_CAST; ++k)
+            if (voice_tracks[k].start >= voice_steps()) voice_tracks[k].start = (uint8_t)(voice_steps() - 1U);
+        voice_touch();
+        strcpy(voice_said, names[col]);
+    } else {
+        unsigned p = voice_parameter(col);
+        t->sound.value[p] = mumble_cast[voice_cast].voice.value[p];
+        voice_touch();
+        strcpy(voice_said, mumble_params[p].name);
+    }
+    strcat(voice_said, " AS IT WAS");
+    voice_notice(voice_said);
 }
 static unsigned voice_edited(void)
 {
@@ -506,6 +613,22 @@ static void voice_notice(const char *message)
     notice = message;
     notice_until = frame_time + 1500U;
 }
+/* A notice made of parts (held in voice_said, so it lasts its 1.5 s). */
+static void voice_say(const char *a, const char *b, const char *c)
+{
+    const char *parts[3] = {a, b, c};
+    unsigned n = 0;
+    for (unsigned k = 0; k < 3; ++k)
+        for (const char *p = parts[k]; p && *p && n + 1U < sizeof voice_said; ++p) voice_said[n++] = *p;
+    voice_said[n] = 0;
+    voice_notice(voice_said);
+}
+static void voice_say_number(const char *a, int value, const char *c)
+{
+    char number[12];
+    decimal(number, value, 1);
+    voice_say(a, number, c);
+}
 /* GLO: TYPE <-> SING (recording stops in TYPE). */
 static void voice_mode_next(void)
 {
@@ -513,11 +636,44 @@ static void voice_mode_next(void)
     voice_rec_stop();
     voice_play ^= 1U;
 }
+static void voice_demo_line(unsigned demo)
+{
+    voice_demo = demo;
+    voice_set_text(voice_lines[voice_demo]);
+    char of[12] = " OF ", count[12];
+    decimal(count, VOICE_LINES, 1);
+    strcat(of, count);
+    voice_say_number("DEMO LINE ", (int)voice_demo + 1, of);
+}
+/* EDIT let go before it was held 1 s, with no knob turned. */
+static void voice_edit_tap(void)
+{
+    if (voice_play) voice_notice(voice_undo() ? (voice_seq_count ? "LAST PASS UNDONE" : "THE LOOP IS EMPTY") : "NOTHING TO UNDO");
+    else if (!voice_cut_word()) voice_notice(voice_length ? "HOLD EDIT TO CLEAR THE LINE" : "HOLD EDIT TO CLEAR THE LOOP");
+}
+/* EDIT held 1 s: in TYPE the line, or on an empty line the loop; in SING the loop. */
+static unsigned voice_edit_clears_line(void) { return !voice_play && voice_length; }
+static void voice_edit_hold(void)
+{
+    if (voice_edit_clears_line()) {
+        voice_set_text("");
+        voice_notice("THE LINE IS CLEARED");
+    } else {
+        voice_rec_stop();
+        voice_seq_clear();
+        voice_notice("THE LOOP IS CLEARED");
+    }
+}
 
 /* Returns 0 when a MIDI post must be retried, as apply_controls does. */
 static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32_t key_down)
 {
     if (pressed & BUTTON(HOME)) { voice_close(); page = OVERVIEW; return 1; }
+    voice_help = (c->buttons & BUTTON(HOME)) != 0;
+    unsigned edit = (c->buttons & BUTTON(EDIT)) != 0;
+    if (pressed & BUTTON(EDIT)) { voice_edit_since = frame_time; voice_edit_spent = 0; }
+    for (unsigned i = 0; i < 7; ++i)
+        if (edit && c->encoders[i]) voice_edit_spent = 1;
     if (c->encoders[0]) {
         voice_release_all();
         voice_pass_open = 0;
@@ -526,49 +682,68 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
         ++voice_lanes_version;
     }
+    unsigned paged = voice_page;
     if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
     if (pressed & BUTTON(SEQ)) voice_page = (voice_page + 1U) % VOICE_PAGES;
-    for (unsigned i = 0; i < 4; ++i)
-        if (c->encoders[2 + i]) voice_edit(i, fm_encoder_delta(2 + i, c->encoders[2 + i]));
-    if (c->encoders[6]) {
-        voice_demo = (unsigned)((int)voice_demo + c->encoders[6] % (int)VOICE_LINES + (int)VOICE_LINES) % VOICE_LINES;
-        voice_set_text(voice_lines[voice_demo]);
+    if (voice_page != paged || (pressed & BUTTON(SEQ)))
+        voice_say(voice_page_names[voice_page], voice_play ? " PAGE" : " PAGE: ITS KNOBS IN SING", NULL);
+    for (unsigned i = 0; i < 4; ++i) {
+        int turned = c->encoders[2 + i];
+        if (!turned) continue;
+        if (!voice_play) {                       /* TYPE: K1 the cursor, K2 its letter */
+            if (i == 0) voice_move_cursor(fm_encoder_delta(2, turned));
+            else if (i == 1) voice_letter(turned);
+        } else if (edit) voice_reset(i);
+        else voice_edit(i, fm_encoder_delta(2 + i, turned));
     }
-    if (pressed & BUTTON(GLO)) voice_mode_next();
+    if (c->encoders[6])
+        voice_demo_line((unsigned)((int)voice_demo + c->encoders[6] % (int)VOICE_LINES + (int)VOICE_LINES) % VOICE_LINES);
+    if (pressed & BUTTON(GLO)) {
+        voice_mode_next();
+        voice_notice(voice_play ? "SING: KEYS SING THE LINE" : "TYPE: KEYS TYPE THE LINE");
+    }
     if ((pressed & BUTTON(REC)) && !voice_play) voice_mode_next();       /* REC sings: to SING mode */
     if ((pressed & BUTTON(FX)) && voice_play) { voice_lyric_rewind(); voice_notice("FROM THE TOP OF THE LINE"); }
     if (pressed & BUTTON(SAVE)) {
         struct voice_track *t = voice_track();
         t->choir ^= 1U;
-        voice_notice(t->choir ? "JOINED THE CHOIR" : "LEFT THE CHOIR");
+        voice_say(mumble_cast[voice_cast].name, t->choir ? " JOINED THE CHOIR" : " LEFT THE CHOIR", NULL);
         ++voice_lanes_version;
     }
-    if (pressed & BUTTON(REC)) voice_rec_toggle();
+    if (pressed & BUTTON(REC)) {
+        voice_rec_toggle();
+        voice_notice(voice_recording ? "RECORDING: SING INTO THE LOOP" : "RECORDING STOPPED");
+    }
     if (voice_play) {
+        int octave = voice_octave;
         if ((pressed & BUTTON(OCT_UP)) && voice_octave < 2) ++voice_octave;
         if ((pressed & BUTTON(OCT_DOWN)) && voice_octave > -2) --voice_octave;
+        if (pressed & (BUTTON(OCT_UP) | BUTTON(OCT_DOWN)))
+            voice_say_number(voice_octave > 0 ? "OCTAVE +" : "OCTAVE ", voice_octave,
+                             voice_octave == octave ? (voice_octave ? " (AS FAR AS IT GOES)" : "") : "");
     } else {
-        if (pressed & BUTTON(OCT_UP)) voice_caps ^= 1U;
-        if ((pressed & BUTTON(OCT_DOWN)) && voice_length) voice_text[--voice_length] = 0;
-    }
-    if ((pressed & BUTTON(EDIT)) && voice_play) {
-        voice_notice(voice_undo() ? (voice_seq_count ? "LAST PASS UNDONE" : "THE LOOP IS EMPTY") : "NOTHING TO UNDO");
-    } else if (pressed & BUTTON(EDIT)) {
-        /* Clear the line; on an empty line, clear the loop. */
-        if (voice_length) voice_set_text("");
-        else {
-            voice_rec_stop();
-            voice_seq_clear();
-            voice_notice("THE LOOP IS CLEARED");
+        if (pressed & BUTTON(OCT_UP)) {
+            voice_caps ^= 1U;
+            voice_notice(voice_caps ? "CAPS: SHOUTED WORDS" : "CAPS OFF");
         }
+        if ((pressed & BUTTON(OCT_DOWN)) && voice_cursor) voice_cut(voice_cursor - 1U, voice_cursor);
     }
-    if (pressed & BUTTON(ARP)) {
-        voice_demo = (voice_demo + 1U) % VOICE_LINES;
-        voice_set_text(voice_lines[voice_demo]);
+    /* EDIT: a tap acts as it is let go; held 1 s it clears. */
+    if (edit && !voice_edit_spent && frame_time - voice_edit_since >= VOICE_HOLD_MS) {
+        voice_edit_spent = 1;
+        voice_edit_hold();
     }
+    if (!edit && voice_edit_down && !voice_edit_spent) voice_edit_tap();
+    voice_edit_down = edit;
+    if (pressed & BUTTON(ARP)) voice_demo_line((voice_demo + 1U) % VOICE_LINES);
     static const uint8_t marks[4][2] = {{FX, ','}, {SCL, '.'}, {ENV, '?'}, {LFO, '!'}};
-    for (unsigned i = 0; i < 4 && !voice_play; ++i)
-        if (pressed & BUTTON(marks[i][0])) voice_type((char)marks[i][1]);
+    static const char *const mark_names[4] = {"FX", "SCL", "ENV", "LFO"};
+    for (unsigned i = 0; i < 4; ++i)
+        if (pressed & BUTTON(marks[i][0])) {
+            char mark[2] = {(char)marks[i][1], 0};
+            if (!voice_play) voice_type(mark[0]);
+            else if (i) voice_say(mark_names[i], " TYPES ", mark), strcat(voice_said, " IN TYPE MODE");
+        }
     uint32_t typed = key_down & ~blocked_keys;
     if (voice_play) voice_sing(c, typed);
     else
@@ -579,6 +754,7 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     if (pressed & BUTTON(PLAY)) {
         if (voice_song) voice_stop();
         else voice_start();
+        voice_notice(voice_song ? "LOOP PLAYING" : "LOOP STOPPED");
     }
     return 1;
 }
@@ -768,12 +944,19 @@ static void voice_header(void)
     if (cache->voice_cache[0] == sig) return;
     cache->voice_cache[0] = sig;
     paint_fill(0, 0, 240, 28, BACK);
-    text(8, 7, "MUMBLE", 2, TEXT, BACK);
-    for (unsigned i = 0; i < 4; ++i) paint_fill(86 + i * 7, 6, 5, 5, voice_knob_colors[i]);
-    if (voice_song) text(120, 6, "LOOP", 1, ACCENT, BACK);
-    text(86, 16, voice_page_names[voice_page], 1, DIM, BACK);
-    if (voice_play) text(120, 16, "SING", 1, voice_caps ? AMBER : GREEN, BACK);
-    else if (voice_caps) text(120, 16, "CAPS", 1, AMBER, BACK);
+    /* The name and the mode, then the pages as tabs: the knobs' page lit (in
+     * SING, where the knobs play it), the others dim. */
+    text(8, 4, "MUMBLE", 1, TEXT, BACK);
+    text(50, 4, voice_play ? "SING" : "TYPE", 1, voice_play ? GREEN : TEXT, BACK);
+    if (voice_song) text(80, 4, "LOOP", 1, ACCENT, BACK);
+    if (voice_caps) text(110, 4, "CAPS", 1, AMBER, BACK);
+    for (unsigned k = 0, x = 8; k < VOICE_PAGES; ++k) {
+        unsigned n = (unsigned)strlen(voice_page_names[k]);
+        unsigned on = k == voice_page;
+        text(x, 16, voice_page_names[k], 1, on ? (voice_play ? TEXT : DIM) : PANEL, BACK);
+        if (on) paint_fill(x, 24, n * 6U - 1U, 2, voice_play ? ACCENT : DIM);
+        x += (n + 1U) * 6U;
+    }
     unsigned n = (unsigned)strlen(who->name);
     unsigned x = 232 - n * 12U;
     text(x, 7, who->name, 2, who->color, BACK);
@@ -873,11 +1056,14 @@ static void voice_choir_strip(void)
     }
 }
 
-/* Word-wrap the visible text into rows of VOICE_COLUMNS; keep the last rows. */
-static unsigned voice_rows(const char *s, unsigned n, char rows[VOICE_ROWS][VOICE_COLUMNS + 1])
+/* Word-wrap the text into rows of VOICE_COLUMNS and keep the rows that show
+ * the cursor (the last ones while it is at the end): returns how many rows
+ * there are, and where the cursor is among them. */
+static unsigned voice_rows(const char *s, unsigned n, unsigned cursor, char rows[VOICE_ROWS][VOICE_COLUMNS + 1],
+                           unsigned *cursor_row, unsigned *cursor_col)
 {
     char all[MUMBLE_TEXT / 4 + 8][VOICE_COLUMNS + 1];
-    unsigned count = 0, used = 0;
+    unsigned count = 0, used = 0, at_row = 0, at_col = 0;
     memset(all, 0, sizeof all);
     for (unsigned i = 0; i < n && count < sizeof all / sizeof all[0];) {
         unsigned word = i;
@@ -887,17 +1073,24 @@ static unsigned voice_rows(const char *s, unsigned n, char rows[VOICE_ROWS][VOIC
         if (count >= sizeof all / sizeof all[0]) break;
         for (; i < word; ++i) {
             if (used == VOICE_COLUMNS) { ++count; used = 0; if (count >= sizeof all / sizeof all[0]) break; }
+            if (i == cursor) at_row = count, at_col = used;
             all[count][used++] = s[i];
         }
         if (i < n && s[i] == ' ') {
+            if (i == cursor) at_row = count, at_col = used;
             if (used < VOICE_COLUMNS) all[count][used++] = ' ';
             ++i;
         }
     }
+    if (count >= sizeof all / sizeof all[0]) count = sizeof all / sizeof all[0] - 1U;
+    if (cursor >= n) at_row = count, at_col = used;
     unsigned total = count + 1U, first = total > VOICE_ROWS ? total - VOICE_ROWS : 0U;
+    if (at_row < first) first = at_row;
     for (unsigned r = 0; r < VOICE_ROWS; ++r)
         memcpy(rows[r], first + r < total ? all[first + r] : all[sizeof all / sizeof all[0] - 1], VOICE_COLUMNS + 1);
-    return total - first;
+    *cursor_row = at_row - first;
+    *cursor_col = at_col;
+    return total - first < VOICE_ROWS ? total - first : VOICE_ROWS;
 }
 
 /* An Undertale-style dialogue box; it takes the speaker's colour. */
@@ -918,11 +1111,12 @@ static void voice_lines_draw(void)
     if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
     unsigned shown = voice_length;
     char rows[VOICE_ROWS][VOICE_COLUMNS + 1];
-    unsigned used = voice_rows(voice_text, shown, rows);
-    unsigned cursor_on = (frame_time / 530U) % 2U == 0U;
+    unsigned at_row, at_col;
+    voice_rows(voice_text, shown, voice_cursor, rows, &at_row, &at_col);
+    unsigned cursor_on = ((frame_time - voice_cursor_ms) / 530U) % 2U == 0U;
     for (unsigned r = 0; r < VOICE_ROWS; ++r) {
         unsigned y = 128U + r * 19U;
-        unsigned cursor_col = r + 1U == used ? (unsigned)strlen(rows[r]) : ~0U;
+        unsigned cursor_col = r == at_row ? at_col : ~0U;
         /* (The placeholder, with nothing shown yet, says whether there is a line.) */
         uint32_t sig = signature(cursor_on | (shown == 0) << 1 | (voice_cast << 4), rows[r], VOICE_COLUMNS) ^ cursor_col;
         if (cache->voice_cache[3 + r] == sig) continue;
@@ -942,10 +1136,18 @@ static void voice_lines_draw(void)
                 upper += ch >= 'A' && ch <= 'Z';
             }
             char glyph[2] = {rows[r][i], 0};
-            text(10U + i * 12U, y, glyph, 2, letters > 1 && upper == letters ? AMBER : TEXT, BACK);
+            uint16_t ink = letters > 1 && upper == letters ? AMBER : TEXT;
+            if (i == cursor_col && cursor_on) {   /* the cursor's letter, inverted */
+                paint_fill(9U + i * 12U, y - 1U, 12, 16, AMBER);
+                text(10U + i * 12U, y, glyph, 2, BACK, AMBER);
+            } else text(10U + i * 12U, y, glyph, 2, ink, BACK);
         }
-        if (cursor_col < VOICE_COLUMNS && cursor_on)
-            paint_fill(10U + cursor_col * 12U, y, 9, 14, AMBER);
+        /* Past the row's letters (the line's end): a block; under a letter, a
+         * line that stays while the block blinks. */
+        if (cursor_col <= VOICE_COLUMNS) {
+            if (cursor_col >= strlen(rows[r]) && cursor_on) paint_fill(10U + cursor_col * 12U, y, 9, 14, AMBER);
+            paint_fill(9U + cursor_col * 12U, y + 15U, 11, 1, AMBER);
+        }
     }
 }
 
@@ -1112,30 +1314,92 @@ static void voice_lanes_draw(void)
     if (head >= 0) vfill(head, lane_top - 1, 1, 8 * lane_h + 1, WHITE);
 }
 
+/* HOME held: what each control does in this mode, over the dialogue box. */
+static void voice_help_draw(void)
+{
+    if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
+    uint32_t sig = 0x4E1F0000U | voice_play;
+    /* The rows under it redraw when it goes. */
+    cache->voice_cache[4] = cache->voice_cache[5] = cache->voice_cache[8] = 0xfffffffeU;
+    if (cache->voice_cache[3] == sig) return;
+    cache->voice_cache[3] = sig;
+    paint_fill(4, BOX_TOP + 2, 232, BOX_BOTTOM - BOX_TOP - 4, BACK);
+    for (unsigned r = 0; r < VOICE_HELP_ROWS; ++r)
+        text(10, 127U + r * 10U, voice_help_rows[voice_play][r], 1, r ? TEXT : ACCENT, BACK);
+}
+
+/* A knob: its name, its value (unit small after it), and over them a bar of
+ * where the value sits in its range, ticked where the character has it. */
+enum { NO_TICK = 0xffffU };
+static void voice_meter(unsigned col, const char *label, const char *value, const char *unit, uint16_t color,
+                        unsigned at, unsigned span, unsigned tick)
+{
+    if (paint_rendering && (paint_top >= 227 || paint_top + PAINT_ROWS <= 194)) return;
+    uint32_t sig = signature(signature(color ^ (span << 16), label, (unsigned)strlen(label)), value, (unsigned)strlen(value));
+    sig = signature(sig ^ at ^ (tick << 12), unit, (unsigned)strlen(unit));
+    if (cache->foot_cache[col] == sig) return;
+    cache->foot_cache[col] = sig;
+    unsigned x = 6 + 59 * col, w = 54;
+    paint_fill(x, 194, w, 33, BACK);
+    if (span) {
+        unsigned fill = at >= span ? w : at * w / span;
+        paint_fill(x, 195, w, 2, dimmer(color));
+        paint_fill(x, 195, fill, 2, color);
+        if (tick != NO_TICK) paint_fill(x + (tick >= span ? w - 1U : tick * (w - 1U) / span), 194, 1, 4, WHITE);
+    } else paint_fill(x, 195, w, 2, PANEL);
+    text(x, 200, label, 1, span ? TEXT : DIM, BACK);
+    unsigned n = (unsigned)strlen(value);
+    unsigned big = n <= 4U && n * 12U + (unsigned)strlen(unit) * 6U <= w;
+    text(x, 212, value, big ? 2 : 1, color, BACK);
+    text(x + n * (big ? 12U : 6U), big ? 219U : 212U, unit, 1, color, BACK);
+}
+
 static void voice_knobs(void)
 {
+    char value[12], unit[12] = "";
+    if (!voice_play) {
+        /* TYPE: K1 the cursor, K2 the letter under it. */
+        if (voice_cursor < voice_length) decimal(value, (int)voice_cursor + 1, 1);
+        else strcpy(value, "END");
+        voice_meter(0, "CURSOR", value, "", voice_knob_colors[0], voice_cursor, voice_length ? voice_length : 1U, NO_TICK);
+        unsigned at = voice_letter_at(voice_cursor);
+        char c = voice_cursor < voice_length ? voice_text[voice_cursor] : 0;
+        if (!c) strcpy(value, "+");
+        else if (c == ' ') strcpy(value, "SPC");
+        else value[0] = c, value[1] = 0;
+        voice_meter(1, c ? "LETTER" : "ADD", value, "", voice_knob_colors[1], at < VOICE_ALPHABET ? at : 0U,
+                    VOICE_ALPHABET - 1U, NO_TICK);
+        voice_meter(2, "", "", "", voice_knob_colors[2], 0, 0, NO_TICK);
+        voice_meter(3, "", "", "", voice_knob_colors[3], 0, 0, NO_TICK);
+        return;
+    }
     if (voice_page == LOOP_PAGE) {
         const struct voice_track *t = voice_track();
-        char start[12], level[12], bars[12], bpm[12];
         /* START as bar.step, like the FM1 step pages. */
-        char bar[12], step[12];
-        decimal(bar, t->start / 16U + 1U, 1);
+        char step[12];
+        decimal(value, t->start / 16U + 1U, 1);
         decimal(step, t->start % 16U + 1U, 2);
-        strcpy(start, bar); strcat(start, "."); strcat(start, step);
-        decimal(level, t->level, 1);
-        decimal(bars, (int)voice_bars, 1);
-        decimal(bpm, (int)voice_tempo(), 1);
-        knob(0, "START", start, voice_knob_colors[0]);
-        knob(1, "LEVEL", level, voice_knob_colors[1]);
-        knob(2, "BARS", bars, voice_knob_colors[2]);
-        knob(3, voice_fm1_playing ? "SYNC" : "BPM", bpm, voice_knob_colors[3]);
+        strcat(value, ".");
+        strcat(value, step);
+        voice_meter(0, "START", value, "", voice_knob_colors[0], t->start, voice_steps() - 1U, 0);
+        decimal(value, t->level, 1);
+        voice_meter(1, "LEVEL", value, "%", voice_knob_colors[1], t->level, 100, 100);
+        unsigned bars = 0;
+        while (bars < 3 && voice_bar_choices[bars] != voice_bars) ++bars;
+        decimal(value, (int)voice_bars, 1);
+        voice_meter(2, "BARS", value, "", voice_knob_colors[2], bars, 3, 1);
+        decimal(value, (int)voice_tempo(), 1);
+        voice_meter(3, voice_fm1_playing ? "SYNC" : "BPM", value, "", voice_knob_colors[3], voice_tempo() - 40U, 200, 80);
         return;
     }
     for (unsigned col = 0; col < 4; ++col) {
         unsigned p = voice_parameter(col);
-        char value[12];
-        decimal(value, voice_track()->sound.value[p], 1);
-        knob(col, mumble_params[p].name, value, voice_knob_colors[col]);
+        const struct mumble_param_info *info = &mumble_params[p];
+        unsigned v = voice_track()->sound.value[p], d = mumble_cast[voice_cast].voice.value[p];
+        decimal(value, (int)v, 1);
+        strcpy(unit, p == MUMBLE_PITCH ? "HZ" : p == MUMBLE_GLIDE ? "MS" : "%");
+        voice_meter(col, info->name, value, unit, voice_knob_colors[col], v - info->min, info->max - info->min,
+                    d - info->min);
     }
 }
 
@@ -1146,20 +1410,26 @@ static __attribute__((noinline)) void voice_draw(void)
     voice_roll();
     voice_choir_strip();
     voice_box();
-    if (voice_page == LOOP_PAGE) voice_lanes_draw();
+    if (voice_help) voice_help_draw();
+    else if (voice_play && voice_page == LOOP_PAGE) voice_lanes_draw();
     else if (voice_play) {
         voice_line_draw();
         voice_loop_bar();
     } else voice_lines_draw();
     voice_knobs();
     if (paint_rendering && paint_top + PAINT_ROWS <= 229) return;
-    const char *hint = notice ? notice
-                     : voice_play ? voice_line_hints[(frame_time / 2600U) % (sizeof voice_line_hints / sizeof voice_line_hints[0])]
-                                  : voice_hints[(frame_time / 2600U) % (sizeof voice_hints / sizeof voice_hints[0])];
-    uint32_t hint_sig = signature(1, hint, (unsigned)strlen(hint));
+    /* The hint line: EDIT being held (what it clears, and how long yet), a
+     * notice of what a control did, or the mode's tip. */
+    uint32_t held = frame_time - voice_edit_since, progress = 0;
+    unsigned holding = voice_edit_down && !voice_edit_spent && held >= 150U;
+    const char *hint = holding ? (voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP")
+                     : notice ? notice : voice_tips[voice_play];
+    if (holding) progress = (held >= VOICE_HOLD_MS ? VOICE_HOLD_MS : held) * 228U / VOICE_HOLD_MS;
+    uint32_t hint_sig = signature(1 + holding + (progress << 1), hint, (unsigned)strlen(hint));
     if (hint_sig != cache->hint_cache) {
         cache->hint_cache = hint_sig;
-        paint_fill(6, 231, 228, 7, BACK);
-        text(6, 231, hint, 1, DIM, BACK);
+        paint_fill(6, 230, 228, 10, BACK);
+        text(6, 231, hint, 1, holding ? AMBER : notice ? TEXT : DIM, BACK);
+        if (holding) paint_fill(6, 238, progress, 2, AMBER);
     }
 }

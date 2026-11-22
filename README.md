@@ -19,10 +19,29 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 | `app/fm1.toml` | Build settings: name, package identity `FM-1_68`, USB MIDI only |
 | `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and its LOOP page; screenshots and a WAV |
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
+| `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back; screenshots of each |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT undoing pass by pass |
 | `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
+
+## Controls
+
+Hold **HOME** for a card of these on the screen; every button also says on the hint line what it just did.
+
+| Control | TYPE (keys type the line) | SING (keys sing it) |
+|---|---|---|
+| Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord |
+| K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own |
+| K3 / K4 | — | |
+| EDIT | A word back; held 1 s: clear the line, then the loop | Undo a pass; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's |
+| OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up |
+| FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line |
+| ALGO, SEQ | | The page: VOICE, FEEL, FX, SING, LOOP (tabs at the top) |
+| GLO | To SING | To TYPE |
+| SELECT / SAVE | The character / in or out of the choir | |
+| ARP, PRESET | A demo line | |
+| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first) | |
 
 ## Build and test
 
@@ -40,6 +59,7 @@ base/.venv/bin/python base/tools/build.py app --host             # the host simu
 app/build/host/mumble_host app/tests/basic.txt app/build/host
 app/build/host/mumble_host app/tests/record.txt app/build/host
 app/build/host/mumble_host app/tests/line.txt app/build/host
+app/build/host/mumble_host app/tests/controls.txt app/build/host
 base/.venv/bin/python base/tools/build.py app                    # app/build/mumble.fwsc
 ~~~
 

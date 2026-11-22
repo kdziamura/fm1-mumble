@@ -29,7 +29,7 @@ static void *mumble_memmove(void *d, const void *s, unsigned n)
 
 /* ------------------------------------------------------------ controls --- */
 /* The page reads the panel in its own button order, the keys, and seven
- * encoders (SELECT, K1, K2..K5, PRESETS). */
+ * encoders (SELECT, ALGO, K1..K4, PRESET). */
 enum { OCT_DOWN, OCT_UP, FX, SCL, ENV, LFO, EDIT, GLO, HOME, SAVE, ARP, SEQ, PLAY, REC, BUTTONS };
 #define BUTTON(b) (1U << (b))
 struct fm1_controls {
@@ -163,6 +163,9 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "length")) *got = (int)voice_length;
     else if (!strcmp(what, "song")) *got = (int)voice_song;
     else if (!strcmp(what, "mode")) *got = (int)voice_play;                 /* 0 TYPE, 1 SING */
+    else if (!strcmp(what, "cursor")) *got = (int)voice_cursor;             /* TYPE: where keys type */
+    else if (!strcmp(what, "help")) *got = (int)voice_help;                 /* HOME held: the help card */
+    else if (!strcmp(what, "edited")) *got = (int)voice_edited();           /* the selected sound moved from its character's */
     else if (!strcmp(what, "page")) *got = (int)voice_page;
     else if (!strcmp(what, "loop")) *got = (int)voice_loop;
     else if (!strcmp(what, "choir")) *got = t->choir;

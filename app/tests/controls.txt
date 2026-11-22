@@ -1,0 +1,79 @@
+# The controls: TYPE's cursor (K1) and letter (K2), EDIT a word back and
+# EDIT held, HOME's help card in each mode, EDIT with a knob putting a sound
+# back, and the knobs' bars on each page.
+wait 600
+expect mode 0
+# "hello", then the cursor two back: a space typed there splits it.
+tapkey 7
+tapkey 4
+tapkey 11
+tapkey 11
+tapkey 14
+expect length 5
+expect cursor 5
+turn K1 -2
+wait 50
+expect cursor 3
+tapkey 26
+expect length 6
+expect cursor 4
+# K2: the letter under the cursor ("l" to "m"); at the end, a new one.
+turn K2 1
+wait 50
+expect length 6
+expect cursor 4
+turn K1 10
+wait 50
+expect cursor 6
+turn K2 1
+wait 50
+expect length 7
+expect cursor 6
+turn K1 -3
+wait 50
+shot controls-type.png
+turn K1 10
+wait 50
+# EDIT tapped: the word before the cursor.
+tap EDIT
+wait 50
+expect length 4
+# EDIT held: its bar fills on the hint line; let go early, it is a tap.
+press EDIT
+wait 600
+shot controls-hold.png
+release EDIT
+wait 50
+expect length 0
+# HOME held: the help card, TYPE's then SING's.
+press HOME
+wait 100
+expect help 1
+shot help-type.png
+release HOME
+wait 50
+expect help 0
+tap GLO
+expect mode 1
+press HOME
+wait 100
+shot help-sing.png
+release HOME
+# SING: K1 moves PITCH; EDIT held with K1 turned puts it back, and the line stays.
+tap ARP
+wait 50
+turn K1 12
+wait 50
+expect edited 1
+shot controls-sing.png
+press EDIT
+turn K1 1
+release EDIT
+wait 50
+expect edited 0
+expect length >20
+# The LOOP page's knobs.
+turn ALGO -1
+wait 50
+expect page 4
+shot controls-loop.png

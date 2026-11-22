@@ -94,9 +94,14 @@ expect lyric 0
 # "ma" sings "moo" once the line is changed, while the loop plays on.
 tap GLO
 expect mode 0
-tap EDIT
+# EDIT held a second clears the line, held again the loop.
+press EDIT
+wait 1100
+release EDIT
 expect length 0
-tap EDIT
+press EDIT
+wait 1100
+release EDIT
 expect takes 0
 tapkey 12
 tapkey 0
