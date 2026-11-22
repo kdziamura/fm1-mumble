@@ -165,6 +165,7 @@ static unsigned voice_recording, voice_rec_armed, voice_click;
 static uint32_t voice_rec_held, voice_rec_since[MUMBLE_CAST];
 static uint16_t voice_rec_at[MUMBLE_CAST];
 static uint8_t voice_rec_note[MUMBLE_CAST], voice_rec_slot[MUMBLE_CAST];
+static uint8_t voice_rec_vowel[MUMBLE_CAST];        /* a chord's other note: recorded as the vowel alone */
 static int32_t voice_loop_last_ms = -1;
 /* TYPE mode's cursor (0..voice_length: keys type before it, K2 changes the
  * letter under it) and when it last moved (its blink starts lit). */
@@ -364,7 +365,7 @@ static unsigned voice_store_valid(const struct voice_store *k)
     for (unsigned n = 0; n < k->seq_count; ++n) {
         const struct mumble_note *q = &k->seq[n];
         if (k->seq_track[n] >= MUMBLE_CAST || (n && k->seq_track[n] < k->seq_track[n - 1U])) return 0;
-        if (q->note > 127U || q->len_ms < 30U || q->shout > 1U || q->slot >= MUMBLE_SYLLABLES || q->bend < -24 || q->bend > 24)
+        if (q->note > 127U || q->len_ms < 30U || q->shout > (1U | MUMBLE_NOTE_VOWEL) || q->slot >= MUMBLE_SYLLABLES || q->bend < -24 || q->bend > 24)
             return 0;
     }
     return 1;
@@ -637,7 +638,9 @@ static void voice_reroll(unsigned who)
     voice_dice ^= frame_time * 2654435761U + who;
     for (unsigned p = 0; p < MUMBLE_PARAMS; ++p) {
         const struct mumble_param_info *info = &mumble_params[p];
-        unsigned r = info->min + voice_random() % (info->max - info->min + 1U);
+        unsigned span = info->max - info->min + 1U;
+        if (p == MUMBLE_ECHO || p == MUMBLE_ROOM) span = span * 3U / 10U;   /* (a roll adds a little echo and room, not a cave) */
+        unsigned r = info->min + voice_random() % span;
         t->sound.value[p] = (uint16_t)((mumble_cast[who].voice.value[p] + r) / 2U);
     }
     voice_touch();
@@ -793,7 +796,8 @@ static void voice_rec_release(unsigned who)
     memmove(voice_seq + at + 1, voice_seq + at, (voice_seq_count - at) * sizeof voice_seq[0]);
     memmove(voice_seq_track + at + 1, voice_seq_track + at, voice_seq_count - at);
     voice_seq[at] = (struct mumble_note){voice_rec_at[who], (uint16_t)len, voice_rec_slot[who], voice_rec_note[who],
-                                         (uint8_t)voice_caps, voice_rec_bend[who]};
+                                         (uint8_t)(voice_caps | (voice_rec_vowel[who] ? MUMBLE_NOTE_VOWEL : 0)),
+                                         voice_rec_bend[who]};
     voice_seq_track[at] = (uint8_t)who;
     ++voice_seq_count;
     voice_touch();
@@ -858,6 +862,7 @@ static void voice_notes_on(const uint8_t *who, const int8_t *shift, unsigned n, 
     for (unsigned i = 0; i < n; ++i) {
         voice_sings[who[i]] = (uint8_t)(key + 1U);
         voice_sing_order[who[i]] = ++voice_order;
+        voice_rec_vowel[who[i]] = (uint8_t)(i > 0);
         if (voice_recording) voice_rec_press(who[i], slot, (unsigned)pitches[i]);
     }
     voice_sung = key;

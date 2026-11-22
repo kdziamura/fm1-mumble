@@ -44,6 +44,11 @@ size, the scale and its root, the arpeggiator and auto-chord. It saves itself 3 
 a second (the loop stopped, nothing sounding or held): writing the flash holds the whole FM-1 for a moment, so it
 never happens during a performance. Change something while the loop plays and it is saved when you stop.
 
+The band is spread across the stereo field, each character at their own place from left (HERO) to right (GHOST).
+The shared echo and room duck under the voices, so they fill the gaps rather than blur the singing; a rolled voice
+adds only a little of either. Consonants are bright and crisp before a vowel, a percussive attack, and softer as an
+ending; in a chord only the leading singer sings them, the others the vowel alone.
+
 The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the top on the clock, its tempo sizes it
 (LOOP shows SYNC), Stop stops it; without a clock it keeps its own BPM.
 

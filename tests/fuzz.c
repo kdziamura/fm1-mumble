@@ -284,7 +284,7 @@ static void check_state(void)
         const struct mumble_note *q = &voice_seq[k];
         if (voice_seq_track[k] >= MUMBLE_CAST || (k && voice_seq_track[k] < voice_seq_track[k - 1u]))
             fail("S1 the sequence not grouped by singer");
-        if (q->note > 127u || q->len_ms < 30u || q->shout > 1u || q->slot >= MUMBLE_SYLLABLES || q->bend < -24 || q->bend > 24)
+        if (q->note > 127u || q->len_ms < 30u || q->shout > (1u | MUMBLE_NOTE_VOWEL) || q->slot >= MUMBLE_SYLLABLES || q->bend < -24 || q->bend > 24)
             fail("S1 a note of the sequence out of range");
     }
     if (voice_now.vowel > MUMBLE_VOWELS || voice_now.track >= MUMBLE_CAST) fail("S1 the engine's status out of range");

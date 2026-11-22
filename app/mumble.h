@@ -101,6 +101,8 @@ struct mumble_sound { uint8_t vowel, locus, flags, glide, onset, onset_hz, coda,
  * part's line at the time, syllable slot (round the line: slot % line_count;
  * a hum with no line), so a new line changes what a recorded loop sings. */
 struct mumble_note { uint16_t ms, len_ms; uint8_t slot, note, shout; int8_t bend; /* semitones it slid from */ };
+/* shout: bit 0 shouted; MUMBLE_NOTE_VOWEL: the vowel alone, no consonants (a chord's other notes) */
+enum { MUMBLE_NOTE_VOWEL = 2 };
 struct mumble_part {
     const char *text; unsigned length; const struct mumble_voice *voice;
     uint16_t start_ms; uint8_t level;

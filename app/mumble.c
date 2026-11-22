@@ -473,7 +473,7 @@ struct hum {
      * ending's place; the onset's kind and length, the ending's. */
     uint8_t onset, coda, has_glide, breath, vowel2;
     uint32_t onset_len;
-    float noise_level, nz_a[2], nz_b[2], nz_c[2], nz_lp[2], ny1, ny2, nx1, nx2, nlp;
+    float noise_level, nz_a[2], nz_b[2], nz_c[2], ny1, ny2, nx1, nx2;
     /* The diphthong's second vowel, a nasal ending's closed formants. */
     float target2[4], nasal[4];
     /* A sung note's slide from the last one (semitones, over porta frames),
@@ -526,7 +526,11 @@ static volatile int16_t status_cents;
 static struct hum hums[VOICES];
 static float wobble_phase; /* shared 2 Hz wobble, so overlapping hums agree */
 static float glottal_flow[GLOTTAL + 1], glottal_slope[GLOTTAL + 1];
-static float mix[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK_FRAMES], room_send[FM1_BLOCK_FRAMES];
+static float mix[FM1_BLOCK_FRAMES], mix_r[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK_FRAMES], room_send[FM1_BLOCK_FRAMES];
+/* The band across the stereo field: each track at its place, left to right
+ * (constant power, at most 60 % out, the middle at full level both sides);
+ * the shared echo and room come back in the middle. */
+static float pan_gain[MUMBLE_CAST][2];
 /* A voice's top. Four cascaded formants fall 12 dB an octave each above F4,
  * where a real vocal tract's fifth, sixth... keep it up: measured against a
  * real voice's vowels (LJSpeech, the same sentences), MUMBLE's were 35 dB
@@ -543,8 +547,8 @@ static float mix[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK_FRAMES], room_send[FM1_B
 #ifndef MUMBLE_TOP_TAP
 #define MUMBLE_TOP_TAP 0.15f
 #endif
-static float tap_mix[FM1_BLOCK_FRAMES];
-static float tap_s1, tap_s2, tap_lp;
+static float tap_mix[FM1_BLOCK_FRAMES], tap_mix_r[FM1_BLOCK_FRAMES];
+static float tap_s1[2], tap_s2[2], tap_lp[2];
 
 /* Shared effects run at half rate (22.05 kHz) on 16-bit lines: a dark,
  * lo-fi echo and a small Schroeder room, about 16 KB together. */
@@ -554,7 +558,7 @@ static const uint16_t allpass_length[2] FM1_AUDIO_DATA = {277, 211};
 static int16_t echo_line[ECHO_LENGTH];
 static int16_t comb_line[557 + 593 + 641 + 677], allpass_line[277 + 211];
 static unsigned echo_at, comb_at[4], allpass_at[2];
-static float echo_tone, comb_tone[4], wet_last;
+static float echo_tone, comb_tone[4], wet_last, duck_level;
 static uint32_t tail_frames;                     /* effect tail still ringing */
 /* The metronome: beats a loop and each beat's frames (set by the control
  * task), and the click ringing: a damped sine, y = k1 y1 - k2 y2. */
@@ -570,7 +574,7 @@ static float click_coef[2][3];                   /* plain, accented: k1, k2, fir
  * clip see more than COMP_CEILING. */
 enum { COMP_LOOK = 64 };                         /* 1.45 ms */
 #define COMP_CEILING 0.85f
-static float comp_line[COMP_LOOK], comp_level, comp_gain = 1.0f, comp_target = 1.0f;
+static float comp_line[2][COMP_LOOK], comp_level, comp_gain = 1.0f, comp_target = 1.0f;
 static unsigned comp_at, comp_hold;
 #ifdef FM1_HOST_TEST
 /* The engine's test: what reaches the soft clip (its peak, and the samples
@@ -601,11 +605,17 @@ CONTROL void mumble_init(void)
     memset(lives, 0, sizeof lives);
     pressed.count = 0;
     memset(hums, 0, sizeof hums);
-    tap_s1 = tap_s2 = tap_lp = 0.0f;
+    for (unsigned c = 0; c < 2; ++c) tap_s1[c] = tap_s2[c] = tap_lp[c] = 0.0f;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        float place = ((float)t - 0.5f * (MUMBLE_CAST - 1)) / (0.5f * (MUMBLE_CAST - 1)) * 0.6f;
+        float angle = (place + 1.0f) * 0.25f * PI;
+        pan_gain[t][0] = 1.41421356f * cos_approx(angle);
+        pan_gain[t][1] = 1.41421356f * cos_approx(angle - 0.5f * PI);
+    }
     memset(echo_line, 0, sizeof echo_line);
     memset(comb_line, 0, sizeof comb_line);
     memset(allpass_line, 0, sizeof allpass_line);
-    echo_at = 0; echo_tone = wet_last = 0.0f; tail_frames = 0;
+    echo_at = 0; echo_tone = wet_last = duck_level = 0.0f; tail_frames = 0;
     /* Clicks: 1.5 kHz, accented 2.2 kHz, fading by 60 dB in about 25 ms. */
     for (unsigned a = 0; a < 2; ++a) {
         float w = 2.0f * PI * (a ? 2200.0f : 1500.0f) / RATE, r = 0.9937f;
@@ -615,7 +625,7 @@ CONTROL void mumble_init(void)
     }
     click_beats = 0; click_left = 0; click_y1 = click_y2 = 0.0f;
     comp_level = 0.0f; comp_gain = comp_target = 1.0f; comp_at = comp_hold = 0;
-    for (unsigned i = 0; i < COMP_LOOK; ++i) comp_line[i] = 0.0f;
+    for (unsigned i = 0; i < COMP_LOOK; ++i) comp_line[0][i] = comp_line[1][i] = 0.0f;
     for (unsigned i = 0; i < 4; ++i) { comb_at[i] = 0; comb_tone[i] = 0.0f; }
     allpass_at[0] = allpass_at[1] = 0;
     song_request = song_ack = live_request = live_ack = 0;
@@ -644,6 +654,7 @@ CONTROL static void sort_syllables(struct mumble_syllable *s, unsigned n)
 
 CONTROL static unsigned letter_syllables(unsigned letter, unsigned note, const struct mumble_voice *voice,
                                          unsigned shout, struct mumble_syllable *out);
+CONTROL static struct mumble_sound vowel_only(const struct mumble_sound *sound);
 CONTROL static unsigned sound_syllable(unsigned key, const struct mumble_sound *sound, unsigned note,
                                        const struct mumble_voice *voice, unsigned shout, struct mumble_syllable *out);
 /* A recorded note on a track: its slot's syllable of the part's line (a hum
@@ -655,7 +666,9 @@ CONTROL static unsigned note_syllables(const struct mumble_note *note, const str
     static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM, NO_GLIDE, 0, 0, 0, 0};
     const struct mumble_sound *sound =
         part->line && part->line_count ? &part->line[note->slot % part->line_count] : &hum;
-    unsigned got = sound_syllable(0, sound, note->note, part->voice, note->shout, out);
+    struct mumble_sound vowel;
+    if (note->shout & MUMBLE_NOTE_VOWEL) vowel = vowel_only(sound), sound = &vowel;
+    unsigned got = sound_syllable(0, sound, note->note, part->voice, note->shout & 1U, out);
     out->bend = note->bend;
     for (unsigned i = 0; i < got; ++i) {
         struct mumble_syllable *y = &out[i];
@@ -953,6 +966,16 @@ CONTROL int mumble_press_sound(unsigned key, const struct mumble_sound *sound, c
 {
     return sound ? press(key, sound, singers, count, shout) : -1;
 }
+/* A sound with its consonants' noise taken out (the onset, a stop's or a
+ * hiss's ending): the vowel alone, for a chord's other notes, so a chord's
+ * consonants are one singer's, not a stack of them in the way of the singing. */
+CONTROL static struct mumble_sound vowel_only(const struct mumble_sound *sound)
+{
+    struct mumble_sound v = *sound;
+    v.onset = MUMBLE_NOISE_NONE, v.onset_hz = 0;
+    if (v.coda == MUMBLE_CODA_STOP || v.coda == MUMBLE_CODA_HISS) v.coda = MUMBLE_CODA_NONE, v.coda_hz = 0;
+    return v;
+}
 CONTROL static int press(unsigned letter, const struct mumble_sound *sound, const struct mumble_singer *singers,
                          unsigned count, unsigned shout)
 {
@@ -984,7 +1007,9 @@ CONTROL static int press(unsigned letter, const struct mumble_sound *sound, cons
     for (unsigned j = 0; j < count && n + 3U <= LIVE_SYLLABLES; ++j) {
         const struct mumble_singer *who = &singers[j];
         s->voice[who->track] = *who->voice;
-        unsigned got = sound ? sound_syllable(letter, sound, who->note, who->voice, shout, s->syllable + n)
+        struct mumble_sound vowel;
+        if (sound && j) vowel = vowel_only(sound);
+        unsigned got = sound ? sound_syllable(letter, j ? &vowel : sound, who->note, who->voice, shout, s->syllable + n)
                              : letter_syllables(letter, who->note, who->voice, shout, s->syllable + n);
         for (unsigned i = 0; i < got; ++i, ++n) {
             s->syllable[n].gen = gen;
@@ -1104,22 +1129,18 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float r = exp2_approx(-PI * bw / RATE * 1.442695f);
         float b = 2.0f * r * cos_approx(2.0f * PI * hz / RATE), c = -r * r;
         h->nz_b[w] = b;
-        /* and a low-pass at 1.3 times the centre: the band's upper skirt
-         * falls 12 dB an octave, not 6 (an sh's spread to 10 kHz). */
-        h->nz_lp[w] = 1.0f - exp2_approx(-2.0f * PI * 1.3f * hz / RATE * 1.442695f);
         h->nz_c[w] = c;
         /* How loud, against the vowel, as speech has them: sh the loudest
-         * hiss, s and the bursts below it, f and th faint; a voiced one half. */
+         * hiss, s and the bursts below it, f and th faint; a voiced one half.
+         * Bright and crisp before the vowel (a percussive attack: a chord's
+         * other notes have none, vowel_only), softer as an ending. */
         unsigned what = w ? s->coda : kind;
         float level = 0.0f;
         if (w ? what == MUMBLE_CODA_STOP : what == MUMBLE_NOISE_BURST) level = w ? 0.16f : 0.30f;
-        else if (w ? what == MUMBLE_CODA_HISS : what == MUMBLE_NOISE_HISS)
-            level = at_hz >= 65U ? 0.032f : at_hz <= 35U ? 0.12f : 0.09f;
-        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.13f;
+        else if (w ? what == MUMBLE_CODA_HISS : what == MUMBLE_NOISE_HISS)   /* (an onset bright, an ending softer) */
+            level = w ? (at_hz >= 65U ? 0.032f : at_hz <= 35U ? 0.12f : 0.09f) : (at_hz >= 65U ? 0.045f : at_hz <= 35U ? 0.17f : 0.13f);
+        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.18f;
         if (w && what == MUMBLE_CODA_HISS) level *= 0.7f;              /* an ending's hiss trails off quieter */
-        /* A hiss up from 5 kHz (s, z, x, f, th) 8 dB down: the voice has
-         * nothing up there for it to blend into. sh, ch and j keep theirs. */
-        if (at_hz >= 50U && !(w ? what == MUMBLE_CODA_STOP : what == MUMBLE_NOISE_BURST)) level *= 0.4f;
         if (!w && voiced) level *= 0.5f;
         /* A band-pass, (1 - z^-2) / (1 - b z^-1 - c z^-2): zeros at DC and
          * Nyquist, so nothing below or far above the band (an all-pole
@@ -1131,7 +1152,7 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
         float power = 2.0f * g0 * (1.0f - (b * b / (1.0f - c) + c));
         h->nz_a[w] = level * diction * inv_sqrt(power);
     }
-    h->ny1 = h->ny2 = h->nx1 = h->nx2 = h->nlp = 0.0f;
+    h->ny1 = h->ny2 = h->nx1 = h->nx2 = 0.0f;
     /* An ending's noise rings on past the voice: a stop's burst, a hiss. */
     h->tail = s->coda == MUMBLE_CODA_STOP ? 1764U : s->coda == MUMBLE_CODA_HISS ? 3969U : 0U;
     if (!diction) h->tail = 0;
@@ -1175,8 +1196,8 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
     h->lp_a = 2.0f * PI * (3500.0f - 2000.0f * h->radio) / RATE;
     h->drive = 1.0f + 3.0f * h->radio;
     h->hp = h->lp = 0.0f;
-    h->echo = (float)v->value[MUMBLE_ECHO] * 0.01f;
-    h->room = (float)v->value[MUMBLE_ROOM] * 0.01f;
+    h->echo = (float)v->value[MUMBLE_ECHO] * 0.007f;
+    h->room = (float)v->value[MUMBLE_ROOM] * 0.007f;
     h->phase = 0.0f; h->period = 1.0f; h->amp = 1.0f; h->last = 0.0f;
     h->noise = seed | 1U;
     h->vowel = s->vowel;
@@ -1308,8 +1329,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                     float v = h->nz_a[band] * (white - h->nx2) + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
                     h->nx2 = h->nx1; h->nx1 = white;
                     h->ny2 = h->ny1; h->ny1 = v;
-                    h->nlp += h->nz_lp[band] * (v - h->nlp);
-                    hiss = h->nlp * ne;
+                    hiss = v * ne;
                 }
             }
             for (unsigned k = 0; k < 4; ++k) {
@@ -1343,10 +1363,14 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                 if (++h->crush_count >= h->crush_hold) h->crush_count = 0;
                 out = h->crushed;
             }
-            mix[i] += out;
+            mix[i] += out * pan_gain[h->track][0];
+            mix_r[i] += out * pan_gain[h->track][1];
             /* The source's top (mumble_render); a radio's or a crushed voice
              * keeps its own lo-fi one. */
-            if (h->radio <= 0.0f && h->levels <= 0.0f) tap_mix[i] += tap * env * h->gain;
+            if (h->radio <= 0.0f && h->levels <= 0.0f) {
+                tap_mix[i] += tap * env * h->gain * pan_gain[h->track][0];
+                tap_mix_r[i] += tap * env * h->gain * pan_gain[h->track][1];
+            }
             echo_send[i] += out * h->echo;
             room_send[i] += out * h->room;
         }
@@ -1365,7 +1389,7 @@ static FM1_AUDIO_CODE float effects_step(float echo_in, float room_in)
     /* Echo: 250 ms, darkening repeats. */
     float back = (float)echo_line[echo_at] * (1.0f / 32768.0f);
     echo_tone += 0.45f * (back - echo_tone);
-    echo_line[echo_at] = to_line(echo_in + 0.42f * echo_tone);
+    echo_line[echo_at] = to_line(echo_in + 0.36f * echo_tone);
     if (++echo_at == ECHO_LENGTH) echo_at = 0;
     /* Room: four damped combs into two allpasses. */
     float x = room_in * 0.35f, room = 0.0f;
@@ -1374,7 +1398,7 @@ static FM1_AUDIO_CODE float effects_step(float echo_in, float room_in)
         int16_t *line = comb_line + base;
         float y = (float)line[comb_at[c]] * (1.0f / 32768.0f);
         comb_tone[c] = y * 0.7f + comb_tone[c] * 0.3f;
-        line[comb_at[c]] = to_line(x + 0.8f * comb_tone[c]);
+        line[comb_at[c]] = to_line(x + 0.76f * comb_tone[c]);
         if (++comb_at[c] == comb_length[c]) comb_at[c] = 0;
         room += y;
         base += comb_length[c];
@@ -1513,8 +1537,8 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         if (!tail_frames && !clicking) return;
     }
     /* volatile keeps these loops: no libc memset from audio code. */
-    volatile float *dry = mix, *echo = echo_send, *room = room_send, *tap = tap_mix;
-    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) dry[i] = echo[i] = room[i] = tap[i] = 0.0f;
+    volatile float *dry = mix, *dry_r = mix_r, *echo = echo_send, *room = room_send, *tap = tap_mix, *tap_r = tap_mix_r;
+    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) dry[i] = dry_r[i] = echo[i] = room[i] = tap[i] = tap_r[i] = 0.0f;
     unsigned loudest = VOICES;
     float loud = 0.0f, track_loud[MUMBLE_CAST];
     uint8_t track_vowel[MUMBLE_CAST];
@@ -1553,18 +1577,29 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
     }
     /* The voices' top: the source tap high-passed at 3.5 kHz (Butterworth,
      * transposed direct form II), low-passed from 9 kHz, into the mix. */
-    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
-        float x = tap_mix[i], y = 0.7017839f * x + tap_s1;
-        tap_s1 = -1.4035678f * x + 1.3125645f * y + tap_s2;
-        tap_s2 = 0.7017839f * x - 0.4945710f * y;
-        tap_lp += 0.723f * (y - tap_lp);
-        mix[i] += tap_lp * MUMBLE_TOP_TAP;
+    for (unsigned c = 0; c < 2; ++c) {
+        float *in = c ? tap_mix_r : tap_mix, *out = c ? mix_r : mix;
+        for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
+            float x = in[i], y = 0.7017839f * x + tap_s1[c];
+            tap_s1[c] = -1.4035678f * x + 1.3125645f * y + tap_s2[c];
+            tap_s2[c] = 0.7017839f * x - 0.4945710f * y;
+            tap_lp[c] += 0.723f * (y - tap_lp[c]);
+            out[i] += tap_lp[c] * MUMBLE_TOP_TAP;
+        }
     }
     /* Effects at half rate; the wet signal steps between pairs. */
+    /* The wet signal ducks under the dry: while the voices are loud the echo
+     * and the room fall back (to a third at full level), so they fill the
+     * gaps instead of blurring the singing. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; i += 2) {
+        float a = mix[i] < 0.0f ? -mix[i] : mix[i], b = mix_r[i] < 0.0f ? -mix_r[i] : mix_r[i];
+        float level = a > b ? a : b;
+        duck_level += (level - duck_level) * (level > duck_level ? 0.05f : 0.0012f);
         float wet = effects_step(0.5f * (echo_send[i] + echo_send[i + 1]), 0.5f * (room_send[i] + room_send[i + 1]));
-        mix[i] += 0.5f * (wet_last + wet);
-        mix[i + 1] += wet;
+        wet *= 1.0f / (1.0f + 4.0f * duck_level);
+        float first = 0.5f * (wet_last + wet);
+        mix[i] += first, mix_r[i] += first;
+        mix[i + 1] += wet, mix_r[i + 1] += wet;
         wet_last = wet;
     }
     /* The click joins the dry mix. */
@@ -1580,7 +1615,7 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         float y = click_k1 * click_y1 - click_k2 * click_y2;
         click_y2 = click_y1;
         click_y1 = y;
-        mix[i] += click_y2;
+        mix[i] += click_y2, mix_r[i] += click_y2;
         --click_left;
     }
     /* Compress and limit (looking ahead), then a soft clip (straight to 0.75,
@@ -1588,7 +1623,10 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
      * The gain falls to its target within the look-ahead (8 % a frame) and
      * rises back over about 15 ms; the target is set every 4 frames. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
-        float in = mix[i], a = in < 0.0f ? -in : in;
+        /* (linked: the louder side sets the gain for both) */
+        float in[2] = {mix[i], mix_r[i]};
+        float a = in[0] < 0.0f ? -in[0] : in[0], b = in[1] < 0.0f ? -in[1] : in[1];
+        if (b > a) a = b;
         if (a >= comp_level) comp_level = a, comp_hold = COMP_LOOK;
         else if (comp_hold) --comp_hold;
         else comp_level *= 0.99985f;
@@ -1597,29 +1635,28 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
             if (comp_level * comp_target * 1.12f > COMP_CEILING) comp_target = COMP_CEILING / (1.12f * comp_level);
         }
         comp_gain += (comp_target - comp_gain) * (comp_target < comp_gain ? 0.08f : 0.0015f);
-        float late = comp_line[comp_at];
-        comp_line[comp_at] = in;
-        comp_at = (comp_at + 1U) % COMP_LOOK;
-        float x = late * comp_gain * 1.12f;
-#ifdef FM1_HOST_TEST
-        {
-            float ax = x < 0.0f ? -x : x;
-            if (ax > mumble_test_clip_peak) mumble_test_clip_peak = ax;
-            mumble_test_clip_over += ax > 0.8f;
-            ++mumble_test_clip_samples;
-        }
-#endif
-        float ax = x < 0.0f ? -x : x, y = x;
-        if (ax > 0.75f) {
-            float d = (ax - 0.75f) * 4.0f;             /* the bend: a rational tanh from 0.75, to 1 at 1.5 */
-            if (d > 3.0f) d = 3.0f;
-            y = 0.75f + 0.25f * d * (27.0f + d * d) / (27.0f + 9.0f * d * d);
-            if (x < 0.0f) y = -y;
-        }
-        int32_t sample = (int32_t)(y * 5940000.0f);
         for (unsigned c = 0; c < 2; ++c) {
-            int32_t value = output[i * 2 + c] + sample;
+            float late = comp_line[c][comp_at];
+            comp_line[c][comp_at] = in[c];
+            float x = late * comp_gain * 1.12f;
+#ifdef FM1_HOST_TEST
+            {
+                float ax = x < 0.0f ? -x : x;
+                if (ax > mumble_test_clip_peak) mumble_test_clip_peak = ax;
+                mumble_test_clip_over += ax > 0.8f;
+                ++mumble_test_clip_samples;
+            }
+#endif
+            float ax = x < 0.0f ? -x : x, y = x;
+            if (ax > 0.75f) {
+                float d = (ax - 0.75f) * 4.0f;         /* the bend: a rational tanh from 0.75, to 1 at 1.5 */
+                if (d > 3.0f) d = 3.0f;
+                y = 0.75f + 0.25f * d * (27.0f + d * d) / (27.0f + 9.0f * d * d);
+                if (x < 0.0f) y = -y;
+            }
+            int32_t value = output[i * 2 + c] + (int32_t)(y * 5940000.0f);
             output[i * 2 + c] = value > 8388607 ? 8388607 : value < -8388608 ? -8388608 : value;
         }
+        comp_at = (comp_at + 1U) % COMP_LOOK;
     }
 }

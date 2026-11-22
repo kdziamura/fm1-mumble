@@ -122,13 +122,15 @@ int main(int argc, char **argv)
         mumble_say(c, line, (unsigned)strlen(line), &mumble_cast[c].voice);
         unsigned blocks = (unsigned)((end / 1000.0f / (mumble_cast[c].voice.value[MUMBLE_SPEED] / 100.0f) + 0.5f) * FM1_SAMPLE_RATE / FM1_BLOCK_FRAMES);
         float *pcm = calloc((size_t)blocks * FM1_BLOCK_FRAMES, sizeof *pcm);
-        double sum = 0; float peak = 0; int32_t reached = -1; unsigned sounding = 0;
+        double sum = 0, sides[2] = {0, 0}; float peak = 0; int32_t reached = -1; unsigned sounding = 0;
         for (unsigned b = 0; b < blocks; ++b) {
             int32_t block[FM1_BLOCK_WORDS] = {0};
             mumble_render(block);
             for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
-                CHECK(block[2 * i] == block[2 * i + 1], "mono voice");
-                float x = (float)block[2 * i] / 8388608.0f;
+                /* (the band is panned: the middle for what is heard, the sides for where) */
+                float left = (float)block[2 * i] / 8388608.0f, right = (float)block[2 * i + 1] / 8388608.0f;
+                sides[0] += left * left, sides[1] += right * right;
+                float x = 0.5f * (left + right);
                 pcm[b * FM1_BLOCK_FRAMES + i] = x;
                 sum += x * x; if (fabsf(x) > peak) peak = fabsf(x);
             }
@@ -141,6 +143,9 @@ int main(int argc, char **argv)
         printf("%-7s peak %.2f rms %.3f  %.2fs  song reached %d ms  voiced blocks %u\n", mumble_cast[c].name, peak, rms,
                (float)frames / FM1_SAMPLE_RATE, (int)reached, sounding);
         CHECK(peak > 0.1f && peak < 0.8f, "%s peak %.2f", mumble_cast[c].name, peak);
+        /* Panned across the band: the first four left of the middle, the last four right. */
+        CHECK(c < MUMBLE_CAST / 2 ? sides[0] > 1.2 * sides[1] : sides[1] > 1.2 * sides[0], "%s panned to their side (%.2f : %.2f)",
+              mumble_cast[c].name, sqrt(sides[0]), sqrt(sides[1]));
         int32_t expected = (int32_t)(end * 100U / mumble_cast[c].voice.value[MUMBLE_SPEED]);
         CHECK(reached > expected - 150, "%s: the song clock runs through the line (%d of %d ms)", mumble_cast[c].name, (int)reached, (int)expected);
         if (dir) {
