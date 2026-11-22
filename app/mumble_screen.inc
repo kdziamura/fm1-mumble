@@ -1250,12 +1250,12 @@ static void voice_pose(const struct pose *p)
 {
     const struct voice_face *f = &voice_portrait;
     for (unsigned y = 0; y < SPRITE; ++y) memcpy(voice_grid[y], f->grid[y], SPRITE);
-    char lip = f->body == BODY_ROBOT ? 'g' : 'w';
+    char lip = f->body == BODY_ROBOT ? 'g' : f->lip;
     if (p->blink)
         for (unsigned e = 0; e < f->eyes; ++e) {
             const uint8_t *eye = f->eye[e];
             grid_rect(eye[0], eye[1], eye[2], eye[3], '.');
-            grid_rect(eye[0], eye[1] + eye[3] - 1, eye[2], 1, lip);
+            grid_rect(eye[0], eye[1] + eye[3] - 1, eye[2], 1, f->body == BODY_ROBOT ? 'g' : 'w');
         }
     int y = f->mouth_y;
     if (p->open) {

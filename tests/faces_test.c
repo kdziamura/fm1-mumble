@@ -13,7 +13,7 @@ static void dump(const struct mumble_voice *v)
     char icon[FACE_ICON][FACE_ICON];
     voice_face_build(v, &f);
     for (unsigned y = 0; y < FACE_N; ++y) printf("%.24s\n", f.grid[y]);
-    printf("mouth %u %u eyes", f.mouth_y, f.mouth_w);
+    printf("mouth %u %u %c eyes", f.mouth_y, f.mouth_w, f.lip);
     for (unsigned e = 0; e < f.eyes; ++e) printf(" %u,%u,%u,%u", f.eye[e][0], f.eye[e][1], f.eye[e][2], f.eye[e][3]);
     printf("\n");
     voice_face_icon(&f, icon);
