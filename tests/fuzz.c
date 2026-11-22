@@ -22,7 +22,7 @@
  * And on the page's state, every frame:
  *   S1  every field is in its range and agrees with the others and with the
  *       lights (the line printable text of its length, the sequence grouped
- *       by singer with its notes and passes in range, one key per singer and
+ *       by singer with its notes in range, one key per singer and
  *       none held unsung while a choir member is free, recording only in
  *       SING or LOOP, the metronome exactly while recording, sounds in
  *       range ...);
@@ -32,12 +32,11 @@
  *       moves its parameter of the selected sound by the accelerated amount
  *       (with EDIT held, back to the character's), ALGO turns the pages only
  *       in SING, in LOOP the knobs move the start, level, bars and BPM (EDIT
- *       held: back) and EDIT clears only the selected singer's lane, in TYPE
- *       K1 moves the cursor and
- *       K2 changes only the letter under it; EDIT let go unspent undoes
- *       exactly the last pass (SING) or cuts the word before the cursor
- *       (TYPE), held 1 s it clears the loop (SING) or the line, then the loop
- *       (TYPE); FX rewinds the line (SING); with nothing pressed or turned no
+ *       held: back), in TYPE K1 moves the cursor and
+ *       K2 changes only the letter under it; EDIT let go unspent clears
+ *       exactly the selected singer's notes (SING, LOOP) or cuts the word
+ *       before the cursor (TYPE), held 1 s it clears the loop (SING, LOOP)
+ *       or the line, then the loop (TYPE); FX rewinds the line (SING); with nothing pressed or turned no
  *       setting changes, TYPE types exactly the keys' letters at the cursor,
  *       SING holds exactly the
  *       keys still down and the new ones, the last key pressed is sung at
@@ -237,9 +236,7 @@ static void check_state(void)
             fail("S1 the sequence not grouped by singer");
         if (q->note > 127u || q->len_ms < 30u || q->shout > 1u || q->slot >= MUMBLE_SYLLABLES || q->bend < -24 || q->bend > 24)
             fail("S1 a note of the sequence out of range");
-        if (!voice_seq_pass[k] || voice_seq_pass[k] > voice_pass) fail("S1 a note's pass out of range");
     }
-    if (voice_passes() > VOICE_PASSES) fail("S1 more passes than EDIT can undo");
     if (voice_now.vowel > MUMBLE_VOWELS || voice_now.track >= MUMBLE_CAST) fail("S1 the engine's status out of range");
     /* The lights tell the state. */
     if (!!(lit_buttons & (1u << B_PLAY)) != (voice_song != 0)) fail("S1 PLAY's light disagrees with the loop");
@@ -264,7 +261,7 @@ static struct {
     int octave;
     int32_t song_ms;
     struct mumble_note seq[VOICE_SEQ];
-    uint8_t seq_track[VOICE_SEQ], seq_pass[VOICE_SEQ], rec_slot[MUMBLE_CAST];
+    uint8_t seq_track[VOICE_SEQ], rec_slot[MUMBLE_CAST];
     unsigned seq_count;
     uint32_t pressed, held, key_down, keys, letters, rec_held;
     int32_t turned[7];
@@ -280,7 +277,6 @@ static void step_before(void)
     before.lyric_lead = voice_lyric_lead, before.lyric_sig = voice_lyric_sig, before.song_ms = voice_now.song_ms;
     memcpy(before.seq, voice_seq, sizeof voice_seq);
     memcpy(before.seq_track, voice_seq_track, sizeof voice_seq_track);
-    memcpy(before.seq_pass, voice_seq_pass, sizeof voice_seq_pass);
     memcpy(before.rec_slot, voice_rec_slot, sizeof voice_rec_slot);
     before.seq_count = voice_seq_count, before.letters = voice_held, before.rec_held = voice_rec_held;
     /* As app.c's input() will read them (HOME never reaches the page). */
@@ -290,7 +286,6 @@ static void step_before(void)
     before.key_down = before.keys & ~keys_before;
     for (unsigned i = 0; i < 7; ++i) before.turned[i] = clamp(turned[encoder_of[i]], -127, 127);
 }
-/* (Passes past VOICE_PASSES merge: a note's pass may be relabelled, the note is the same.) */
 static int same_note(unsigned k, unsigned j)
 {
     return voice_seq_track[k] == before.seq_track[j] && !memcmp(&voice_seq[k], &before.seq[j], sizeof voice_seq[k]);
@@ -308,9 +303,7 @@ static void step_after(void)
     unsigned edit = (before.held & BUTTON(EDIT)) != 0, edit_tap = 0, edit_hold = 0;
     if (pressed & BUTTON(EDIT)) edit_since = now_ms, edit_spent = 0;
     if (edit && turned_any) edit_spent = 1;
-    /* (In LOOP EDIT has no hold: the mode as the frame left it, which GLO or
-     * REC may have changed before EDIT was looked at.) */
-    if (edit && !edit_spent && voice_mode != VOICE_LOOP && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
+    if (edit && !edit_spent && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
     if (!edit && edit_was && !edit_spent) edit_tap = 1;
     edit_was = edit;
     /* (A recorded note let go in the same frame joins the loop after EDIT acts.) */
@@ -334,24 +327,14 @@ static void step_after(void)
         (voice_lyric_at || voice_lyric_started || voice_lyric_lead != MUMBLE_LETTERS))
         fail("S2 FX in SING did not go back to the line's top");
     if (edit_tap && !pressed && alone && !(before.play && let_go)) {
-        if (before.mode == VOICE_LOOP) {
+        if (before.play) {
             unsigned kept = 0;
             for (unsigned j = 0; j < before.seq_count; ++j)
                 if (before.seq_track[j] != before.cast) {
-                    if (kept >= voice_seq_count || !same_note(kept, j)) fail("S2 EDIT in LOOP cleared another singer's note");
+                    if (kept >= voice_seq_count || !same_note(kept, j)) fail("S2 EDIT cleared another singer's note");
                     ++kept;
                 }
-            if (kept != voice_seq_count) fail("S2 EDIT in LOOP did not clear the selected singer's lane");
-        } else if (before.play) {
-            unsigned last = 0, kept = 0;
-            for (unsigned j = 0; j < before.seq_count; ++j)
-                if (before.seq_pass[j] > last) last = before.seq_pass[j];
-            for (unsigned j = 0; j < before.seq_count; ++j)
-                if (before.seq_pass[j] != last) {
-                    if (kept >= voice_seq_count || !same_note(kept, j)) fail("S2 EDIT in SING undid more than the last pass");
-                    ++kept;
-                }
-            if (kept != voice_seq_count) fail("S2 EDIT in SING did not undo the last pass");
+            if (kept != voice_seq_count) fail("S2 EDIT did not clear the selected singer's notes");
         } else {
             unsigned from = before.cursor;
             while (from && before.text[from - 1u] == ' ') --from;

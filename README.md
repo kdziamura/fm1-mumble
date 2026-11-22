@@ -20,7 +20,7 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 | `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and LOOP mode's lanes; screenshots and a WAV |
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
 | `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back, LOOP mode's knobs; screenshots of each |
-| `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT undoing pass by pass |
+| `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT clearing a singer, then the loop |
 | `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
 | `base/` | fm1-base, with felucca-bsp in `base/bsp/` |
@@ -38,7 +38,7 @@ LOOP a key is lit while it is held.
 | Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord | As in SING |
 | K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own | The character's start / level in the loop |
 | K3 / K4 | — | | The loop's bars / BPM |
-| EDIT | A word back; held 1 s: clear the line, then the loop | Undo a pass; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | Clear the selected character's lane; held with a knob turned: that setting back |
+| EDIT | A word back; held 1 s: clear the line, then the loop | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | As in SING; held with a knob turned: that setting back |
 | OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
 | FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line | As in SING |
 | ALGO, SEQ | — | The page the knobs play: VOICE, FEEL, FX, SING (tabs at the top) | — |

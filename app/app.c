@@ -175,7 +175,6 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "take")) *got = (int)voice_notes_of(voice_cast);  /* the selected one's notes in the loop */
     else if (!strcmp(what, "takes")) *got = (int)voice_seq_count;           /* all notes in the loop */
     else if (!strcmp(what, "recording")) *got = (int)voice_recording;
-    else if (!strcmp(what, "passes")) *got = (int)voice_passes();
     else if (!strcmp(what, "metronome")) *got = (int)voice_click;
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;
     else if (!strcmp(what, "lyric")) *got = (int)voice_lyric_at;

@@ -23,10 +23,9 @@
  *         EDIT a word back; held 1 s: clear the line, then the loop
  *   SING  ALGO / SEQ page (SING only)   K1..K4 sound (EDIT held: back to the character's)
  *         OCT- OCT+ octave   FX from the top of the line
- *         EDIT undo a pass; held 1 s: clear the loop
+ *         EDIT clear the selected character's notes; held 1 s: the whole loop
  *   LOOP  K1 the character's start  K2 its level  K3 bars  K4 BPM
- *         (EDIT held: back to where they start); EDIT clears the selected
- *         character's lane; OCT and FX as in SING
+ *         (EDIT held: back to where they start); OCT, FX and EDIT as in SING
  * Every button says what it did on the hint line.
  *
  * Included by app.c: uses paint.inc's helpers and draw cache. */
@@ -72,21 +71,21 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
     {"KEYS SING THE LINE  HELD: A CHORD",
      "PLAY: LOOP  REC: RECORD  GLO: LOOP",
      "OCT- OCT+ OCTAVE  FX: FROM THE TOP",
-     "EDIT: UNDO A PASS  HOLD: CLEAR LOOP",
+     "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
      "SELECT: WHO  SAVE: CHOIR"},
     {"A LANE A SINGER  KEYS SING  GLO: TYPE",
      "K1 START  K2 LEVEL  K3 BARS  K4 BPM",
      "EDIT+KNOB: AS IT WAS",
      "PLAY: LOOP  REC: RECORD",
-     "EDIT: CLEAR THE SINGER'S LANE",
+     "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "SELECT: WHO  SAVE: CHOIR"}};
 /* K2's letters in TYPE mode, round and round. */
 static const char voice_alphabet[] = "abcdefghijklmnopqrstuvwxyz ,.?!'-";
 enum { VOICE_ALPHABET = sizeof voice_alphabet - 1, VOICE_HOLD_MS = 1000 };
 
 /* A character: sound, choir, and place in the loop. */
-enum { VOICE_PAGES = MUMBLE_PAGES, VOICE_SEQ = 128, VOICE_PASSES = 8 };
+enum { VOICE_PAGES = MUMBLE_PAGES, VOICE_SEQ = 128 };
 struct voice_track {
     uint8_t choir, start, level;             /* start: 16th step in the loop; level: percent */
     struct mumble_voice sound;
@@ -126,14 +125,13 @@ static struct mumble_syllable voice_lyric_plan[MUMBLE_SYLLABLES];
 static struct mumble_sound voice_line_sounds[MUMBLE_SYLLABLES];
 static uint8_t voice_key_slot[MUMBLE_LETTERS];
 /* The sequence: notes grouped by singer (for the engine's parts), each with
- * its singer and the pass that recorded it (EDIT undoes the last pass). */
+ * its singer. */
 static struct mumble_note voice_seq[VOICE_SEQ];
-static uint8_t voice_seq_track[VOICE_SEQ], voice_seq_pass[VOICE_SEQ];
-static unsigned voice_seq_count, voice_pass;
+static uint8_t voice_seq_track[VOICE_SEQ];
+static unsigned voice_seq_count;
 /* Recording: a singer being recorded, where its note began, when, and its
- * note and slot. A pass is open once a note of it is in; the loop's wrap, a
- * new recording, another character or an undo starts the next. */
-static unsigned voice_recording, voice_pass_open, voice_click;
+ * note and slot. */
+static unsigned voice_recording, voice_click;
 static uint32_t voice_rec_held, voice_rec_since[MUMBLE_CAST];
 static uint16_t voice_rec_at[MUMBLE_CAST];
 static uint8_t voice_rec_note[MUMBLE_CAST], voice_rec_slot[MUMBLE_CAST];
@@ -229,7 +227,7 @@ static void voice_open(void)
             t->level = 100;
         }
         voice_set_text("");
-        voice_seq_count = voice_pass = 0;
+        voice_seq_count = 0;
         voice_cast = 0;
         if (frame_views[0].tempo) voice_bpm = frame_views[0].tempo;
         voice_ready = 1;
@@ -442,29 +440,6 @@ static void voice_rec_press(unsigned who, unsigned slot, unsigned note)
     voice_rec_slot[who] = (uint8_t)slot;
     voice_rec_note[who] = (uint8_t)note;
 }
-/* The passes in the sequence (EDIT's undo levels). */
-static unsigned voice_passes(void)
-{
-    unsigned n = 0;
-    for (unsigned id = 1; id <= voice_pass; ++id)
-        for (unsigned k = 0; k < voice_seq_count; ++k)
-            if (voice_seq_pass[k] == id) { ++n; break; }
-    return n;
-}
-/* A new pass; past VOICE_PASSES the oldest two become one. */
-static void voice_pass_begin(void)
-{
-    ++voice_pass;
-    voice_pass_open = 1;
-    if (voice_passes() < VOICE_PASSES) return;
-    unsigned oldest = 255, next = 255;
-    for (unsigned k = 0; k < voice_seq_count; ++k)
-        if (voice_seq_pass[k] < oldest) oldest = voice_seq_pass[k];
-    for (unsigned k = 0; k < voice_seq_count; ++k)
-        if (voice_seq_pass[k] > oldest && voice_seq_pass[k] < next) next = voice_seq_pass[k];
-    for (unsigned k = 0; k < voice_seq_count; ++k)
-        if (voice_seq_pass[k] == oldest) voice_seq_pass[k] = (uint8_t)next;
-}
 /* A recorded note ended (let go, or its singer moved on): into the
  * sequence, grouped with its singer's, played from the next pass. */
 static void voice_rec_release(unsigned who)
@@ -472,16 +447,6 @@ static void voice_rec_release(unsigned who)
     if (!(voice_rec_held & (1U << who))) return;
     voice_rec_held &= ~(1U << who);
     if (voice_seq_count >= VOICE_SEQ) { voice_notice("THE LOOP IS FULL"); return; }
-    if (voice_pass >= 250U) {                /* (ids run out: renumber 1..) */
-        uint8_t map[256] = {0};
-        unsigned next = 0;
-        for (unsigned id = 1; id <= voice_pass; ++id)
-            for (unsigned k = 0; k < voice_seq_count; ++k)
-                if (voice_seq_pass[k] == id) { map[id] = (uint8_t)++next; break; }
-        for (unsigned k = 0; k < voice_seq_count; ++k) voice_seq_pass[k] = map[voice_seq_pass[k]];
-        voice_pass = next;
-    }
-    if (!voice_pass_open) voice_pass_begin();
     uint32_t len = frame_time - voice_rec_since[who], loop = voice_loop_ms();
     if (len < 30U) len = 30U;
     if (len >= loop) len = loop - 1U;
@@ -490,34 +455,13 @@ static void voice_rec_release(unsigned who)
     while (at < voice_seq_count && voice_seq_track[at] <= who) ++at;
     memmove(voice_seq + at + 1, voice_seq + at, (voice_seq_count - at) * sizeof voice_seq[0]);
     memmove(voice_seq_track + at + 1, voice_seq_track + at, voice_seq_count - at);
-    memmove(voice_seq_pass + at + 1, voice_seq_pass + at, voice_seq_count - at);
     voice_seq[at] = (struct mumble_note){voice_rec_at[who], (uint16_t)len, voice_rec_slot[who], voice_rec_note[who],
                                          (uint8_t)voice_caps, voice_rec_bend[who]};
     voice_seq_track[at] = (uint8_t)who;
-    voice_seq_pass[at] = (uint8_t)voice_pass;
     ++voice_seq_count;
     voice_touch();
 }
-/* EDIT in SING mode: the last pass out of the sequence. */
-static unsigned voice_undo(void)
-{
-    unsigned last = 0, n = 0;
-    for (unsigned k = 0; k < voice_seq_count; ++k)
-        if (voice_seq_pass[k] > last) last = voice_seq_pass[k];
-    if (!last) return 0;
-    for (unsigned k = 0; k < voice_seq_count; ++k)
-        if (voice_seq_pass[k] != last) {
-            voice_seq[n] = voice_seq[k];
-            voice_seq_track[n] = voice_seq_track[k];
-            voice_seq_pass[n] = voice_seq_pass[k];
-            ++n;
-        }
-    voice_seq_count = n;
-    voice_pass_open = 0;
-    voice_touch();
-    return 1;
-}
-/* LOOP's EDIT: one singer's notes out of the loop. */
+/* EDIT where the keys sing: one singer's notes out of the loop. */
 static unsigned voice_seq_clear_track(unsigned t)
 {
     unsigned n = 0, was = voice_seq_count;
@@ -525,18 +469,15 @@ static unsigned voice_seq_clear_track(unsigned t)
         if (voice_seq_track[k] != t) {
             voice_seq[n] = voice_seq[k];
             voice_seq_track[n] = voice_seq_track[k];
-            voice_seq_pass[n] = voice_seq_pass[k];
             ++n;
         }
     voice_seq_count = n;
-    voice_pass_open = 0;
     voice_touch();
     return n != was;
 }
 static void voice_seq_clear(void)
 {
-    voice_seq_count = voice_pass = 0;
-    voice_pass_open = 0;
+    voice_seq_count = 0;
     voice_touch();
 }
 /* A character stops singing its key, or starts one: the key's syllable, at
@@ -586,7 +527,6 @@ static void voice_rec_toggle(void)
 {
     if (voice_recording) { voice_rec_stop(); return; }
     voice_recording = 1;
-    voice_pass_open = 0;
     unsigned restart = !voice_song || (voice_song == 2 && mumble_song_position() < 0);
     if (restart) voice_start();
     voice_notice("RECORDING: SING THE KEYS");
@@ -681,19 +621,17 @@ static void voice_demo_line(unsigned demo)
     strcat(of, count);
     voice_say_number("DEMO LINE ", (int)voice_demo + 1, of);
 }
-/* EDIT let go before it was held 1 s (in LOOP, however long), with no knob
- * turned. */
+/* EDIT let go before it was held 1 s, with no knob turned: where the keys
+ * sing, the selected character's notes out of the loop; in TYPE a word back. */
 static void voice_edit_tap(void)
 {
-    if (voice_mode == VOICE_LOOP)
+    if (voice_play)
         voice_say(mumble_cast[voice_cast].name,
-                  voice_seq_clear_track(voice_cast) ? "'S LANE IS CLEARED" : " HAS NOTHING IN THE LOOP", NULL);
-    else if (voice_play) voice_notice(voice_undo() ? (voice_seq_count ? "LAST PASS UNDONE" : "THE LOOP IS EMPTY") : "NOTHING TO UNDO");
+                  voice_seq_clear_track(voice_cast) ? "'S NOTES ARE CLEARED" : " HAS NOTHING IN THE LOOP", NULL);
     else if (!voice_cut_word()) voice_notice(voice_length ? "HOLD EDIT TO CLEAR THE LINE" : "HOLD EDIT TO CLEAR THE LOOP");
 }
-/* EDIT held 1 s: in TYPE the line, or on an empty line the loop; in SING the
- * loop; in LOOP nothing more than a tap. */
-static unsigned voice_edit_holds(void) { return voice_mode != VOICE_LOOP; }
+/* EDIT held 1 s: in TYPE the line, or on an empty line the loop; where the
+ * keys sing, the loop. */
 static unsigned voice_edit_clears_line(void) { return !voice_play && voice_length; }
 static void voice_edit_hold(void)
 {
@@ -718,7 +656,6 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         if (edit && c->encoders[i]) voice_edit_spent = 1;
     if (c->encoders[0]) {
         voice_release_all();
-        voice_pass_open = 0;
         voice_cast = (unsigned)((int)voice_cast + c->encoders[0] % MUMBLE_CAST + MUMBLE_CAST) % MUMBLE_CAST;
         const char *hello = voice_greetings[voice_cast];
         mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
@@ -775,7 +712,7 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         if ((pressed & BUTTON(OCT_DOWN)) && voice_cursor) voice_cut(voice_cursor - 1U, voice_cursor);
     }
     /* EDIT: a tap acts as it is let go; held 1 s it clears. */
-    if (edit && !voice_edit_spent && voice_edit_holds() && frame_time - voice_edit_since >= VOICE_HOLD_MS) {
+    if (edit && !voice_edit_spent && frame_time - voice_edit_since >= VOICE_HOLD_MS) {
         voice_edit_spent = 1;
         voice_edit_hold();
     }
@@ -842,10 +779,9 @@ static void voice_frame(uint32_t now)
     }
     voice_lyric_sync();
     if (voice_song_dirty && voice_song) voice_publish(0, 0);
-    /* Each pass of the loop sings from the top of the line, and is a pass of
-     * the recording. */
+    /* Each pass of the loop sings from the top of the line. */
     if (voice_song && voice_now.song_ms >= 0) {
-        if (voice_now.song_ms < voice_loop_last_ms) { voice_lyric_rewind(); voice_pass_open = 0; }
+        if (voice_now.song_ms < voice_loop_last_ms) voice_lyric_rewind();
         voice_loop_last_ms = voice_now.song_ms;
     } else voice_loop_last_ms = -1;
     /* Recording: the metronome counts the loop's beats. */
@@ -1470,7 +1406,7 @@ static __attribute__((noinline)) void voice_draw(void)
     /* The hint line: EDIT being held (what it clears, and how long yet), a
      * notice of what a control did, or the mode's tip. */
     uint32_t held = frame_time - voice_edit_since, progress = 0;
-    unsigned holding = voice_edit_down && !voice_edit_spent && voice_edit_holds() && held >= 150U;
+    unsigned holding = voice_edit_down && !voice_edit_spent && held >= 150U;
     const char *hint = holding ? (voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP")
                      : notice ? notice : voice_tips[voice_mode];
     if (holding) progress = (held >= VOICE_HOLD_MS ? VOICE_HOLD_MS : held) * 228U / VOICE_HOLD_MS;
