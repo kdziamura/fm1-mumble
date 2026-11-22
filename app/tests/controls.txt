@@ -76,6 +76,10 @@ expect length >20
 # K4 turned puts the BPM back.
 tap GLO
 expect mode 2
+# The sound pages are SING's: ALGO leaves them be here.
+turn ALGO 1
+wait 50
+expect page 0
 turn K4 5
 wait 50
 expect bpm 125

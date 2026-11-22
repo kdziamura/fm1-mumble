@@ -21,11 +21,12 @@
  *   TYPE  keys type at the cursor   K1 cursor   K2 the letter under it
  *         OCT- delete   OCT+ CAPS   FX ,  SCL .  ENV ?  LFO !
  *         EDIT a word back; held 1 s: clear the line, then the loop
- *   SING  ALGO / SEQ page   K1..K4 sound (EDIT held: back to the character's)
+ *   SING  ALGO / SEQ page (SING only)   K1..K4 sound (EDIT held: back to the character's)
  *         OCT- OCT+ octave   FX from the top of the line
  *         EDIT undo a pass; held 1 s: clear the loop
  *   LOOP  K1 the character's start  K2 its level  K3 bars  K4 BPM
- *         (EDIT held: back to where they start); OCT, FX and EDIT as in SING
+ *         (EDIT held: back to where they start); EDIT clears the selected
+ *         character's lane; OCT and FX as in SING
  * Every button says what it did on the hint line.
  *
  * Included by app.c: uses paint.inc's helpers and draw cache. */
@@ -78,7 +79,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "K1 START  K2 LEVEL  K3 BARS  K4 BPM",
      "EDIT+KNOB: AS IT WAS",
      "PLAY: LOOP  REC: RECORD",
-     "EDIT: UNDO A PASS  HOLD: CLEAR LOOP",
+     "EDIT: CLEAR THE SINGER'S LANE",
      "SELECT: WHO  SAVE: CHOIR"}};
 /* K2's letters in TYPE mode, round and round. */
 static const char voice_alphabet[] = "abcdefghijklmnopqrstuvwxyz ,.?!'-";
@@ -516,6 +517,22 @@ static unsigned voice_undo(void)
     voice_touch();
     return 1;
 }
+/* LOOP's EDIT: one singer's notes out of the loop. */
+static unsigned voice_seq_clear_track(unsigned t)
+{
+    unsigned n = 0, was = voice_seq_count;
+    for (unsigned k = 0; k < voice_seq_count; ++k)
+        if (voice_seq_track[k] != t) {
+            voice_seq[n] = voice_seq[k];
+            voice_seq_track[n] = voice_seq_track[k];
+            voice_seq_pass[n] = voice_seq_pass[k];
+            ++n;
+        }
+    voice_seq_count = n;
+    voice_pass_open = 0;
+    voice_touch();
+    return n != was;
+}
 static void voice_seq_clear(void)
 {
     voice_seq_count = voice_pass = 0;
@@ -664,13 +681,19 @@ static void voice_demo_line(unsigned demo)
     strcat(of, count);
     voice_say_number("DEMO LINE ", (int)voice_demo + 1, of);
 }
-/* EDIT let go before it was held 1 s, with no knob turned. */
+/* EDIT let go before it was held 1 s (in LOOP, however long), with no knob
+ * turned. */
 static void voice_edit_tap(void)
 {
-    if (voice_play) voice_notice(voice_undo() ? (voice_seq_count ? "LAST PASS UNDONE" : "THE LOOP IS EMPTY") : "NOTHING TO UNDO");
+    if (voice_mode == VOICE_LOOP)
+        voice_say(mumble_cast[voice_cast].name,
+                  voice_seq_clear_track(voice_cast) ? "'S LANE IS CLEARED" : " HAS NOTHING IN THE LOOP", NULL);
+    else if (voice_play) voice_notice(voice_undo() ? (voice_seq_count ? "LAST PASS UNDONE" : "THE LOOP IS EMPTY") : "NOTHING TO UNDO");
     else if (!voice_cut_word()) voice_notice(voice_length ? "HOLD EDIT TO CLEAR THE LINE" : "HOLD EDIT TO CLEAR THE LOOP");
 }
-/* EDIT held 1 s: in TYPE the line, or on an empty line the loop; in SING the loop. */
+/* EDIT held 1 s: in TYPE the line, or on an empty line the loop; in SING the
+ * loop; in LOOP nothing more than a tap. */
+static unsigned voice_edit_holds(void) { return voice_mode != VOICE_LOOP; }
 static unsigned voice_edit_clears_line(void) { return !voice_play && voice_length; }
 static void voice_edit_hold(void)
 {
@@ -701,11 +724,13 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
         ++voice_lanes_version;
     }
-    unsigned paged = voice_page;
-    if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
-    if (pressed & BUTTON(SEQ)) voice_page = (voice_page + 1U) % VOICE_PAGES;
-    if (voice_page != paged || (pressed & BUTTON(SEQ)))
-        voice_say(voice_page_names[voice_page], voice_mode == VOICE_SING ? " PAGE" : " PAGE: ITS KNOBS IN SING", NULL);
+    /* The sound pages: SING's alone. */
+    if (voice_mode == VOICE_SING) {
+        unsigned paged = voice_page;
+        if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
+        if (pressed & BUTTON(SEQ)) voice_page = (voice_page + 1U) % VOICE_PAGES;
+        if (voice_page != paged || (pressed & BUTTON(SEQ))) voice_say(voice_page_names[voice_page], " PAGE", NULL);
+    } else if (c->encoders[1] || (pressed & BUTTON(SEQ))) voice_notice("THE SOUND PAGES ARE IN SING");
     for (unsigned i = 0; i < 4; ++i) {
         int turned = c->encoders[2 + i];
         if (!turned) continue;
@@ -750,7 +775,7 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         if ((pressed & BUTTON(OCT_DOWN)) && voice_cursor) voice_cut(voice_cursor - 1U, voice_cursor);
     }
     /* EDIT: a tap acts as it is let go; held 1 s it clears. */
-    if (edit && !voice_edit_spent && frame_time - voice_edit_since >= VOICE_HOLD_MS) {
+    if (edit && !voice_edit_spent && voice_edit_holds() && frame_time - voice_edit_since >= VOICE_HOLD_MS) {
         voice_edit_spent = 1;
         voice_edit_hold();
     }
@@ -965,24 +990,18 @@ static void voice_header(void)
     if (cache->voice_cache[0] == sig) return;
     cache->voice_cache[0] = sig;
     paint_fill(0, 0, 240, 28, BACK);
-    /* The name and the three modes (the current one lit, a play mark while
-     * the loop runs), then the sound pages as tabs: the knobs' page lit in
-     * SING, where the knobs play it, dim in the other modes. */
+    /* The three modes (the current one lit, a play mark while the loop
+     * runs, CAPS in TYPE), and in SING its sound pages, the knobs' one lit. */
     static const uint16_t mode_colors[VOICE_MODES] = {TEXT, GREEN, ACCENT};
-    text(8, 4, "MUMBLE", 1, TEXT, BACK);
     for (unsigned m = 0; m < VOICE_MODES; ++m)
-        text(50U + m * 30U, 4, voice_mode_names[m], 1, m == voice_mode ? mode_colors[m] : PANEL, BACK);
+        text(8U + m * 30U, 4, voice_mode_names[m], 1, m == voice_mode ? mode_colors[m] : PANEL, BACK);
     if (voice_song)
-        for (unsigned r = 0; r < 7; ++r) paint_fill(140, 4U + r, r < 4U ? r + 1U : 7U - r, 1, ACCENT);
-    unsigned sing = voice_mode == VOICE_SING;
-    for (unsigned k = 0, x = 8; k < VOICE_PAGES; ++k) {
-        unsigned n = (unsigned)strlen(voice_page_names[k]);
-        unsigned on = k == voice_page;
-        text(x, 16, voice_page_names[k], 1, on ? (sing ? TEXT : DIM) : PANEL, BACK);
-        if (on) paint_fill(x, 24, n * 6U - 1U, 2, sing ? ACCENT : DIM);
-        x += (n + 1U) * 6U;
+        for (unsigned r = 0; r < 7; ++r) paint_fill(98, 4U + r, r < 4U ? r + 1U : 7U - r, 1, ACCENT);
+    if (voice_caps) text(110, 4, "CAPS", 1, AMBER, BACK);
+    for (unsigned k = 0, x = 8; voice_mode == VOICE_SING && k < VOICE_PAGES; ++k) {
+        text(x, 16, voice_page_names[k], 1, k == voice_page ? mode_colors[VOICE_SING] : PANEL, BACK);
+        x += ((unsigned)strlen(voice_page_names[k]) + 1U) * 6U;
     }
-    if (voice_caps) text(124, 16, "CAPS", 1, AMBER, BACK);
     unsigned n = (unsigned)strlen(who->name);
     unsigned x = 232 - n * 12U;
     text(x, 7, who->name, 2, who->color, BACK);
@@ -1448,7 +1467,7 @@ static __attribute__((noinline)) void voice_draw(void)
     /* The hint line: EDIT being held (what it clears, and how long yet), a
      * notice of what a control did, or the mode's tip. */
     uint32_t held = frame_time - voice_edit_since, progress = 0;
-    unsigned holding = voice_edit_down && !voice_edit_spent && held >= 150U;
+    unsigned holding = voice_edit_down && !voice_edit_spent && voice_edit_holds() && held >= 150U;
     const char *hint = holding ? (voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP")
                      : notice ? notice : voice_tips[voice_mode];
     if (holding) progress = (held >= VOICE_HOLD_MS ? VOICE_HOLD_MS : held) * 228U / VOICE_HOLD_MS;

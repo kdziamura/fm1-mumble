@@ -37,10 +37,10 @@ view: a lane of the loop for each character, the keys singing as in SING).
 | Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord | As in SING |
 | K1 / K2 | The cursor / the letter under it (at the end: a new one) | The page's four sounds (K1–K4), shown with a bar of where each sits and a tick at the character's own | The character's start / level in the loop |
 | K3 / K4 | — | | The loop's bars / BPM |
-| EDIT | A word back; held 1 s: clear the line, then the loop | Undo a pass; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | As in SING; with a knob: that setting back |
+| EDIT | A word back; held 1 s: clear the line, then the loop | Undo a pass; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | Clear the selected character's lane; held with a knob turned: that setting back |
 | OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
 | FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line | As in SING |
-| ALGO, SEQ | The page SING's knobs play: VOICE, FEEL, FX, SING (tabs at the top) | | |
+| ALGO, SEQ | — | The page the knobs play: VOICE, FEEL, FX, SING (tabs at the top) | — |
 | GLO | To SING | To LOOP (recording carries on) | To TYPE |
 | SELECT / SAVE | The character / in or out of the choir | | |
 | ARP, PRESET | A demo line | | |

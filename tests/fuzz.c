@@ -30,8 +30,10 @@
  *       SING, LOOP, REC records (from TYPE: to SING first), PLAY starts or
  *       stops the loop, SELECT and ALGO move by their detents, in SING a knob
  *       moves its parameter of the selected sound by the accelerated amount
- *       (with EDIT held, back to the character's), in LOOP the knobs move the
- *       start, level, bars and BPM (EDIT held: back), in TYPE K1 moves the cursor and
+ *       (with EDIT held, back to the character's), ALGO turns the pages only
+ *       in SING, in LOOP the knobs move the start, level, bars and BPM (EDIT
+ *       held: back) and EDIT clears only the selected singer's lane, in TYPE
+ *       K1 moves the cursor and
  *       K2 changes only the letter under it; EDIT let go unspent undoes
  *       exactly the last pass (SING) or cuts the word before the cursor
  *       (TYPE), held 1 s it clears the loop (SING) or the line, then the loop
@@ -301,7 +303,9 @@ static void step_after(void)
     unsigned edit = (before.held & BUTTON(EDIT)) != 0, edit_tap = 0, edit_hold = 0;
     if (pressed & BUTTON(EDIT)) edit_since = now_ms, edit_spent = 0;
     if (edit && turned_any) edit_spent = 1;
-    if (edit && !edit_spent && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
+    /* (In LOOP EDIT has no hold: the mode as the frame left it, which GLO or
+     * REC may have changed before EDIT was looked at.) */
+    if (edit && !edit_spent && voice_mode != VOICE_LOOP && now_ms - edit_since >= VOICE_HOLD_MS) edit_hold = 1, edit_spent = 1;
     if (!edit && edit_was && !edit_spent) edit_tap = 1;
     edit_was = edit;
     /* (A recorded note let go in the same frame joins the loop after EDIT acts.) */
@@ -325,7 +329,15 @@ static void step_after(void)
         (voice_lyric_at || voice_lyric_started || voice_lyric_lead != MUMBLE_LETTERS))
         fail("S2 FX in SING did not go back to the line's top");
     if (edit_tap && !pressed && alone && !(before.play && let_go)) {
-        if (before.play) {
+        if (before.mode == VOICE_LOOP) {
+            unsigned kept = 0;
+            for (unsigned j = 0; j < before.seq_count; ++j)
+                if (before.seq_track[j] != before.cast) {
+                    if (kept >= voice_seq_count || !same_note(kept, j)) fail("S2 EDIT in LOOP cleared another singer's note");
+                    ++kept;
+                }
+            if (kept != voice_seq_count) fail("S2 EDIT in LOOP did not clear the selected singer's lane");
+        } else if (before.play) {
             unsigned last = 0, kept = 0;
             for (unsigned j = 0; j < before.seq_count; ++j)
                 if (before.seq_pass[j] > last) last = before.seq_pass[j];
@@ -359,9 +371,11 @@ static void step_after(void)
         if (!before.key_down && (voice_length != before.length || memcmp(voice_text, before.text, voice_length)))
             fail("S2 another character did not keep the line");
     }
-    if (!(pressed & BUTTON(SEQ)) && before.turned[1] &&
+    if (!(pressed & BUTTON(SEQ)) && before.turned[1] && before.mode == VOICE_SING &&
         voice_page != (unsigned)(((int)before.page + before.turned[1] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
         fail("S2 ALGO did not move the page by its detents");
+    /* (ALGO and SEQ are read before GLO: the mode the frame began in decides.) */
+    if (before.mode != VOICE_SING && voice_page != before.page) fail("S2 the sound page changed outside SING");
     /* SING, the knobs on a sound page: the selected sound, those parameters, by
      * the accelerated amount, kept in range; with EDIT held, the character's. */
     unsigned knobs_alone = !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6];
