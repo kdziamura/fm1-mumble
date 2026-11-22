@@ -18,12 +18,12 @@ and the parts, from what stands out in the voice against the rest of the
 cast (how far each setting is from the cast's average, in its spread): each
 slot takes the part of the setting that stands out most, past a threshold.
   top    ROOM a hood, RADIO an antenna, SPEED spikes and a headband, DICTION a
-         cap, EFFORT a helmet, JITTER a bandana, VIBRATO long hair, WOBBLE
-         bald, GLIDE a pointed hat
+         cap, a drilled voice (pushed, low, crisp, steady) a helmet, JITTER a
+         bandana, VIBRATO long hair, WOBBLE bald, GLIDE ELDER's pointed hat
   face   CRUSH a visor, WOBBLE a beard (low voices), JITTER + EFFORT an eye
-         patch, DICTION glasses
-  body   AIR a ghost, CRUSH a robot, ROOM a robe, EFFORT armour, JITTER
-         stripes, PITCH a tee
+         patch, a very crisp DICTION glasses
+  body   AIR a ghost, CRUSH a robot, ROOM a robe, a drilled voice armour,
+         JITTER stripes, PITCH a tee
 The face also says where its mouth and eyes are (the rig the talking and
 blinking overlays need), so nothing is placed by hand.
 
@@ -141,6 +141,21 @@ def outline(shape, face, colour, broken=False, open_below=False):
                 break
 
 
+# ELDER's hat, drawn by hand: a bent tip, a star, a band and a curled brim
+# (its last row the head's top).
+WIZARD_HAT = [
+    "...............bb.......",
+    "..............b.b.......",
+    ".............b..b.......",
+    "............b.o..b......",
+    "...........b.ooo.b......",
+    "..........b...o...b.....",
+    ".........oooooooooo.....",
+    "..bbbbbbbbbbbbbbbbbbbb..",
+    ".b..bbbbbbbbbbbbbbbb..b.",
+]
+
+
 def build_robot(f, t, size):
     """The hand-drawn BOT's construction: a box head with its corners off,
     bolts at the sides, a screen with green eyes (and mouth), an antenna with
@@ -224,20 +239,22 @@ def build(values) -> Face:
     f = Face()
     size, high = 1 - t["tube"], t["pitch"]
 
-    # The parts, from what stands out.
+    # The parts, from what stands out. A drilled voice (pushed, low, crisp,
+    # steady) is a soldier's; a pushed, rough one is not.
+    drilled = z["effort"] - 0.5 * z["pitch"] - 0.5 * z["jitter"] + 0.5 * z["diction"]
     body = pick([("ghost", z["air"], t["air"] > 0.6), ("robot", z["crush"], t["crush"] > 0.4),
-                 ("robe", z["room"], t["room"] > 0.5), ("armour", z["effort"] - z["pitch"] * 0.5, t["effort"] > 0.6),
+                 ("robe", z["room"], t["room"] > 0.5), ("armour", drilled, t["effort"] > 0.6),
                  ("stripes", z["jitter"], t["jitter"] > 0.6), ("tee", z["pitch"], t["pitch"] > 0.45)])
     top = pick([("hood", z["room"], t["room"] > 0.55 and body != "ghost"), ("antenna", z["radio"], t["radio"] > 0.35),
                 ("spikes", z["speed"], t["speed"] > 0.4), ("cap", z["diction"], t["diction"] > 0.5),
-                ("helmet", z["effort"] - z["pitch"] * 0.5, t["effort"] > 0.6 and body != "ghost"),
+                ("helmet", drilled, t["effort"] > 0.6 and body != "ghost"),
                 ("bandana", z["jitter"], t["jitter"] > 0.6 and body != "ghost"),
                 ("long hair", z["vibrato"], t["vibrato"] > 0.35), ("bald", z["wobble"], t["wobble"] > 0.4),
                 ("pointed hat", z["glide"], t["glide"] > 0.35 and body != "ghost")])
     extra = pick([("visor", z["crush"], t["crush"] > 0.5),
                   ("beard", z["wobble"] - z["pitch"] * 0.7, t["wobble"] > 0.4 and body != "ghost"),
                   ("eye patch", (z["jitter"] + z["effort"]) * 0.6 - z["mouth"] * 0.4, t["jitter"] > 0.6),
-                  ("glasses", z["diction"] * 0.8, t["diction"] > 0.55)], threshold=0.7)
+                  ("glasses", z["diction"] * 0.8, z["diction"] > 1.2)], threshold=0.7)
     if body == "robot" and top not in ("antenna", "cap", "helmet", "pointed hat"):
         top = "antenna" if t["radio"] > 0.2 else None
     machine = body == "robot" or extra == "visor"
@@ -253,16 +270,16 @@ def build(values) -> Face:
 
     # Proportions, in whole pixels: half the head's width (its left side at
     # 12 - half), its height to the chin line (row 16), the jaw's steps.
-    half = 6 if (0.6 * size + 0.3 * t["effort"] - 0.5 * high) < 0.05 else 8 if (size > 0.7 and high < 0.4) else 7
+    half = 6 if (0.6 * size + 0.3 * t["effort"] - 0.5 * high) < 0.05 else 8 if (size > 0.9 and high < 0.4) else 7
     h = 11 + round(3 * min(1.0, max(0.0, 0.25 + 0.8 * size - 0.3 * high)))
     tall_top = top in ("pointed hat", "cap", "bandana", "helmet")
     if tall_top:
-        h = min(h, 11)
+        h = 9 if top == "pointed hat" else min(h, 11)
     yc = 16 if body != "ghost" else 14
     yt = yc - h + 1
     xl, xr = 12 - half, 11 + half
     jaw = 0 if machine else 2 if (high > 0.55 and t["effort"] < 0.6) else 1
-    rounded = not machine and top not in ("cap", "bandana", "spikes")
+    rounded = not machine and top not in ("cap", "bandana", "spikes", "pointed hat")
 
     # The head.
     if rounded:
@@ -279,9 +296,9 @@ def build(values) -> Face:
     f.rect(xl + 1 + jaw, yc, 2 * (half - 1 - jaw), 1, "w")
 
     # Eyes (TUNE sets them apart), ears or a machine's bolts at them.
-    ey = yt + round(h * 0.42) + (1 if tall_top else 0)
+    ey = yt + (4 if top == "cap" else 3) if tall_top else yt + round(h * 0.42)
     gap = 1 + round(2 * t["tune"])
-    ew, eh = 2, (1 if high < 0.12 else 2)
+    ew, eh = 2, (1 if high < 0.05 else 2)
     left = 12 - gap - ew
     if left <= xl + 1:
         left = xl + 2
@@ -315,9 +332,10 @@ def build(values) -> Face:
             for x in range(xl + 1, xr):
                 if f.get(x, y) == "." and (x + y) % 2 == 0 and not (y == my and 12 - mw // 2 <= x < 12 + mw // 2):
                     f.set(x, y, "m" if y < yc else "w")
-    elif extra == "eye patch":
-        f.rect(left - 1, ey - 1, ew + 2, eh + 2, "m")
-        f.line(left - 1, ey - 1, xl + 1, yt + 1, "m"), f.line(left + ew, ey - 1, xr - 1, yt + 1, "m")
+    elif extra == "eye patch":                   # (as PIRATE's: a strap across, the patch under it, up to the top)
+        f.rect(xl + 1, ey, left + 2 - xl, 1, "m")
+        f.rect(left - 1, ey + 1, 3, 2, "m")
+        f.rect(left + 3, ey - 1, 2, 1, "m"), f.set(left + 5, ey - 2, "m")
         f.eyes = f.eyes[1:]
     elif extra == "glasses":
         for (x, y, ww, hh) in f.eyes:
@@ -358,13 +376,11 @@ def build(values) -> Face:
     elif top == "antenna":
         f.line(11, yt - 1, 11, yt - 2, "w"), f.line(12, yt - 1, 12, yt - 2, "w")
         f.rect(11, yt - 4, 2, 2, "o")
-    elif top == "pointed hat":
-        apex = max(0, yt - 7)
-        for y in range(apex, yt):
-            reach = 1 + (y - apex) * (half - 1) // max(1, yt - apex)
-            f.set(14 - reach + (y - apex) // 3, y, "b"), f.set(14 + reach - (y - apex) // 4, y, "b")
-        f.rect(xl - 2, yt, 2 * half + 4, 1, "b")
-        f.rect(13, yt - 3, 1, 1, "o"), f.rect(12, yt - 2, 3, 1, "o"), f.rect(13, yt - 1, 1, 1, "o")
+    elif top == "pointed hat":                   # ELDER's, its brim the head's top
+        for j, row in enumerate(WIZARD_HAT):
+            for x, c in enumerate(row):
+                if c != ".":
+                    f.set(x, yt - len(WIZARD_HAT) + 1 + j, c)
     elif top == "long hair":
         f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")
         for y in range(yt + 1, yc + 3):
@@ -392,7 +408,7 @@ def build(values) -> Face:
         f.line(xl, yc - 1, xl, yc, "w", mirror=True)
         return f
     f.both(10, yc + 1, "w")                                                   # the neck
-    wear = "o" if body == "armour" else "b" if body in ("robe", "stripes", "robot") else "g" if high > 0.3 else "b"
+    wear = "w" if body == "stripes" else "b" if body in ("robe", "robot") else "g" if high > 0.3 else "b"
     if body == "armour":
         wear = "m"
     f.rect(4, sy, 6, 1, wear, mirror=True)
