@@ -69,7 +69,7 @@ LOOP a key is lit while it is held.
 | OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
 | FX | The cursor to the line's start | Back to the top of the line | As in SING |
 | SCL | The next scale (major, minor, pentatonic, blues, dorian, mixolydian, harmonic minor; SCL lit) the keys keep to | | |
-| LFO | A random syllable at the cursor; held 1 s: new voices for everyone | A new voice rolled for the selected character; held 1 s: for everyone | As in SING |
+| LFO | A random syllable at the cursor (however long it is held) | A new voice rolled for the selected character; held 1 s: for everyone | As in SING |
 | ENV | The selected character's own voice back; held 1 s: everyone's | | |
 | ARP | The arpeggiator on or off (ARP lit; LOOP's ARP tab sets it) | The keys held sung one at a time in the pattern (on the loop's time while it runs), round the choir, a syllable each | As in SING |
 | SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it) | A key sings a chord built up the scale (no scale: major on the root), a note a singer: the choir first, then others join so the chord is whole | As in SING |

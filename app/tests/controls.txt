@@ -299,7 +299,9 @@ turn SELECT 1
 wait 300
 expect sounding 1
 expect edited 0
-# LFO held: everyone rolls a new voice; ENV tapped: HERO's own again.
+# LFO held in SING: everyone rolls a new voice; ENV tapped: HERO's own again.
+turn ALGO 1
+expect mode 1
 press LFO
 wait 1100
 release LFO
@@ -308,6 +310,7 @@ expect edited 1
 tap ENV
 wait 50
 expect edited 0
+turn ALGO -1
 # In TYPE, LFO types a random syllable at the cursor.
 expect mode 0
 tap FX
@@ -315,6 +318,14 @@ expect cursor 0
 tap LFO
 wait 50
 expect cursor >1
+# Held in TYPE, LFO only types (no new voices for everyone).
+expect edited 0
+press LFO
+wait 1300
+release LFO
+wait 50
+expect edited 0
+expect cursor >3
 # GLO: the system screen (load, battery, uptime). EDIT once arms the reset,
 # twice resets everything: the first line back, every voice its own.
 tap ENV

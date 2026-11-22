@@ -369,11 +369,11 @@ static unsigned edit_spent, edit_was;
 /* LFO and ENV: a tap as it is let go, a hold at VOICE_HOLD_MS (as the app's voice_hold_step). */
 struct hold_model { uint32_t since; unsigned down, spent; };
 static struct hold_model lfo_model, env_model;
-static unsigned hold_model_step(struct hold_model *h, unsigned held, unsigned pressed)
+static unsigned hold_model_step(struct hold_model *h, unsigned held, unsigned pressed, unsigned holds)
 {
     unsigned what = 0;
     if (pressed) h->since = now_ms, h->spent = 0;
-    if (held && !h->spent && now_ms - h->since >= VOICE_HOLD_MS) h->spent = 1, what = 2;
+    if (holds && held && !h->spent && now_ms - h->since >= VOICE_HOLD_MS) h->spent = 1, what = 2;
     if (!held && h->down && !h->spent) what = 1;
     h->down = held;
     return what;
@@ -392,8 +392,10 @@ static void step_after(void)
     if (!edit && edit_was && !edit_spent) edit_tap = 1;
     edit_was = edit;
     unsigned arp_tap = (pressed & BUTTON(ARP)) != 0;
-    unsigned lfo = hold_model_step(&lfo_model, (before.held & BUTTON(LFO)) != 0, (pressed & BUTTON(LFO)) != 0);
-    unsigned env = hold_model_step(&env_model, (before.held & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0);
+    /* (LFO holds only where the keys sing, as the frame left the mode: in TYPE
+     * it types a syllable as it is let go, however long.) */
+    unsigned lfo = hold_model_step(&lfo_model, (before.held & BUTTON(LFO)) != 0, (pressed & BUTTON(LFO)) != 0, voice_play);
+    unsigned env = hold_model_step(&env_model, (before.held & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0, 1);
     /* (A recorded note let go in the same frame joins the loop after EDIT acts.) */
     unsigned let_go = (before.letters & ~before.keys) != 0;
     /* The system screen's reset (EDIT twice there): everything as at the first

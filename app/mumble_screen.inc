@@ -172,11 +172,11 @@ static uint32_t voice_edit_since;
 struct voice_hold { uint32_t since; uint8_t down, spent; };
 static struct voice_hold voice_lfo_hold, voice_env_hold;
 enum { HOLD_NONE, HOLD_TAP, HOLD_LONG };
-static unsigned voice_hold_step(struct voice_hold *h, unsigned held, unsigned pressed)
+static unsigned voice_hold_step(struct voice_hold *h, unsigned held, unsigned pressed, unsigned holds)
 {
     unsigned what = HOLD_NONE;
     if (pressed) h->since = frame_time, h->spent = 0;
-    if (held && !h->spent && frame_time - h->since >= VOICE_HOLD_MS) h->spent = 1, what = HOLD_LONG;
+    if (holds && held && !h->spent && frame_time - h->since >= VOICE_HOLD_MS) h->spent = 1, what = HOLD_LONG;
     if (!held && h->down && !h->spent) what = HOLD_TAP;
     h->down = (uint8_t)held;
     return what;
@@ -1289,14 +1289,15 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         char name[16];
         voice_say("SCALE: ", voice_scale_name(name), voice_scale ? ": KEYS KEEP TO IT" : NULL);
     }
-    unsigned lfo = voice_hold_step(&voice_lfo_hold, (c->buttons & BUTTON(LFO)) != 0, (pressed & BUTTON(LFO)) != 0);
+    /* (In TYPE LFO has no hold: let go, however long, it types a syllable.) */
+    unsigned lfo = voice_hold_step(&voice_lfo_hold, (c->buttons & BUTTON(LFO)) != 0, (pressed & BUTTON(LFO)) != 0, voice_play);
     if (lfo == HOLD_TAP && !voice_play) voice_type_syllable();
     else if (lfo == HOLD_TAP) voice_reroll(voice_cast), voice_say(mumble_cast[voice_cast].name, " ROLLED A NEW VOICE", NULL);
     else if (lfo == HOLD_LONG) {
         for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_reroll(i);
         voice_notice("EVERYONE ROLLED A NEW VOICE");
     }
-    unsigned env = voice_hold_step(&voice_env_hold, (c->buttons & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0);
+    unsigned env = voice_hold_step(&voice_env_hold, (c->buttons & BUTTON(ENV)) != 0, (pressed & BUTTON(ENV)) != 0, 1);
     if (env == HOLD_TAP) voice_restore(voice_cast), voice_say(mumble_cast[voice_cast].name, " HAS THEIR OWN VOICE", NULL);
     else if (env == HOLD_LONG) {
         for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_restore(i);
@@ -2051,7 +2052,7 @@ static __attribute__((noinline)) void voice_draw(void)
     const struct voice_hold *holds[2] = {&voice_lfo_hold, &voice_env_hold};
     static const char *const keeps[2] = {"KEEP HOLDING: ROLL EVERYONE", "KEEP HOLDING: EVERYONE'S OWN VOICE"};
     for (unsigned k = 0; k < 2 && !holding; ++k)
-        if (holds[k]->down && !holds[k]->spent && frame_time - holds[k]->since >= 150U)
+        if (holds[k]->down && !holds[k]->spent && (k || voice_play) && frame_time - holds[k]->since >= 150U)
             holding = 1, held = frame_time - holds[k]->since, keep = keeps[k];
     const char *hint = holding ? keep
                      : notice ? notice : voice_tips[voice_mode];
