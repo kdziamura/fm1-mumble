@@ -30,7 +30,8 @@
  *       SING or LOOP, the metronome exactly while recording, sounds in
  *       range ...);
  *   S2  the frame did what a model of the controls says: GLO steps TYPE,
- *       SING, LOOP, REC records (from TYPE: to SING first), PLAY starts or
+ *       SING, LOOP, REC records (from TYPE: to SING first; the loop stopped,
+ *       it arms, and the first key starts the loop recording), PLAY starts or
  *       stops the loop, SELECT and ALGO move by their detents, in SING a knob
  *       moves its parameter of the selected sound by the accelerated amount
  *       (with EDIT held, back to the character's), ALGO turns the pages only
@@ -257,6 +258,8 @@ static void check_state(void)
     if (voice_arp > 1 || (voice_arp && __builtin_popcount(singing) > 1)) fail("S1 the arpeggiator sings more than one note");
     if (voice_rec_held & ~singing) fail("S1 a character recorded while it sings nothing");
     if (voice_recording && !voice_play) fail("S1 recording outside SING");
+    if (voice_rec_armed && (voice_recording || !voice_play || voice_song))
+        fail("S1 REC armed while recording, in TYPE or with the loop running");
     if (!voice_recording && voice_rec_held) fail("S1 singers recorded while not recording");
     if (voice_click != (voice_recording ? voice_bars * 4u : 0u)) fail("S1 the metronome not on exactly while recording");
     if (voice_lyric_count > MUMBLE_SYLLABLES || voice_lyric_at >= (voice_lyric_count ? voice_lyric_count : 1u) ||
@@ -283,7 +286,8 @@ static void check_state(void)
     if (voice_now.vowel > MUMBLE_VOWELS || voice_now.track >= MUMBLE_CAST) fail("S1 the engine's status out of range");
     /* The lights tell the state. */
     if (!!(lit_buttons & (1u << B_PLAY)) != (voice_song != 0)) fail("S1 PLAY's light disagrees with the loop");
-    if (!!(lit_buttons & (1u << B_REC)) != voice_recording) fail("S1 REC's light disagrees with recording");
+    if (!!(lit_buttons & (1u << B_REC)) != (voice_recording || (voice_rec_armed && ((now_ms / 250u) & 1u))))
+        fail("S1 REC's light disagrees with recording (or blinking, armed)");
     if (!!(lit_buttons & (1u << B_SAVE)) != voice_track()->choir) fail("S1 SAVE's light disagrees with the choir");
     if (!!(lit_buttons & (1u << B_GLO)) != voice_play) fail("S1 GLO's light disagrees with the mode");
     if (!!(lit_buttons & (1u << B_SEL)) != (voice_play && voice_scale)) fail("S1 SCL's light disagrees with the scale");
@@ -300,7 +304,7 @@ static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
     unsigned arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing;
-    unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, demo, song, recording;
+    unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, demo, song, recording, armed;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
     int octave;
@@ -319,7 +323,7 @@ static void step_before(void)
     before.arp_rate = voice_arp_rate, before.arp_pattern = voice_arp_pattern, before.arp_octaves = voice_arp_octaves;
     before.arp_gate = voice_arp_gate, before.arp_swing = voice_arp_swing;
     before.scale = voice_scale, before.arp = voice_arp, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
-    before.song = voice_song, before.recording = voice_recording, before.octave = voice_octave;
+    before.song = voice_song, before.recording = voice_recording, before.armed = voice_rec_armed, before.octave = voice_octave;
     before.lyric_at = voice_lyric_at, before.lyric_count = voice_lyric_count, before.lyric_started = voice_lyric_started;
     before.lyric_lead = voice_lyric_lead, before.lyric_sig = voice_lyric_sig, before.song_ms = voice_now.song_ms;
     memcpy(before.seq, voice_seq, sizeof voice_seq);
@@ -374,7 +378,10 @@ static void step_after(void)
     }
     if (pressed == BUTTON(REC) && alone) {
         if (voice_mode != (before.play ? before.mode : (unsigned)VOICE_SING)) fail("S2 REC did not go to SING");
-        if (voice_recording != (before.play ? !before.recording : 1u)) fail("S2 REC did not flip recording");
+        /* recording or armed: stop (disarm); the loop running: record; else arm. */
+        unsigned stops = before.play && (before.recording || before.armed), running = before.song != 0;
+        if (voice_recording != (!stops && running) || voice_rec_armed != (!stops && !running && !voice_recording))
+            fail("S2 REC did not record, arm or stop as it should");
         if (voice_recording && !voice_song) fail("S2 recording without the loop running");
     }
     if (pressed == BUTTON(SCL) && alone && before.play && voice_scale != (before.scale + 1u) % VOICE_SCALES)
@@ -511,7 +518,10 @@ static void step_after(void)
             if (!memchr(voice_alphabet, c, VOICE_ALPHABET)) fail("S2 K2 made a letter not in its alphabet");
         }
     }
-    if (pressed || turned_any || edit_tap || edit_hold || arp_tap || before.midi) return;
+    /* (Armed, a key starts the loop and the recording.) */
+    if (before.armed && before.key_down && (!voice_song || !voice_recording || voice_rec_armed))
+        fail("S2 the first key did not start the loop recording");
+    if (pressed || turned_any || edit_tap || edit_hold || arp_tap || before.midi || (before.armed && before.key_down)) return;
 
     /* Nothing pressed or turned: only the keys act, and only as the mode says. */
     if (voice_cast != before.cast || voice_page != before.page || voice_caps != before.caps ||

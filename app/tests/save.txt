@@ -22,9 +22,10 @@ expect edited 1
 tap SEL
 expect scale 1
 tap REC
-expect recording 1
+expect armed 1
 wait 300
 tapkey 0
+expect recording 1
 wait 400
 tapkey 4
 wait 100

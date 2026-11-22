@@ -246,6 +246,7 @@ int app_expect(const char *what, int *got)
                     voice_step_ms(voice_seq[k].ms * voice_steps() / voice_loop_ms() + 1U) != voice_seq[k].ms;
     }
     else if (!strcmp(what, "recording")) *got = (int)voice_recording;
+    else if (!strcmp(what, "armed")) *got = (int)voice_rec_armed;            /* REC waiting for the first key */
     else if (!strcmp(what, "metronome")) *got = (int)voice_click;
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;
     else if (!strcmp(what, "pitch_class")) *got = (int)(voice_sung_note % 12U);   /* the last note sung: 0 C .. 11 B */

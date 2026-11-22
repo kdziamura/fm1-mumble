@@ -64,7 +64,7 @@ LOOP a key is lit while it is held.
 | SELECT / SAVE | The character / in or out of the choir | | |
 | PRESET | A demo line | | |
 | ARP | A tap: the arpeggiator on or off (ARP lit). Held, the knobs set it: K1 rate (1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32), K2 pattern (up, down, up-down, random, as played), K3 octaves (1-3), K4 gate (10-100 %), ALGO swing (0-66 %) | The keys held sung one at a time in the pattern (on the loop's time while it runs), round the choir, a syllable each | As in SING |
-| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first) | | |
+| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first). With the loop stopped REC waits, blinking, and the first key starts the loop and the recording | | |
 
 ## Build and test
 

@@ -47,14 +47,21 @@ key 7 up
 key 11 up
 wait 300
 expect singing 0
-# REC starts the loop and records; the loop holds nothing yet.
+# REC with the loop stopped waits for the first key; that key starts the
+# loop and the recording, and is its first note.
 tap REC
+expect recording 0
+expect armed 1
+expect song 0
+wait 500
+expect song 0
+key 0 down
+wait 20
+expect armed 0
 expect recording 1
 expect loop 1
 expect metronome 8
-wait 500
-key 0 down
-wait 400
+wait 380
 key 0 up
 wait 50
 expect take 1

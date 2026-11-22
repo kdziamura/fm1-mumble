@@ -74,11 +74,13 @@ tapkey 6
 wait 100
 expect lyric 0
 expect lyric_next 1
-# REC: what is sung goes into the loop.
+# REC: what is sung goes into the loop (the loop starts with the first key).
 tap REC
-expect recording 1
+expect armed 1
 wait 300
 key 7 down
+wait 20
+expect recording 1
 wait 300
 key 7 up
 wait 50
@@ -101,6 +103,7 @@ expect mode 0
 press EDIT
 wait 1100
 release EDIT
+wait 50
 expect length 0
 press EDIT
 wait 1100
@@ -111,6 +114,7 @@ tapkey 0
 expect length 2
 tap GLO
 expect mode 1
+# (The loop still plays: REC records at once.)
 tap REC
 expect recording 1
 wait 300

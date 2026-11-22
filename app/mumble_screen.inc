@@ -16,7 +16,8 @@
  * now, so a new line changes what the loop sings. Each pass of the loop sings
  * from the top of the line.
  *
- *   PLAY loop on/off   REC record (from TYPE: to SING first)   GLO the mode
+ *   PLAY loop on/off   REC record (from TYPE: to SING first; the loop stopped,
+ *        it waits, lit blinking, and starts with the first key)   GLO the mode
  *   SELECT character   SAVE choir   PRESET demo lines   HOME held: help
  *   ARP   the arpeggiator (a tap, as it is let go): where the keys sing, the
  *         keys held are sung one at a time (on the loop's time while it runs),
@@ -143,7 +144,7 @@ static uint8_t voice_seq_track[VOICE_SEQ];
 static unsigned voice_seq_count;
 /* Recording: a singer being recorded, where its note began, when, and its
  * note and slot. */
-static unsigned voice_recording, voice_click;
+static unsigned voice_recording, voice_rec_armed, voice_click;
 static uint32_t voice_rec_held, voice_rec_since[MUMBLE_CAST];
 static uint16_t voice_rec_at[MUMBLE_CAST];
 static uint8_t voice_rec_note[MUMBLE_CAST], voice_rec_slot[MUMBLE_CAST];
@@ -237,6 +238,7 @@ enum { VOICE_DRIFT_MS = 40 };
 static uint32_t voice_clock_ms(void) { return frame_views[0].play_tick % (voice_steps() * 6U) * 2500U / voice_tempo(); }
 static void voice_start(void)
 {
+    if (voice_rec_armed) voice_rec_armed = 0, voice_recording = 1;   /* the loop starts: so does the recording */
     voice_publish(1, voice_fm1_playing ? voice_clock_ms() : 0);
     voice_loop_last_ms = -1;
 }
@@ -666,7 +668,7 @@ static void voice_typewriter(void)
 static int32_t voice_rec_position(void)
 {
     int32_t at = mumble_song_position();
-    if (at < 0) return -1;
+    if (at < 0) return voice_song == 1 ? 0 : -1;  /* (just started, not yet heard: its top) */
     uint32_t step = (unsigned)((uint32_t)at % voice_loop_ms() * voice_steps() * 2U / voice_loop_ms() + 1U) / 2U;
     return (int32_t)voice_step_ms(step % voice_steps());
 }
@@ -760,17 +762,28 @@ static void voice_release_all(void)
 static void voice_rec_stop(void)
 {
     for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_rec_release(who);
-    voice_recording = 0;
+    voice_recording = voice_rec_armed = 0;
     if (voice_click) { voice_click = 0; mumble_metronome(0, 0); }
 }
 /* REC: record into the loop (in SING mode, starting the loop if need be), or stop. */
+/* REC: record into the loop as it plays; the loop stopped, wait for the
+ * first key (armed) and start it with that; again, stop (or disarm). */
 static void voice_rec_toggle(void)
 {
-    if (voice_recording) { voice_rec_stop(); return; }
+    if (voice_recording || voice_rec_armed) {
+        unsigned armed = voice_rec_armed;
+        voice_rec_stop();
+        voice_notice(armed ? "RECORDING CANCELLED" : "RECORDING STOPPED");
+        return;
+    }
+    if (voice_song == 2 && mumble_song_position() < 0) voice_song = 0;   /* (a song over: as stopped) */
+    if (!voice_song) {
+        voice_rec_armed = 1;
+        voice_notice("REC: THE FIRST KEY STARTS THE LOOP");
+        return;
+    }
     voice_recording = 1;
-    unsigned restart = !voice_song || (voice_song == 2 && mumble_song_position() < 0);
-    if (restart) voice_start();
-    voice_notice("RECORDING: SING THE KEYS");
+    voice_notice("RECORDING: SING INTO THE LOOP");
 }
 /* A key let go frees its singer, who takes up the latest key still held that
  * nobody sings (one character alone: a mono synth's last note). */
@@ -791,6 +804,10 @@ static void voice_take_up(unsigned who)
 static void voice_arp_tick(void);
 static void voice_sing(const struct fm1_controls *c, uint32_t down)
 {
+    if (voice_rec_armed && down) {               /* armed: the first key starts the loop, recording */
+        voice_start();
+        voice_notice("RECORDING: SING INTO THE LOOP");
+    }
     uint32_t up = voice_held & ~c->keys;
     voice_held &= c->keys;
     if (voice_arp) {
@@ -1046,10 +1063,7 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         voice_say(mumble_cast[voice_cast].name, t->choir ? " JOINED THE CHOIR" : " LEFT THE CHOIR", NULL);
         ++voice_lanes_version;
     }
-    if (pressed & BUTTON(REC)) {
-        voice_rec_toggle();
-        voice_notice(voice_recording ? "RECORDING: SING INTO THE LOOP" : "RECORDING STOPPED");
-    }
+    if (pressed & BUTTON(REC)) voice_rec_toggle();
     if (voice_play) {
         int octave = voice_octave;
         if ((pressed & BUTTON(OCT_UP)) && voice_octave < 2) ++voice_octave;
@@ -1120,7 +1134,7 @@ static uint32_t voice_button_bits(void)
     uint32_t octave = voice_play ? ((voice_octave > 0) << OCT_UP) | ((voice_octave < 0) << OCT_DOWN)
                                  : voice_caps << OCT_UP;
     return ((voice_song != 0) << PLAY) | octave | (voice_play << GLO) | ((uint32_t)voice_track()->choir << SAVE) |
-           (voice_recording << REC) | (voice_arp << ARP) | ((voice_play && voice_scale) << SCL);
+           ((voice_recording | (voice_rec_armed & ((frame_time / 250U) & 1U))) << REC) | (voice_arp << ARP) | ((voice_play && voice_scale) << SCL);
 }
 
 /* Control-side snapshot, taken once per frame before marking damage: the
@@ -1530,7 +1544,10 @@ static void voice_play_status(unsigned singers, unsigned notes)
         strcat(choir, value);
         text(100, 172, choir, 1, ACCENT, BACK);
     }
-    if (voice_recording || notes) {
+    if (voice_rec_armed) {                       /* waiting for the first key */
+        paint_fill(158, 172, 7, 7, AMBER);
+        text(168, 172, "REC: A KEY", 1, AMBER, BACK);
+    } else if (voice_recording || notes) {
         char take[16];
         strcpy(take, voice_recording ? "REC " : "LOOP ");
         decimal(value, (int)notes, 1);
@@ -1556,6 +1573,7 @@ static void voice_line_draw(void)
                              &notes, sizeof notes);
     sig = signature(sig, &voice_lyric_sig, sizeof voice_lyric_sig);
     sig = signature(sig, &voice_scale, sizeof voice_scale);
+    sig = signature(sig, &voice_rec_armed, sizeof voice_rec_armed);
     unsigned typed = voice_typed();
     sig = signature(sig, &typed, sizeof typed);
     /* The TYPE rows share this area: make them redraw on return. */
