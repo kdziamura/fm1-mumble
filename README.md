@@ -30,7 +30,8 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 Hold **HOME** for a card of these on the screen; every button also says on the hint line what it just did.
 
 GLO steps through three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
-view: a lane of the loop for each character, the keys singing as in SING).
+view: a lane of the loop for each character, the keys singing as in SING). In TYPE the keys' lights mark the vowels; in SING and
+LOOP a key is lit while it is held.
 
 | Control | TYPE | SING | LOOP |
 |---|---|---|---|

@@ -246,6 +246,11 @@ static void check_state(void)
     if (!!(lit_buttons & (1u << B_REC)) != voice_recording) fail("S1 REC's light disagrees with recording");
     if (!!(lit_buttons & (1u << B_SAVE)) != voice_track()->choir) fail("S1 SAVE's light disagrees with the choir");
     if (!!(lit_buttons & (1u << B_GLO)) != voice_play) fail("S1 GLO's light disagrees with the mode");
+    /* (The keys' lights from the frame's own snapshot of the keys, as app.c
+     * hands them on: the vowels in TYPE, else just the keys held.) */
+    uint32_t vowels = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 14) | (1u << 20) | (1u << 24);
+    if (lit_keys != ((voice_play ? 0u : vowels) ^ (voice_keys_lit & ((1u << 27) - 1u))))
+        fail("S1 the keys' lights disagree with the mode");
 }
 
 /* S2: a model of each frame. Before it, what the frame will be given; after

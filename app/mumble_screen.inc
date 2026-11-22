@@ -805,11 +805,14 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     return 1;
 }
 
-/* Note-key LEDs mark the vowels; held keys invert theirs. */
+/* Key LEDs: in TYPE they mark the vowels (held keys invert theirs); where
+ * the keys sing, a key is lit while held. */
 static uint32_t voice_led_bits(void)
 {
-    uint32_t lit = (1U << 0) | (1U << 4) | (1U << 8) | (1U << 14) | (1U << 20) | (1U << 24);
-    return lit ^ (voice_keys_lit & ((1U << 27) - 1U));
+    uint32_t held = voice_keys_lit & ((1U << 27) - 1U);
+    if (voice_play) return held;
+    uint32_t vowels = (1U << 0) | (1U << 4) | (1U << 8) | (1U << 14) | (1U << 20) | (1U << 24);
+    return vowels ^ held;
 }
 static uint32_t voice_button_bits(void)
 {
