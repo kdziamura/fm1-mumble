@@ -175,6 +175,12 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "vowel")) *got = voice_now.vowel;                 /* the loudest sounding, 6: none */
     else if (!strcmp(what, "take")) *got = (int)voice_notes_of(voice_cast);  /* the selected one's notes in the loop */
     else if (!strcmp(what, "takes")) *got = (int)voice_seq_count;           /* all notes in the loop */
+    else if (!strcmp(what, "offgrid")) {                                     /* notes not on a 16th (recording quantizes) */
+        *got = 0;
+        for (unsigned k = 0; k < voice_seq_count; ++k)
+            *got += voice_step_ms(voice_seq[k].ms * voice_steps() / voice_loop_ms()) != voice_seq[k].ms &&
+                    voice_step_ms(voice_seq[k].ms * voice_steps() / voice_loop_ms() + 1U) != voice_seq[k].ms;
+    }
     else if (!strcmp(what, "recording")) *got = (int)voice_recording;
     else if (!strcmp(what, "metronome")) *got = (int)voice_click;
     else if (!strcmp(what, "sung")) *got = (int)voice_sung;

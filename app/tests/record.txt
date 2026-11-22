@@ -78,6 +78,8 @@ key 11 up
 wait 50
 expect take 2
 expect takes 4
+# Recording quantizes: every note starts on a 16th.
+expect offgrid 0
 # REC again stops recording (and the metronome); the loop keeps playing.
 tap REC
 expect recording 0

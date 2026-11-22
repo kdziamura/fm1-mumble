@@ -418,12 +418,14 @@ static unsigned voice_lyric_next(void)
     return (voice_lyric_at + 1U) % voice_lyric_count;
 }
 
-/* Recording: where the loop is now; -1 when it is not running. */
+/* Recording: where the loop is now, on its nearest 16th (a note a little
+ * early or late lands on the beat); -1 when it is not running. */
 static int32_t voice_rec_position(void)
 {
     int32_t at = mumble_song_position();
     if (at < 0) return -1;
-    return (int32_t)((uint32_t)at % voice_loop_ms());
+    uint32_t step = (unsigned)((uint32_t)at % voice_loop_ms() * voice_steps() * 2U / voice_loop_ms() + 1U) / 2U;
+    return (int32_t)voice_step_ms(step % voice_steps());
 }
 static void voice_rec_press(unsigned who, unsigned slot, unsigned note)
 {
