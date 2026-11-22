@@ -36,7 +36,7 @@
  *       K2 changes only the letter under it; EDIT let go unspent clears
  *       exactly the selected singer's notes (SING, LOOP) or cuts the word
  *       before the cursor (TYPE), held 1 s it clears the loop (SING, LOOP)
- *       or the line, then the loop (TYPE); FX rewinds the line (SING), SCL steps the scale (SING, LOOP); with nothing pressed or turned no
+ *       or the line, then the loop (TYPE); FX rewinds the line (SING), SCL steps the scale and LFO changes only the selected sound (SING, LOOP); with nothing pressed or turned no
  *       setting changes, TYPE types exactly the keys' letters at the cursor,
  *       SING holds exactly the
  *       keys still down and the new ones, the last key pressed is sung at
@@ -324,6 +324,10 @@ static void step_after(void)
     if (pressed == BUTTON(SCL) && alone && before.play && voice_scale != (before.scale + 1u) % VOICE_SCALES)
         fail("S2 SCL did not step the scale");
     if (voice_scale != before.scale && !(pressed & BUTTON(SCL))) fail("S2 the scale changed with SCL not pressed");
+    if (pressed == BUTTON(LFO) && alone && before.play)
+        for (unsigned i = 0; i < MUMBLE_CAST; ++i)
+            if (i != before.cast && memcmp(&before.tracks[i], &voice_tracks[i], sizeof voice_tracks[i]))
+                fail("S2 LFO changed another character");
     if (pressed == BUTTON(PLAY) && alone) {
         if (before.song && voice_song) fail("S2 PLAY did not stop the loop");
         if (!before.song && !voice_song) fail("S2 PLAY did not start the loop");

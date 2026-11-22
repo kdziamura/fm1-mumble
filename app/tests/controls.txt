@@ -84,6 +84,10 @@ tap SEL
 expect scale 0
 tapkey 1
 expect pitch_class 6
+# LFO rolls a new voice for the character.
+tap LFO
+wait 50
+expect edited 1
 # GLO on to LOOP mode: the lanes, and the knobs set the loop; EDIT held with
 # K4 turned puts the BPM back.
 tap GLO

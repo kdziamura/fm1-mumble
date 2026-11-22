@@ -40,7 +40,7 @@ LOOP a key is lit while it is held.
 | K3 / K4 | — | | The loop's bars / BPM |
 | EDIT | A word back; held 1 s: clear the line, then the loop | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that sound back to the character's | As in SING; held with a knob turned: that setting back |
 | OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
-| FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line. SCL: a scale the keys keep to (C major, minor, pentatonic, blues; SCL lit) | As in SING |
+| FX, SCL, ENV, LFO | Type `,` `.` `?` `!` | FX: back to the top of the line. SCL: a scale the keys keep to (C major, minor, pentatonic, blues; SCL lit). LFO: a new voice rolled for the character (EDIT with a knob puts a setting back) | As in SING |
 | ALGO, SEQ | — | The page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | — |
 | GLO | To SING | To LOOP (recording carries on) | To TYPE |
 | SELECT / SAVE | The character / in or out of the choir | | |

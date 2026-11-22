@@ -23,6 +23,7 @@
  *         EDIT a word back; held 1 s: clear the line, then the loop
  *   SING  ALGO / SEQ page (SING only)   K1..K4 sound (EDIT held: back to the character's)
  *         OCT- OCT+ octave   FX from the top of the line   SCL the scale the keys keep to
+ *         LFO a new voice for the character, rolled
  *         EDIT clear the selected character's notes; held 1 s: the whole loop
  *   LOOP  K1 the character muted  K2 its level  K3 bars  K4 BPM
  *         (EDIT held: back to where they start); OCT, FX and EDIT as in SING
@@ -73,7 +74,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "OCT- OCT+ OCTAVE  FX: TOP  SCL: SCALE",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
-     "SELECT: WHO  SAVE: CHOIR"},
+     "SELECT: WHO  SAVE: CHOIR  LFO: ROLL"},
     {"A LANE A SINGER  KEYS SING  GLO: TYPE",
      "K1 MUTE  K2 LEVEL  K3 BARS  K4 BPM",
      "EDIT+KNOB: AS IT WAS",
@@ -153,6 +154,7 @@ static uint32_t voice_edit_since;
 static char voice_said[40];
 static void voice_rec_stop(void);
 static void voice_notice(const char *message);
+static void voice_say(const char *a, const char *b, const char *c);
 
 static struct voice_track *voice_track(void) { return &voice_tracks[voice_cast]; }
 static unsigned voice_in_choir(unsigned i) { return i == voice_cast || voice_tracks[i].choir; }
@@ -368,6 +370,25 @@ static void voice_reset(unsigned col)
     }
     strcat(voice_said, " AS IT WAS");
     voice_notice(voice_said);
+}
+/* LFO where the keys sing: a voice rolled for the selected character, each
+ * setting halfway between the character's own and a random one (so it is
+ * still somebody). EDIT with a knob puts a setting back. */
+static uint32_t voice_dice = 0x9E3779B9U;
+static void voice_reroll(void)
+{
+    struct voice_track *t = voice_track();
+    voice_dice ^= frame_time * 2654435761U;
+    for (unsigned p = 0; p < MUMBLE_PARAMS; ++p) {
+        voice_dice ^= voice_dice << 13;
+        voice_dice ^= voice_dice >> 17;
+        voice_dice ^= voice_dice << 5;
+        const struct mumble_param_info *info = &mumble_params[p];
+        unsigned r = info->min + voice_dice % (info->max - info->min + 1U);
+        t->sound.value[p] = (uint16_t)((mumble_cast[voice_cast].voice.value[p] + r) / 2U);
+    }
+    voice_touch();
+    voice_say(mumble_cast[voice_cast].name, " ROLLED A NEW VOICE", NULL);
 }
 static unsigned voice_edited(void)
 {
@@ -732,7 +753,8 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
             else if (marks[i][0] == SCL) {
                 voice_scale = (voice_scale + 1U) % VOICE_SCALES;
                 voice_say("SCALE: ", voice_scale_names[voice_scale], voice_scale ? " (THE KEYS KEEP TO IT)" : NULL);
-            } else if (i) voice_say(mark_names[i], " TYPES ", mark), strcat(voice_said, " IN TYPE MODE");
+            } else if (marks[i][0] == LFO) voice_reroll();
+            else if (i) voice_say(mark_names[i], " TYPES ", mark), strcat(voice_said, " IN TYPE MODE");
         }
     uint32_t typed = key_down & ~blocked_keys;
     if (voice_play) voice_sing(c, typed);
