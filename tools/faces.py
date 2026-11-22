@@ -19,7 +19,8 @@ cast (how far each setting is from the cast's average, in its spread): each
 slot takes the part of the setting that stands out most, past a threshold.
   top    ROOM a hood, RADIO an antenna, SPEED spikes and a headband, DICTION a
          cap, a drilled voice (pushed, low, crisp, steady) a helmet, JITTER a
-         bandana, VIBRATO long hair, WOBBLE bald, GLIDE ELDER's pointed hat
+         bandana, VIBRATO long hair, WOBBLE bald, GLIDE a propeller beanie,
+         PITCH a beanie with a bobble
   face   CRUSH a visor, WOBBLE a beard (low voices), JITTER + EFFORT an eye
          patch, a very crisp DICTION glasses
   body   AIR a ghost, CRUSH a robot, ROOM a robe, a drilled voice armour,
@@ -141,21 +142,6 @@ def outline(shape, face, colour, broken=False, open_below=False):
                 break
 
 
-# ELDER's hat, drawn by hand: a bent tip, a star, a band and a curled brim
-# (its last row the head's top).
-WIZARD_HAT = [
-    "...............bb.......",
-    "..............b.b.......",
-    ".............b..b.......",
-    "............b.o..b......",
-    "...........b.ooo.b......",
-    "..........b...o...b.....",
-    ".........oooooooooo.....",
-    "..bbbbbbbbbbbbbbbbbbbb..",
-    ".b..bbbbbbbbbbbbbbbb..b.",
-]
-
-
 def build_robot(f, t, size):
     """The hand-drawn BOT's construction: a box head with its corners off,
     bolts at the sides, a screen with green eyes (and mouth), an antenna with
@@ -229,7 +215,7 @@ def build_ghost(f, t, size):
             f.set(x, y, "b")
 
 
-def build(values) -> Face:
+def build(values, top_override=None) -> Face:
     """A figure in the hand-drawn cast's construction: a head with straight
     sides, a rounded or flat top and a chin cut in 45-degree steps, ears at
     the eyes, 2x2 eyes, a nose, cheeks and a short mouth; a two-pixel neck;
@@ -250,12 +236,15 @@ def build(values) -> Face:
                 ("helmet", drilled, t["effort"] > 0.6 and body != "ghost"),
                 ("bandana", z["jitter"], t["jitter"] > 0.6 and body != "ghost"),
                 ("long hair", z["vibrato"], t["vibrato"] > 0.35), ("bald", z["wobble"], t["wobble"] > 0.4),
-                ("pointed hat", z["glide"], t["glide"] > 0.35 and body != "ghost")])
+                ("propeller", z["glide"], t["glide"] > 0.35 and body != "ghost"),
+                ("beanie", z["pitch"], t["pitch"] > 0.45)])
     extra = pick([("visor", z["crush"], t["crush"] > 0.5),
                   ("beard", z["wobble"] - z["pitch"] * 0.7, t["wobble"] > 0.4 and body != "ghost"),
                   ("eye patch", (z["jitter"] + z["effort"]) * 0.6 - z["mouth"] * 0.4, t["jitter"] > 0.6),
                   ("glasses", z["diction"] * 0.8, z["diction"] > 1.2)], threshold=0.7)
-    if body == "robot" and top not in ("antenna", "cap", "helmet", "pointed hat"):
+    if top_override:
+        top = top_override
+    if body == "robot" and top not in ("antenna", "cap", "helmet", "propeller"):
         top = "antenna" if t["radio"] > 0.2 else None
     machine = body == "robot" or extra == "visor"
     f.parts = [p for p in (top, extra, body) if p]
@@ -272,14 +261,14 @@ def build(values) -> Face:
     # 12 - half), its height to the chin line (row 16), the jaw's steps.
     half = 6 if (0.6 * size + 0.3 * t["effort"] - 0.5 * high) < 0.05 else 8 if (size > 0.9 and high < 0.4) else 7
     h = 11 + round(3 * min(1.0, max(0.0, 0.25 + 0.8 * size - 0.3 * high)))
-    tall_top = top in ("pointed hat", "cap", "bandana", "helmet")
+    tall_top = top in ("cap", "bandana", "helmet", "beanie", "propeller")
     if tall_top:
-        h = 9 if top == "pointed hat" else min(h, 11)
+        h = min(h, 11)
     yc = 16 if body != "ghost" else 14
     yt = yc - h + 1
     xl, xr = 12 - half, 11 + half
     jaw = 0 if machine else 2 if (high > 0.55 and t["effort"] < 0.6) else 1
-    rounded = not machine and top not in ("cap", "bandana", "spikes", "pointed hat")
+    rounded = not machine and top not in ("cap", "bandana", "spikes", "beanie", "propeller")
 
     # The head.
     if rounded:
@@ -345,7 +334,20 @@ def build(values) -> Face:
         f.rect(left + ew + 1, ey - 1, 2 * (12 - left - ew - 1), 1, "o")
 
     # On top.
-    if top == "spikes":
+    if top == "beanie":                          # a knitted hat with a bobble
+        f.rect(11, yt - 6, 2, 2, "o")
+        f.rect(xl + 3, yt - 4, 2 * half - 6, 1, "b")
+        f.both(xl + 2, yt - 3, "b"), f.line(xl + 1, yt - 2, xl + 1, yt - 1, "b", mirror=True)
+        f.rect(xl, yt, 2 * half, 1, "b")
+        for x in range(xl + 1, xr, 2):
+            f.set(x, yt - 1, "w")
+    elif top == "propeller":                     # a beanie with a propeller
+        f.rect(8, yt - 6, 8, 1, "o"), f.rect(11, yt - 5, 2, 1, "w")
+        f.rect(xl + 3, yt - 4, 2 * half - 6, 1, "b")
+        f.both(xl + 2, yt - 3, "b"), f.line(xl + 1, yt - 2, xl + 1, yt - 1, "b", mirror=True)
+        f.rect(xl, yt, 2 * half, 1, "b")
+        f.rect(xl + 1, yt - 2, half - 1, 2, "g")
+    elif top == "spikes":
         for x in range(xl, xr + 1):
             k = (x - xl) % 4
             if k == 2:
@@ -376,11 +378,6 @@ def build(values) -> Face:
     elif top == "antenna":
         f.line(11, yt - 1, 11, yt - 2, "w"), f.line(12, yt - 1, 12, yt - 2, "w")
         f.rect(11, yt - 4, 2, 2, "o")
-    elif top == "pointed hat":                   # ELDER's, its brim the head's top
-        for j, row in enumerate(WIZARD_HAT):
-            for x, c in enumerate(row):
-                if c != ".":
-                    f.set(x, yt - len(WIZARD_HAT) + 1 + j, c)
     elif top == "long hair":
         f.rect(xl + 3, yt + 1, 2 * half - 6, 1, "m")
         for y in range(yt + 1, yc + 3):
