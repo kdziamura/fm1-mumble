@@ -268,7 +268,7 @@ def build(values, top_override=None) -> Face:
     yt = yc - h + 1
     xl, xr = 12 - half, 11 + half
     jaw = 0 if machine else 2 if (high > 0.55 and t["effort"] < 0.6) else 1
-    rounded = not machine and top not in ("cap", "bandana", "spikes", "beanie", "propeller")
+    rounded = not machine and top not in ("cap", "bandana", "spikes", "beanie", "propeller", "helmet")
 
     # The head.
     if rounded:
@@ -296,7 +296,7 @@ def build(values, top_override=None) -> Face:
     if machine:
         f.rect(xl - 2, ey - 1, 2, 4, "m", mirror=True)
         f.rect(xl - 1, ey, 1, 2, ".", mirror=True)
-    elif body != "ghost" and top not in ("hood", "long hair"):
+    elif body != "ghost" and top not in ("hood", "long hair", "helmet"):
         f.both(xl - 1, ey, "w"), f.both(xl - 2, ey + 1, "w"), f.both(xl - 1, ey + 2, "w")
 
     # Nose, cheeks, mouth.
@@ -304,7 +304,7 @@ def build(values, top_override=None) -> Face:
         f.set(12, ey + 2, "m")
         if t["tube"] < 0.3:
             f.set(12, ey + 3, "m")
-    if not machine and high > 0.15 and extra not in ("beard",):
+    if not machine and high > 0.15 and extra not in ("beard",) and top != "helmet":
         f.rect(left - 1, ey + 3, 2, 1, "o", mirror=True)
     mw = 2 if t["mouth"] < 0.45 else 4 if t["mouth"] < 0.85 else 6
     my = min(ey + 4, yc - 2)
@@ -368,13 +368,17 @@ def build(values, top_override=None) -> Face:
         f.set(xr + 2, yt - 2, "o"), f.set(xr + 3, yt - 2, "o"), f.set(xr + 1, yt - 1, "o")
         f.set(xr + 1, yt + 1, "o"), f.set(xr + 2, yt + 2, "o")
         f.set(xl + 3, yt - 2, "w"), f.set(xr - 3, yt - 2, "w")      # a skull's eyes
-    elif top == "helmet":
-        f.rect(xl + 3, yt - 2, 2 * half - 6, 1, "w")
-        f.both(xl + 1, yt - 1, "w"), f.both(xl + 2, yt - 1, "w")
-        f.rect(11, yt - 4, 2, 1, "o"), f.rect(10, yt - 3, 4, 1, "o")
-        f.rect(xl, yt, 2 * half, 1, "w")
-        f.line(xl + 1, yt + 1, xl + 1, yt + 3, "m", mirror=True)
-        f.rect(11, yt + 1, 2, 2, "m")
+    elif top == "helmet":                        # a knight's: the head's line its shell, closed round the face
+        f.rect(11, yt - 5, 2, 1, "o"), f.rect(10, yt - 4, 4, 1, "o"), f.rect(11, yt - 3, 2, 1, "o")   # a plume
+        f.rect(xl + 2, yt - 2, 2 * half - 4, 1, "w")
+        f.both(xl, yt - 1, "w"), f.both(xl + 1, yt - 1, "w")
+        f.rect(xl, yt, 2 * half, 1, "w")                                    # the brow
+        f.rect(xl + 1, yt + 1, 2 * half - 2, 1, "m")
+        for y in range(yt + 2, yc - jaw):                                   # cheek plates, down to the jaw
+            f.rect(xl + 1, y, 2 if y >= ey + eh else 1, 1, "m", mirror=True)
+        f.rect(11, yt + 1, 2, ey + 2 - yt, "m")                             # the nose guard
+        for y in (ey + eh + 1, my + 1):
+            f.both(xl - 1, y, "m")                                          # the hinges
     elif top == "antenna":
         f.line(11, yt - 1, 11, yt - 2, "w"), f.line(12, yt - 1, 12, yt - 2, "w")
         f.rect(11, yt - 4, 2, 2, "o")
