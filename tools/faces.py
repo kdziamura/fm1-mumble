@@ -141,6 +141,79 @@ def outline(shape, face, colour, broken=False, open_below=False):
                 break
 
 
+def build_robot(f, t, size):
+    """The hand-drawn BOT's construction: a box head with its corners off,
+    bolts at the sides, a screen with green eyes (and mouth), an antenna with
+    a lamp, a jointed neck, shoulders over a chest panel. Size sets the
+    head's width and height; RADIO the antenna; MOUTH the mouth."""
+    half = 6 if size < 0.4 else 7
+    xl, xr = 12 - half, 11 + half
+    yb = 13
+    yt = yb - (8 + round(2 * min(1.0, size + 0.3)))
+    f.rect(xl + 1, yt, 2 * half - 2, 1, "w"), f.rect(xl + 1, yb, 2 * half - 2, 1, "w")
+    f.line(xl, yt + 1, xl, yb - 1, "w", mirror=True)
+    ey = yt + 4
+    f.rect(xl - 2, ey - 1, 2, 1, "m", mirror=True), f.rect(xl - 2, ey + 2, 2, 1, "m", mirror=True)
+    f.line(xl - 2, ey, xl - 2, ey + 1, "m", mirror=True)
+    f.rect(xl + 3, yt + 2, 2 * half - 6, 1, "m"), f.rect(xl + 3, yt + 8, 2 * half - 6, 1, "m")
+    f.line(xl + 2, yt + 3, xl + 2, yt + 7, "m", mirror=True)
+    gap = 1 + round(t["tune"])
+    left = 12 - gap - 2
+    f.rect(left, ey, 2, 2, "g", mirror=True)
+    f.eyes = [(left, ey, 2, 2), (24 - left - 2, ey, 2, 2)]
+    mw = 2 if t["mouth"] < 0.6 else 4
+    f.rect(12 - mw // 2, ey + 3, mw // 2, 1, "g", mirror=True)
+    f.mouth, f.mouth_w = (12, ey + 3), mw
+    if t["radio"] > 0.2:
+        f.rect(11, yt - 1, 2, 1, "w")
+        f.rect(11, yt - 3, 2, 2, "o")
+    for y in range(yb + 1, yb + 4):
+        f.both(10, y, "m")
+    f.rect(10, yb + 2, 4, 1, "m")
+    sy = yb + 4
+    f.rect(4, sy, 16, 1, "w")
+    f.both(3, sy + 1, "w")
+    f.line(2, sy + 2, 2, N - 1, "w", mirror=True)
+    f.rect(6, sy + 2, 12, 1, "b")
+    f.line(6, sy + 3, 6, N - 1, "b", mirror=True)
+    if t["crush"] > 0.7:
+        f.rect(9, sy + 4, 2, 1, "o"), f.rect(13, sy + 4, 2, 1, "g")
+
+
+def build_ghost(f, t, size):
+    """The hand-drawn GHOST's construction: a dome, tall eyes, little arms out
+    at the sides, a body narrowing to a wavy hem with feet. Size sets its
+    width; ECHO hangs dots about it; PITCH cheeks; MOUTH the mouth."""
+    xl = 4 if size > 0.35 else 5
+    xr, half = 23 - xl, 12 - xl
+    yt = 1
+    f.rect(xl + 5, yt, 2 * half - 10, 1, "w")
+    f.both(xl + 3, yt + 1, "w"), f.both(xl + 4, yt + 1, "w")
+    f.both(xl + 2, yt + 2, "w")
+    f.line(xl + 1, yt + 3, xl + 1, yt + 4, "w", mirror=True)
+    arm = yt + 11
+    f.line(xl, yt + 5, xl, arm + 4, "w", mirror=True)
+    f.rect(xl - 2, arm, 2, 1, "w", mirror=True), f.both(xl - 3, arm + 1, "w"), f.rect(xl - 2, arm + 2, 2, 1, "w", mirror=True)
+    f.line(xl + 1, arm + 5, xl + 1, 21, "w", mirror=True)
+    f.both(xl + 4, 21, "w")
+    f.rect(xl + 2, 22, 2, 1, "w", mirror=True)
+    f.rect(xl + 5, 22, 12 - (xl + 5), 1, "w", mirror=True)
+    ey = yt + 6
+    eh = 3 if t["pitch"] > 0.15 else 2
+    gap = 1 + round(2 * t["tune"])
+    left = 12 - gap - 2
+    f.rect(left, ey, 2, eh, "w", mirror=True)
+    f.eyes = [(left, ey, 2, eh), (24 - left - 2, ey, 2, eh)]
+    if t["pitch"] > 0.15:
+        f.rect(left - 1, ey + 3, 2, 1, "o", mirror=True)
+    mw = 2 if t["mouth"] < 0.6 else 4
+    f.rect(12 - mw // 2, ey + 4, mw // 2, 1, "w", mirror=True)
+    f.mouth, f.mouth_w = (12, ey + 4), mw
+    if t["echo"] > 0.4:
+        for (x, y) in ((1, 3), (22, 5), (2, 19), (21, 18), (0, 9), (23, 11)):
+            f.set(x, y, "b")
+
+
 def build(values) -> Face:
     """A figure in the hand-drawn cast's construction: a head with straight
     sides, a rounded or flat top and a chin cut in 45-degree steps, ears at
@@ -169,6 +242,14 @@ def build(values) -> Face:
         top = "antenna" if t["radio"] > 0.2 else None
     machine = body == "robot" or extra == "visor"
     f.parts = [p for p in (top, extra, body) if p]
+    if body == "robot":
+        f.parts = ["antenna", "robot"] if t["radio"] > 0.2 else ["robot"]
+        build_robot(f, t, size)
+        return f
+    if body == "ghost":
+        f.parts = ["ghost"]
+        build_ghost(f, t, size)
+        return f
 
     # Proportions, in whole pixels: half the head's width (its left side at
     # 12 - half), its height to the chin line (row 16), the jaw's steps.
