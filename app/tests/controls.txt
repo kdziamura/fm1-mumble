@@ -189,10 +189,44 @@ expect arp_octaves 1
 expect arp_rate 3
 tap ARP
 expect arp 0
-# The SCALE tab: D dorian (E flat, key 0 F: F is in it; F#, key 1: F).
+# The CHORD tab; SEQ turns auto-chord on: one key sings a triad, three
+# singers (the choir is one: two guests join), a seventh four.
 turn ALGO 1
 wait 50
 expect tab 2
+tap SEQ
+expect chord 1
+key 0 down
+wait 100
+expect singing 3
+key 0 up
+wait 50
+expect singing 0
+turn K1 1
+wait 50
+expect chord_shape 1
+key 0 down
+wait 100
+expect singing 4
+shot controls-chord.png
+key 0 up
+wait 50
+press EDIT
+turn K1 1
+release EDIT
+wait 50
+expect chord_shape 0
+tap SEQ
+expect chord 0
+key 0 down
+wait 100
+expect singing 1
+key 0 up
+wait 50
+# The SCALE tab: D dorian (E flat, key 0 F: F is in it; F#, key 1: F).
+turn ALGO 1
+wait 50
+expect tab 3
 turn K1 2
 turn K2 5
 wait 50

@@ -36,8 +36,9 @@
  *       moves its parameter of the selected sound by the accelerated amount
  *       (with EDIT held, back to the character's), ALGO turns SING's pages and
  *       LOOP's tabs, in LOOP the knobs set the tab's settings (MIX level,
- *       swing, bars, BPM; ARP rate, pattern, octaves, gate; SCALE root and
- *       scale; EDIT held: back), in TYPE K1 moves the cursor and K2 changes only the
+ *       swing, bars, BPM; ARP rate, pattern, octaves, gate; CHORD shape,
+ *       inversion, spread; SCALE root and scale; EDIT held: back), SEQ
+ *       switches auto-chord, in TYPE K1 moves the cursor and K2 changes only the
  *       letter under it; EDIT let go unspent clears exactly the selected
  *       singer's notes (SING, LOOP) or cuts the word before the cursor
  *       (TYPE), held 1 s it clears the loop (SING, LOOP) or the line, then
@@ -231,7 +232,7 @@ static void check_state(void)
     if (voice_page >= VOICE_PAGES) fail("S1 page out of range");
     if (voice_scale >= VOICE_SCALES) fail("S1 the scale out of range");
     if (voice_arp_rate >= ARP_RATES || voice_arp_pattern >= ARP_PATTERNS || voice_arp_octaves < 1 || voice_arp_octaves > 3 ||
-        voice_arp_gate < 10 || voice_arp_gate > 100 || voice_arp_swing > ARP_SWING_MAX || voice_arp_shift)
+        voice_arp_gate < 10 || voice_arp_gate > 100 || voice_arp_swing > ARP_SWING_MAX)
         fail("S1 an arpeggiator setting out of range");
     if (voice_mode >= VOICE_MODES || voice_play != (voice_mode != VOICE_TYPE)) fail("S1 the mode out of range");
     if (voice_caps > 1 || voice_play > 1 || voice_song_dirty > 1 || voice_recording > 1 || voice_loop != 1)
@@ -253,7 +254,7 @@ static void check_state(void)
         if (!voice_sings[who]) { choir_free |= voice_in_choir(who); continue; }
         uint32_t key = 1u << (voice_sings[who] - 1u);
         if (!voice_play || !(voice_held & key)) fail("S1 a character sings a key not held in SING");
-        if (sung_keys & key) fail("S1 two characters sing one key");
+        if ((sung_keys & key) && !voice_chord) fail("S1 two characters sing one key (without auto-chord)");
         sung_keys |= key;
         singing |= 1u << who;
     }
@@ -294,6 +295,9 @@ static void check_state(void)
     if (!!(lit_buttons & (1u << B_SAVE)) != voice_track()->choir) fail("S1 SAVE's light disagrees with the choir");
     if (!!(lit_buttons & (1u << B_GLO)) != voice_play) fail("S1 GLO's light disagrees with the mode");
     if (!!(lit_buttons & (1u << B_SEL)) != (voice_scale != 0)) fail("S1 SCL's light disagrees with the scale");
+    if (!!(lit_buttons & (1u << B_SEQ)) != voice_chord) fail("S1 SEQ's light disagrees with auto-chord");
+    if (voice_chord > 1 || voice_chord_shape >= CHORD_SHAPES || voice_chord_inversion > 3 || voice_chord_spread >= CHORD_SPREADS)
+        fail("S1 a chord setting out of range");
     /* (The keys' lights from the frame's own snapshot of the keys, as app.c
      * hands them on: the vowels in TYPE, else just the keys held.) */
     uint32_t vowels = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 14) | (1u << 20) | (1u << 24);
@@ -306,7 +310,8 @@ static void check_state(void)
 static struct {
     struct voice_track tracks[MUMBLE_CAST];
     char text[MUMBLE_TEXT + 1];
-    unsigned arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing, tab, root;
+    unsigned arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing, tab, root, chord, chord_shape, chord_inversion,
+        chord_spread;
     unsigned length, cursor, cast, page, caps, scale, arp, mode, play, bars, bpm, demo, song, recording, armed;
     unsigned lyric_at, lyric_count, lyric_started, lyric_lead;
     uint32_t lyric_sig;
@@ -323,7 +328,8 @@ static void step_before(void)
     memcpy(before.tracks, voice_tracks, sizeof voice_tracks);
     memcpy(before.text, voice_text, sizeof voice_text);
     before.length = voice_length, before.cursor = voice_cursor, before.cast = voice_cast, before.page = voice_page, before.caps = voice_caps;
-    before.tab = voice_tab, before.root = voice_root;
+    before.tab = voice_tab, before.root = voice_root, before.chord = voice_chord, before.chord_shape = voice_chord_shape;
+    before.chord_inversion = voice_chord_inversion, before.chord_spread = voice_chord_spread;
     before.arp_rate = voice_arp_rate, before.arp_pattern = voice_arp_pattern, before.arp_octaves = voice_arp_octaves;
     before.arp_gate = voice_arp_gate, before.arp_swing = voice_arp_swing;
     before.scale = voice_scale, before.arp = voice_arp, before.mode = voice_mode, before.play = voice_play, before.bars = voice_bars, before.bpm = voice_bpm, before.demo = voice_demo;
@@ -408,6 +414,7 @@ static void step_after(void)
             if ((env == 2 || i == before.cast) ? !own : (!same && lfo != 1))
                 fail("S2 ENV did not give back their own voices (or touched another)");
         }
+    if (!!(pressed & BUTTON(SEQ)) != (voice_chord != before.chord)) fail("S2 auto-chord switched, or not, but as SEQ says");
     if (arp_tap && voice_arp == before.arp) fail("S2 ARP tapped did not switch the arpeggiator");
     if (!arp_tap && voice_arp != before.arp) fail("S2 the arpeggiator switched without ARP tapped");
     if (pressed == BUTTON(PLAY) && alone) {
@@ -480,34 +487,34 @@ static void step_after(void)
     }
     /* LOOP's knobs by its tab: MIX the selected one's level (0 muted), swing,
      * the bars (1, 2, 4, 8), the BPM; ARP its rate, pattern, octaves (a step a
-     * detent) and gate; SCALE the root (round) and the scale (a step). EDIT
-     * held: where they start. SCL steps the scale; nothing else moves them. */
+     * detent) and gate; CHORD the shape, inversion and spread (a step);
+     * SCALE the root (round) and the scale (a step). EDIT held: where they
+     * start. SCL steps the scale; nothing else moves them. */
     if ((before.mode == VOICE_LOOP && knobs_alone) || !turned_any) {
-        int want[10] = {before.tracks[before.cast].level, (int)before.arp_swing, (int)before.bars, (int)before.bpm,
+        int want[16] = {before.tracks[before.cast].level, (int)before.arp_swing, (int)before.bars, (int)before.bpm,
                         (int)before.arp_rate, (int)before.arp_pattern, (int)before.arp_octaves, (int)before.arp_gate,
-                        (int)before.root, (int)before.scale};
-        static const int start[10] = {100, 0, 2, 120, ARP_RATE, ARP_UP, 1, ARP_GATE, 0, 0};
+                        (int)before.chord_shape, (int)before.chord_inversion, (int)before.chord_spread, 0,
+                        (int)before.root, (int)before.scale, 0, 0};
+        static const int start[16] = {100, 0, 2, 120, ARP_RATE, ARP_UP, 1, ARP_GATE, 0, 0, 0, 0, 0, 0, 0, 0};
+        static const int lo[16] = {0, 0, 1, 40, 0, 0, 1, 10, 0, 0, 0, 0, 0, 0, 0, 0};
+        static const int hi[16] = {100, ARP_SWING_MAX, 8, 240, ARP_RATES - 1, ARP_PATTERNS - 1, 3, 100, CHORD_SHAPES - 1, 3,
+                                   CHORD_SPREADS - 1, 0, 11, VOICE_SCALES - 1, 0, 0};
         for (unsigned c = 0; c < 4 && turned_any; ++c) {
             int v = before.turned[2 + c], k = (int)(before.tab * 4u + c);
-            if (!v || k >= 10) continue;
+            if (!v || k == 11 || k >= 14) continue;
             int a = v < 0 ? -v : v, gain = a < 2 ? 1 : a < 4 ? 2 : a == 4 ? 3 : 4, step = v > 0 ? 1 : -1;
             if (edit) want[k] = start[k];
-            else if (k == 0) want[k] = clamp(want[k] + v * gain, 0, 100);
-            else if (k == 1) want[k] = clamp(want[k] + v * gain, 0, ARP_SWING_MAX);
             else if (k == 2) want[k] = clamp(v > 0 ? want[k] * 2 : want[k] / 2, 1, 8);
-            else if (k == 3) want[k] = clamp(want[k] + v * gain, 40, 240);
-            else if (k == 4) want[k] = clamp(want[k] + step, 0, ARP_RATES - 1);
-            else if (k == 5) want[k] = clamp(want[k] + step, 0, ARP_PATTERNS - 1);
-            else if (k == 6) want[k] = clamp(want[k] + step, 1, 3);
-            else if (k == 7) want[k] = clamp(want[k] + v * gain, 10, 100);
-            else if (k == 8) want[k] = (want[k] + 12 + step) % 12;
-            else want[k] = clamp(want[k] + step, 0, VOICE_SCALES - 1);
+            else if (k == 12) want[k] = (want[k] + 12 + step) % 12;
+            else if (k == 0 || k == 1 || k == 3 || k == 7) want[k] = clamp(want[k] + v * gain, lo[k], hi[k]);
+            else want[k] = clamp(want[k] + step, lo[k], hi[k]);
         }
-        if (pressed & BUTTON(SCL)) want[9] = (want[9] + 1) % VOICE_SCALES;
-        int got[10] = {voice_tracks[before.cast].level, (int)voice_arp_swing, (int)voice_bars, (int)voice_bpm,
+        if (pressed & BUTTON(SCL)) want[13] = (want[13] + 1) % VOICE_SCALES;
+        int got[16] = {voice_tracks[before.cast].level, (int)voice_arp_swing, (int)voice_bars, (int)voice_bpm,
                        (int)voice_arp_rate, (int)voice_arp_pattern, (int)voice_arp_octaves, (int)voice_arp_gate,
-                       (int)voice_root, (int)voice_scale};
-        if (memcmp(want, got, sizeof want)) fail("S2 the loop's, the arpeggiator's or the scale's settings moved wrongly");
+                       (int)voice_chord_shape, (int)voice_chord_inversion, (int)voice_chord_spread, 0,
+                       (int)voice_root, (int)voice_scale, 0, 0};
+        if (memcmp(want, got, sizeof want)) fail("S2 the loop's, the arpeggiator's, a chord's or the scale's settings moved wrongly");
         if (before.mode == VOICE_LOOP && knobs_alone)
             for (unsigned i = 0; i < MUMBLE_CAST; ++i)
                 if (memcmp(&before.tracks[i].sound, &voice_tracks[i].sound, sizeof before.tracks[i].sound))

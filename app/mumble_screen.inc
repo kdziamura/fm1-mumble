@@ -31,8 +31,8 @@
  *         LFO a new voice for the character, rolled
  *         EDIT clear the selected character's notes; held 1 s: the whole loop
  *   LOOP  ALGO the tab: MIX (K1 the character's level, 0 muted; K2 swing;
- *         K3 bars; K4 BPM), ARP (rate, pattern, octaves, gate), SCALE (root,
- *         scale); EDIT held with a knob: back to where it starts; OCT, FX and
+ *         K3 bars; K4 BPM), ARP (rate, pattern, octaves, gate), CHORD
+ *         (shape, inversion, spread), SCALE (root, scale); EDIT held with a knob: back to where it starts; OCT, FX and
  *         EDIT as in SING
  * Every button says what it did on the hint line.
  *
@@ -51,8 +51,8 @@ static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX"
 /* GLO steps TYPE -> SING -> LOOP; the keys sing in both of the last two. */
 enum { VOICE_TYPE, VOICE_SING, VOICE_LOOP, VOICE_MODES };
 /* LOOP's tabs (ALGO turns them): the knobs set the mix, the arpeggiator, the scale. */
-enum { TAB_MIX, TAB_ARP, TAB_SCALE, VOICE_TABS };
-static const char *const voice_tab_names[VOICE_TABS] = {"MIX", "ARP", "SCALE"};
+enum { TAB_MIX, TAB_ARP, TAB_CHORD, TAB_SCALE, VOICE_TABS };
+static const char *const voice_tab_names[VOICE_TABS] = {"MIX", "ARP", "CHORD", "SCALE"};
 static const char *const voice_mode_names[VOICE_MODES] = {"TYPE", "SING", "LOOP"};
 static const char *const voice_greetings[MUMBLE_CAST] = {
     "Hey there!", "Halt.", "Bless you, child.", "Hiya! Hiya!", "Arr...", "Hmm, yes... yes.",
@@ -71,7 +71,7 @@ enum { VOICE_LINES = sizeof voice_lines / sizeof voice_lines[0] };
 /* The hint line's tip in each mode, and HOME's help card. */
 static const char *const voice_tips[VOICE_MODES] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
                                                     "KEYS SING THE LINE  HOLD HOME: HELP",
-                                                    "ALGO: MIX ARP SCALE  HOLD HOME: HELP"};
+                                                    "ALGO: MIX ARP CHORD SCALE  HOME: HELP"};
 enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
 static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
     {"KEYS TYPE AT THE CURSOR   GLO: SING",
@@ -87,7 +87,7 @@ static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
      "ALGO PAGE  K1-K4 SOUND  EDIT+K: RESET",
      "SAVE: CHOIR  LFO: ROLL  ENV: UNROLL"},
     {"A LANE A SINGER  KEYS SING  GLO: TYPE",
-     "ALGO TABS: MIX, ARP, SCALE",
+     "ALGO TABS: MIX ARP CHORD SCALE",
      "EDIT+KNOB: AS IT WAS",
      "PLAY: LOOP  REC: RECORD",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
@@ -210,7 +210,17 @@ enum { ARP_RATES = sizeof voice_arp_rates, ARP_UP = 0, ARP_DOWN, ARP_UPDOWN, ARP
 static unsigned voice_arp, voice_arp_rate = ARP_RATE, voice_arp_pattern, voice_arp_octaves = 1, voice_arp_gate = ARP_GATE,
                 voice_arp_swing;
 static unsigned voice_arp_step, voice_arp_count;
-static int voice_arp_shift;                         /* octaves up voice_note_on sings the key */
+/* Auto-chord (SEQ; LOOP's CHORD tab): a key sings a chord stacked up the
+ * scale from its note (with the scale off: up the major scale on the root),
+ * one note a singer: the shape (scale steps above the key's), the inversion
+ * (the lowest notes up an octave), the spread (close, open, wide). */
+static const uint8_t voice_chord_shapes[][4] = {{0, 2, 4, 0}, {0, 2, 4, 6}, {0, 4, 7, 0}, {0, 1, 4, 0}, {0, 3, 4, 0},
+                                                {0, 2, 4, 8}};
+static const uint8_t voice_chord_sizes[] = {3, 4, 3, 3, 3, 4};
+static const char *const voice_chord_names[] = {"TRIAD", "7TH", "POWER", "SUS2", "SUS4", "ADD9"};
+static const char *const voice_spread_names[] = {"CLOSE", "OPEN", "WIDE"};
+enum { CHORD_SHAPES = sizeof voice_chord_sizes, CHORD_SPREADS = 3 };
+static unsigned voice_chord, voice_chord_shape, voice_chord_inversion, voice_chord_spread;
 static int32_t voice_arp_index = -1;
 static uint32_t voice_arp_t0, voice_arp_off, voice_arp_dice = 0x2545F491U;
 /* Notes in the sequence for track t (all of them for MUMBLE_CAST). */
@@ -293,13 +303,14 @@ static void voice_stop(void)
  * so it must not land in a performance. It is read back whole at power-on,
  * or not at all when any of it is out of range.
  * ---------------------------------------------------------------------- */
-enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 3, VOICE_SAVE_MS = 3000, VOICE_QUIET_MS = 1000 };
+enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 4, VOICE_SAVE_MS = 3000, VOICE_QUIET_MS = 1000 };
 struct voice_store {
     uint32_t magic;
     uint16_t version, size;
     char text[MUMBLE_TEXT + 1];
     uint8_t length, cast, caps, demo, scale, arp, bars, bpm, seq_count;
     uint8_t arp_rate, arp_pattern, arp_octaves, arp_gate, arp_swing, root;
+    uint8_t chord, chord_shape, chord_inversion, chord_spread;
     int8_t octave;
     struct voice_track tracks[MUMBLE_CAST];
     struct mumble_note seq[VOICE_SEQ];
@@ -321,6 +332,8 @@ static void voice_store_fill(struct voice_store *k)
     k->arp_rate = (uint8_t)voice_arp_rate, k->arp_pattern = (uint8_t)voice_arp_pattern;
     k->arp_octaves = (uint8_t)voice_arp_octaves, k->arp_gate = (uint8_t)voice_arp_gate, k->arp_swing = (uint8_t)voice_arp_swing;
     k->root = (uint8_t)voice_root;
+    k->chord = (uint8_t)voice_chord, k->chord_shape = (uint8_t)voice_chord_shape;
+    k->chord_inversion = (uint8_t)voice_chord_inversion, k->chord_spread = (uint8_t)voice_chord_spread;
     k->bars = (uint8_t)voice_bars, k->bpm = (uint8_t)voice_bpm, k->octave = (int8_t)voice_octave;
     memcpy(k->tracks, voice_tracks, sizeof voice_tracks);
     k->seq_count = (uint8_t)voice_seq_count;
@@ -335,7 +348,8 @@ static unsigned voice_store_valid(const struct voice_store *k)
     for (unsigned i = 0; i < k->length; ++i)
         if ((unsigned char)k->text[i] < 32U || (unsigned char)k->text[i] > 126U) return 0;
     if (k->arp_rate >= ARP_RATES || k->arp_pattern >= ARP_PATTERNS || k->arp_octaves < 1 || k->arp_octaves > 3 ||
-        k->arp_gate < 10 || k->arp_gate > 100 || k->arp_swing > ARP_SWING_MAX || k->root > 11)
+        k->arp_gate < 10 || k->arp_gate > 100 || k->arp_swing > ARP_SWING_MAX || k->root > 11 ||
+        k->chord > 1 || k->chord_shape >= CHORD_SHAPES || k->chord_inversion > 3 || k->chord_spread >= CHORD_SPREADS)
         return 0;
     if (k->cast >= MUMBLE_CAST || k->caps > 1 || k->demo >= VOICE_LINES || k->scale >= VOICE_SCALES || k->arp > 1 ||
         (k->bars != 1 && k->bars != 2 && k->bars != 4 && k->bars != 8) || k->bpm < 40 || k->bpm > 240 ||
@@ -366,6 +380,8 @@ static void voice_store_load(void)
     voice_cast = k->cast, voice_caps = k->caps, voice_demo = k->demo, voice_scale = k->scale, voice_arp = k->arp;
     voice_arp_rate = k->arp_rate, voice_arp_pattern = k->arp_pattern, voice_arp_octaves = k->arp_octaves;
     voice_arp_gate = k->arp_gate, voice_arp_swing = k->arp_swing, voice_root = k->root;
+    voice_chord = k->chord, voice_chord_shape = k->chord_shape, voice_chord_inversion = k->chord_inversion;
+    voice_chord_spread = k->chord_spread;
     voice_bars = k->bars, voice_bpm = k->bpm, voice_octave = k->octave;
     memcpy(voice_tracks, k->tracks, sizeof voice_tracks);
     voice_seq_count = k->seq_count;
@@ -424,6 +440,7 @@ static void voice_forget(void)
     voice_cast = voice_caps = voice_demo = voice_scale = voice_arp = 0;
     voice_arp_rate = ARP_RATE, voice_arp_pattern = ARP_UP, voice_arp_octaves = 1, voice_arp_gate = ARP_GATE, voice_arp_swing = 0;
     voice_root = 0;
+    voice_chord = voice_chord_shape = voice_chord_inversion = voice_chord_spread = 0;
     voice_bars = 2, voice_bpm = 120, voice_octave = 0;
     voice_portrait_of = MUMBLE_CAST;
     for (unsigned i = 0; i < MUMBLE_CAST; ++i) voice_face_sigs[i] = 0;
@@ -556,8 +573,11 @@ static void voice_edit(unsigned col, int delta)
         else if (k == 5) voice_arp_pattern = (unsigned)clamp((int)voice_arp_pattern + step, 0, ARP_PATTERNS - 1);
         else if (k == 6) voice_arp_octaves = (unsigned)clamp((int)voice_arp_octaves + step, 1, 3);
         else if (k == 7) voice_arp_gate = (unsigned)clamp((int)voice_arp_gate + delta, 10, 100);
-        else if (k == 8) voice_root = (voice_root + 12U + (unsigned)step) % 12U;
-        else if (k == 9) voice_scale = (unsigned)clamp((int)voice_scale + step, 0, VOICE_SCALES - 1);
+        else if (k == 8) voice_chord_shape = (unsigned)clamp((int)voice_chord_shape + step, 0, CHORD_SHAPES - 1);
+        else if (k == 9) voice_chord_inversion = (unsigned)clamp((int)voice_chord_inversion + step, 0, 3);
+        else if (k == 10) voice_chord_spread = (unsigned)clamp((int)voice_chord_spread + step, 0, CHORD_SPREADS - 1);
+        else if (k == 12) voice_root = (voice_root + 12U + (unsigned)step) % 12U;
+        else if (k == 13) voice_scale = (unsigned)clamp((int)voice_scale + step, 0, VOICE_SCALES - 1);
         voice_touch();
         return;
     }
@@ -572,7 +592,8 @@ static void voice_reset(unsigned col)
     struct voice_track *t = voice_track();
     if (voice_mode == VOICE_LOOP) {
         static const char *const names[VOICE_TABS * 4] = {"LEVEL", "SWING", "BARS", "BPM", "RATE", "PATTERN", "OCTAVES",
-                                                          "GATE", "ROOT", "SCALE", "", ""};
+                                                          "GATE", "SHAPE", "INVERSION", "SPREAD", "", "ROOT", "SCALE",
+                                                          "", ""};
         unsigned k = voice_tab * 4U + col;
         if (!names[k][0]) return;
         if (k == 0) t->level = 100;
@@ -583,7 +604,10 @@ static void voice_reset(unsigned col)
         else if (k == 5) voice_arp_pattern = ARP_UP;
         else if (k == 6) voice_arp_octaves = 1;
         else if (k == 7) voice_arp_gate = ARP_GATE;
-        else if (k == 8) voice_root = 0;
+        else if (k == 8) voice_chord_shape = 0;
+        else if (k == 9) voice_chord_inversion = 0;
+        else if (k == 10) voice_chord_spread = 0;
+        else if (k == 12) voice_root = 0;
         else voice_scale = 0;
         voice_touch();
         strcpy(voice_said, names[k]);
@@ -803,26 +827,66 @@ static void voice_note_off(unsigned who)
     voice_sings[who] = 0;
     voice_sing_end[who] = frame_time;
 }
-static void voice_note_on(unsigned who, unsigned key)
+/* Singers start a key's syllable together (one press, so letting the key go
+ * lets them all go), each at the key's note shifted by shift[i] semitones,
+ * kept to the scale, in their own register; the first is the key's own note. */
+static int voice_keep_to_scale(int pitch)
+{
+    while (!(voice_scales[voice_scale] >> ((pitch + 12 - (int)voice_root) % 12) & 1U)) --pitch;   /* (the root is in every scale) */
+    return pitch;
+}
+static void voice_notes_on(const uint8_t *who, const int8_t *shift, unsigned n, unsigned key)
 {
     static const struct mumble_sound hum = {MUMBLE_U, 0, MUMBLE_HUM, MUMBLE_VOWELS, 0, 0, 0, 0};
-    const struct mumble_voice *v = &voice_tracks[who].sound;
-    int pitch = clamp(53 + (int)key + 12 * (voice_octave + voice_arp_shift + mumble_register(v)), 0, 127);   /* lowest key is F3 */
-    while (!(voice_scales[voice_scale] >> ((pitch + 12 - (int)voice_root) % 12) & 1U)) --pitch;   /* (the root is in every scale) */
-    /* Straight on from its last note (within 60 ms): slide from it. */
-    int bend = 0;
-    if (voice_sing_pitch[who] && frame_time - voice_sing_end[who] <= 60U)
-        bend = clamp((int)voice_sing_pitch[who] - pitch, -24, 24);
-    struct mumble_singer one = {v, (uint8_t)who, (uint8_t)pitch, (int8_t)bend};
-    voice_sing_pitch[who] = (uint8_t)pitch;
-    voice_rec_bend[who] = (int8_t)bend;
+    struct mumble_singer singers[MUMBLE_CAST];
+    int pitches[MUMBLE_CAST];
+    for (unsigned i = 0; i < n; ++i) {
+        const struct mumble_voice *v = &voice_tracks[who[i]].sound;
+        int pitch = clamp(53 + (int)key + shift[i] + 12 * (voice_octave + mumble_register(v)), 0, 127);   /* lowest key is F3 */
+        pitch = voice_keep_to_scale(pitch);
+        /* Straight on from its last note (within 60 ms): slide from it. */
+        int bend = 0;
+        if (voice_sing_pitch[who[i]] && frame_time - voice_sing_end[who[i]] <= 60U)
+            bend = clamp((int)voice_sing_pitch[who[i]] - pitch, -24, 24);
+        singers[i] = (struct mumble_singer){v, who[i], (uint8_t)pitch, (int8_t)bend};
+        voice_sing_pitch[who[i]] = (uint8_t)pitch;
+        voice_rec_bend[who[i]] = (int8_t)bend;
+        pitches[i] = pitch;
+    }
     unsigned slot = voice_key_slot[key];
-    mumble_press_sound(key, voice_lyric_count ? &voice_line_sounds[slot % voice_lyric_count] : &hum, &one, 1, voice_caps);
-    voice_sings[who] = (uint8_t)(key + 1U);
-    voice_sing_order[who] = ++voice_order;
-    if (voice_recording) voice_rec_press(who, slot, (unsigned)pitch);
+    mumble_press_sound(key, voice_lyric_count ? &voice_line_sounds[slot % voice_lyric_count] : &hum, singers, n, voice_caps);
+    for (unsigned i = 0; i < n; ++i) {
+        voice_sings[who[i]] = (uint8_t)(key + 1U);
+        voice_sing_order[who[i]] = ++voice_order;
+        if (voice_recording) voice_rec_press(who[i], slot, (unsigned)pitches[i]);
+    }
     voice_sung = key;
-    voice_sung_note = (unsigned)pitch;
+    voice_sung_note = (unsigned)pitches[0];
+}
+static void voice_note_on(unsigned who, unsigned key)
+{
+    const uint8_t one = (uint8_t)who;
+    const int8_t none = 0;
+    voice_notes_on(&one, &none, 1, key);
+}
+/* Auto-chord: the semitones above (or under) a key's note of its chord's
+ * notes, the first its own (kept to the scale); returns how many. */
+static unsigned voice_chord_shifts(unsigned key, int8_t shift[4])
+{
+    int base = 53 + (int)key + 12 * voice_octave, own = voice_keep_to_scale(base), tones[4];
+    uint16_t mask = voice_scale ? voice_scales[voice_scale] : voice_scales[1];   /* (no scale: major on the root) */
+    unsigned n = voice_chord_sizes[voice_chord_shape];
+    for (unsigned j = 0; j < n; ++j) {
+        int p = own;
+        for (unsigned k = 0; k < voice_chord_shapes[voice_chord_shape][j]; ++k)
+            do ++p; while (!(mask >> ((p + 12 * 11 - (int)voice_root) % 12) & 1U));
+        tones[j] = p;
+    }
+    for (unsigned j = 0; j < voice_chord_inversion && j < n - 1U; ++j) tones[j] += 12;    /* inverted */
+    if (voice_chord_spread >= 1) tones[1] += 12;                                         /* open */
+    if (voice_chord_spread >= 2) tones[n - 1U] += 12;                                    /* wide */
+    for (unsigned j = 0; j < n; ++j) shift[j] = (int8_t)clamp(tones[j] - base, -36, 48);
+    return n;
 }
 static void voice_release_all(void)
 {
@@ -902,6 +966,23 @@ static void voice_sing(const struct fm1_controls *c, uint32_t down)
         voice_held |= 1U << key;
         voice_key_order[key] = ++voice_order;
         voice_lyric_take(key);
+        if (voice_chord) {                         /* a chord: its notes to the choir free first, then guests */
+            int8_t shift[4];
+            uint8_t who[4];
+            unsigned n = voice_chord_shifts(key, shift), got = 0;
+            for (unsigned pass = 0; pass < 3 && got < n; ++pass)
+                for (unsigned i = 0; i < MUMBLE_CAST && got < n; ++i) {
+                    unsigned w = (voice_cast + i) % MUMBLE_CAST, taken = 0;
+                    for (unsigned k = 0; k < got; ++k) taken |= who[k] == w;
+                    if (taken) continue;
+                    if (pass == 0 ? voice_in_choir(w) && !voice_sings[w]
+                                  : pass == 1 ? !voice_in_choir(w) && !voice_sings[w] : voice_in_choir(w))
+                        who[got++] = (uint8_t)w;
+                }
+            for (unsigned k = 0; k < got; ++k) voice_note_off(who[k]);
+            voice_notes_on(who, shift, got, key);
+            continue;
+        }
         unsigned free = MUMBLE_CAST, oldest = MUMBLE_CAST;
         for (unsigned i = 0; i < MUMBLE_CAST && free == MUMBLE_CAST; ++i) {
             unsigned who = (voice_cast + i) % MUMBLE_CAST;
@@ -953,7 +1034,10 @@ static void voice_arp_tick(void)
                 uint8_t k = keys[j];
                 keys[j] = keys[j - 1], keys[j - 1] = k;
             }
-    unsigned len = n * voice_arp_octaves, e, c = voice_arp_count++;
+    int8_t tones[4] = {0, 0, 0, 0};
+    unsigned per = 1;                                /* (auto-chord: each key's chord's notes in turn) */
+    if (voice_chord) per = voice_chord_shifts(keys[0], tones);
+    unsigned len = n * per * voice_arp_octaves, e, c = voice_arp_count++;
     if (voice_arp_pattern == ARP_DOWN) e = len - 1U - c % len;
     else if (voice_arp_pattern == ARP_UPDOWN) {
         unsigned period = len > 1U ? 2U * len - 2U : 1U;
@@ -964,7 +1048,9 @@ static void voice_arp_tick(void)
         voice_arp_dice ^= voice_arp_dice << 5;
         e = voice_arp_dice % len;
     } else e = c % len;
-    unsigned key = keys[e % n];
+    unsigned key = keys[e / per % n];
+    if (voice_chord) voice_chord_shifts(key, tones);
+    int8_t shift = (int8_t)(tones[e % per] + 12 * (int)(e / (per * n)));
     unsigned choir[MUMBLE_CAST], singers = 0;
     for (unsigned i = 0; i < MUMBLE_CAST; ++i)
         if (voice_in_choir((voice_cast + i) % MUMBLE_CAST)) choir[singers++] = (voice_cast + i) % MUMBLE_CAST;
@@ -973,9 +1059,8 @@ static void voice_arp_tick(void)
     voice_lyric_lead = MUMBLE_LETTERS;
     voice_lyric_take(key);
     voice_lyric_lead = MUMBLE_LETTERS;
-    voice_arp_shift = (int)(e / n);
-    voice_note_on(who, key);
-    voice_arp_shift = 0;
+    const uint8_t one = (uint8_t)who;
+    voice_notes_on(&one, &shift, 1, key);
     voice_arp_off = frame_time + step_ms * voice_arp_gate / 100U;
 }
 /* ARP on or off: what sings lets go, the keys still held start again. */
@@ -1137,6 +1222,14 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     }
     if (!edit && voice_edit_down && !voice_edit_spent) voice_edit_tap();
     voice_edit_down = edit;
+    /* SEQ: auto-chord on or off (LOOP's CHORD tab sets it). */
+    if (pressed & BUTTON(SEQ)) {
+        for (unsigned who = 0; who < MUMBLE_CAST; ++who) voice_note_off(who);
+        voice_lyric_lead = MUMBLE_LETTERS;
+        voice_held = 0;
+        voice_chord ^= 1U;
+        voice_say("AUTO-CHORD ", voice_chord ? "ON: " : "OFF", voice_chord ? voice_chord_names[voice_chord_shape] : NULL);
+    }
     /* ARP: the arpeggiator on or off (LOOP's ARP tab sets it). */
     if (pressed & BUTTON(ARP)) {
         voice_arp_set(!voice_arp);
@@ -1192,7 +1285,7 @@ static uint32_t voice_button_bits(void)
     uint32_t octave = voice_play ? ((voice_octave > 0) << OCT_UP) | ((voice_octave < 0) << OCT_DOWN)
                                  : voice_caps << OCT_UP;
     return ((voice_song != 0) << PLAY) | octave | (voice_play << GLO) | ((uint32_t)voice_track()->choir << SAVE) |
-           ((voice_recording | (voice_rec_armed & ((frame_time / 250U) & 1U))) << REC) | (voice_arp << ARP) | ((voice_scale != 0) << SCL);
+           ((voice_recording | (voice_rec_armed & ((frame_time / 250U) & 1U))) << REC) | (voice_arp << ARP) | (voice_chord << SEQ) | ((voice_scale != 0) << SCL);
 }
 
 /* Control-side snapshot, taken once per frame before marking damage: the
@@ -1790,6 +1883,16 @@ static void voice_knobs(void)
         voice_meter(2, "OCTAVES", value, "", voice_knob_colors[2], voice_arp_octaves - 1U, 2, 0);
         decimal(value, (int)voice_arp_gate, 1);
         voice_meter(3, "GATE", value, "%", voice_knob_colors[3], voice_arp_gate - 10U, 90, ARP_GATE - 10);
+        return;
+    }
+    if (voice_mode == VOICE_LOOP && voice_tab == TAB_CHORD) {
+        voice_meter(0, "SHAPE", voice_chord_names[voice_chord_shape], "", voice_knob_colors[0], voice_chord_shape,
+                    CHORD_SHAPES - 1, 0);
+        decimal(value, (int)voice_chord_inversion, 1);
+        voice_meter(1, "INVERSION", value, "", voice_knob_colors[1], voice_chord_inversion, 3, 0);
+        voice_meter(2, "SPREAD", voice_spread_names[voice_chord_spread], "", voice_knob_colors[2], voice_chord_spread,
+                    CHORD_SPREADS - 1, 0);
+        voice_meter(3, voice_chord ? "SEQ: ON" : "SEQ: OFF", "", "", voice_knob_colors[3], 0, 0, NO_TICK);
         return;
     }
     if (voice_mode == VOICE_LOOP && voice_tab == TAB_SCALE) {
