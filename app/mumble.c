@@ -563,9 +563,21 @@ static volatile uint32_t click_beat_frames;
 static uint32_t click_left;
 static float click_y1, click_y2, click_k1, click_k2;
 static float click_coef[2][3];                   /* plain, accented: k1, k2, first sample */
-/* The master compressor: the mix's level (a peak follower) and the gain it
- * sets, so a choir's chord does not drive the soft clip. */
-static float comp_level, comp_gain = 1.0f;
+/* The master compressor and limiter, so a choir's chord does not drive the
+ * soft clip: the mix runs COMP_LOOK frames late, so the gain is down before
+ * a peak arrives; the level is the mix's peak over that window (held, then
+ * released over 150 ms); the gain is 4:1 over half scale and never lets the
+ * clip see more than COMP_CEILING. */
+enum { COMP_LOOK = 64 };                         /* 1.45 ms */
+#define COMP_CEILING 0.85f
+static float comp_line[COMP_LOOK], comp_level, comp_gain = 1.0f, comp_target = 1.0f;
+static unsigned comp_at, comp_hold;
+#ifdef FM1_HOST_TEST
+/* The engine's test: what reaches the soft clip (its peak, and the samples
+ * past 0.8, where it bends). */
+float mumble_test_clip_peak;
+unsigned mumble_test_clip_over, mumble_test_clip_samples;
+#endif
 
 CONTROL void mumble_init(void)
 {
@@ -602,7 +614,8 @@ CONTROL void mumble_init(void)
         click_coef[a][2] = (a ? 0.16f : 0.10f) * cos_approx(w - 0.5f * PI);   /* amplitude * sin(w) */
     }
     click_beats = 0; click_left = 0; click_y1 = click_y2 = 0.0f;
-    comp_level = 0.0f; comp_gain = 1.0f;
+    comp_level = 0.0f; comp_gain = comp_target = 1.0f; comp_at = comp_hold = 0;
+    for (unsigned i = 0; i < COMP_LOOK; ++i) comp_line[i] = 0.0f;
     for (unsigned i = 0; i < 4; ++i) { comb_at[i] = 0; comb_tone[i] = 0.0f; }
     allpass_at[0] = allpass_at[1] = 0;
     song_request = song_ack = live_request = live_ack = 0;
@@ -1570,18 +1583,40 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         mix[i] += click_y2;
         --click_left;
     }
-    /* Compress, then soft clip (rational tanh), then mix at -2 dB under full
-     * scale. Over 0.5 the level rises a quarter as fast (4:1), with a 2 ms
-     * attack and a 150 ms release; the gain is set every 16 frames. */
+    /* Compress and limit (looking ahead), then a soft clip (straight to 0.75,
+     * then bending to 1 at 1.5), then into the mix at -3 dB under full scale.
+     * The gain falls to its target within the look-ahead (8 % a frame) and
+     * rises back over about 15 ms; the target is set every 4 frames. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
-        float a = mix[i] < 0.0f ? -mix[i] : mix[i];
-        if (a > comp_level) comp_level += (a - comp_level) * 0.0113f;
+        float in = mix[i], a = in < 0.0f ? -in : in;
+        if (a >= comp_level) comp_level = a, comp_hold = COMP_LOOK;
+        else if (comp_hold) --comp_hold;
         else comp_level *= 0.99985f;
-        if (!(i & 15U)) comp_gain = comp_level > 0.5f ? (0.5f + (comp_level - 0.5f) * 0.25f) / comp_level : 1.0f;
-        float x = mix[i] * comp_gain * 1.12f;
-        if (x > 3.0f) x = 3.0f; else if (x < -3.0f) x = -3.0f;
-        float y = x * (27.0f + x * x) / (27.0f + 9.0f * x * x) * 0.9f;
-        int32_t sample = (int32_t)(y * 6600000.0f);
+        if (!(i & 3U)) {
+            comp_target = comp_level > 0.5f ? (0.5f + (comp_level - 0.5f) * 0.25f) / comp_level : 1.0f;
+            if (comp_level * comp_target * 1.12f > COMP_CEILING) comp_target = COMP_CEILING / (1.12f * comp_level);
+        }
+        comp_gain += (comp_target - comp_gain) * (comp_target < comp_gain ? 0.08f : 0.0015f);
+        float late = comp_line[comp_at];
+        comp_line[comp_at] = in;
+        comp_at = (comp_at + 1U) % COMP_LOOK;
+        float x = late * comp_gain * 1.12f;
+#ifdef FM1_HOST_TEST
+        {
+            float ax = x < 0.0f ? -x : x;
+            if (ax > mumble_test_clip_peak) mumble_test_clip_peak = ax;
+            mumble_test_clip_over += ax > 0.8f;
+            ++mumble_test_clip_samples;
+        }
+#endif
+        float ax = x < 0.0f ? -x : x, y = x;
+        if (ax > 0.75f) {
+            float d = (ax - 0.75f) * 4.0f;             /* the bend: a rational tanh from 0.75, to 1 at 1.5 */
+            if (d > 3.0f) d = 3.0f;
+            y = 0.75f + 0.25f * d * (27.0f + d * d) / (27.0f + 9.0f * d * d);
+            if (x < 0.0f) y = -y;
+        }
+        int32_t sample = (int32_t)(y * 5940000.0f);
         for (unsigned c = 0; c < 2; ++c) {
             int32_t value = output[i * 2 + c] + sample;
             output[i * 2 + c] = value > 8388607 ? 8388607 : value < -8388608 ? -8388608 : value;

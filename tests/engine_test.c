@@ -379,6 +379,30 @@ int main(int argc, char **argv)
     CHECK(near_top < 0.002f * samples, "a chord of eight stays clear of the clip (%.2f%% of samples)", 100.0f * near_top / samples);
     CHECK(levels[1] > 1.5f * levels[0], "a chord is still louder than one voice");
 
+    /* The limiter: fast shouted stabs of all eight (the onsets a peak
+     * follower is late for) never drive the soft clip past its bend: what
+     * reaches it stays under 0.9, a 0.75..0.9 knee at most. */
+    {
+        extern float mumble_test_clip_peak;
+        extern unsigned mumble_test_clip_over, mumble_test_clip_samples;
+        mumble_test_clip_peak = 0.0f;
+        mumble_test_clip_over = mumble_test_clip_samples = 0;
+        for (unsigned t = 0; t < 30; ++t) {
+            for (unsigned v = 0; v < MUMBLE_CAST; ++v) {
+                struct mumble_singer one = {&mumble_cast[v].voice, (uint8_t)v, (uint8_t)(62 + v * 4 + t % 5), 0};
+                mumble_press(v * 3U + t % 3U, &one, 1, 1);
+            }
+            for (unsigned b = 0; b < 25; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+            for (unsigned v = 0; v < MUMBLE_CAST; ++v) mumble_release(v * 3U + t % 3U);
+            for (unsigned b = 0; b < 10; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+        }
+        printf("limiter: shouted stabs of eight reach the clip at %.2f, %.2f%% of samples past 0.8\n",
+               mumble_test_clip_peak, 100.0f * mumble_test_clip_over / mumble_test_clip_samples);
+        CHECK(mumble_test_clip_peak < 0.9f, "shouted stabs stay under the soft clip's bend (%.2f)", mumble_test_clip_peak);
+        mumble_stop();
+        for (unsigned b = 0; b < 1200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
+    }
+
     /* Stopping the song lets a sustained note go at once (PLAY, a panic). */
     const struct mumble_note long_take[1] = {{100, 5000, 0, 60, 0, 0}};
     memset(parts, 0, sizeof parts);
