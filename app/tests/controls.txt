@@ -107,6 +107,55 @@ key 0 up
 key 4 up
 wait 50
 expect singing 0
+# ARP held, the knobs set it (and it stays on as it is let go): 1/8 (250 ms
+# at 120 BPM), down the keys.
+press ARP
+turn K1 -2
+turn K2 1
+wait 50
+shot controls-arp.png
+release ARP
+wait 50
+expect arp 1
+expect arp_rate 1
+expect arp_pattern 1
+key 0 down
+key 4 down
+wait 40
+expect sung 4
+wait 250
+expect sung 0
+wait 250
+expect sung 4
+key 0 up
+key 4 up
+wait 50
+# Two octaves: down from key 4 an octave up (57), key 0 there (53), then key 4 (45).
+press ARP
+turn K3 1
+release ARP
+wait 50
+expect arp_octaves 2
+expect arp 1
+key 0 down
+key 4 down
+wait 40
+expect sung_note 57
+wait 250
+expect sung_note 53
+wait 250
+expect sung_note 45
+key 0 up
+key 4 up
+wait 50
+press ARP
+turn K3 -1
+turn K1 2
+turn K2 -1
+release ARP
+wait 50
+expect arp_octaves 1
+expect arp_rate 3
 tap ARP
 expect arp 0
 # LFO rolls a new voice for the character.

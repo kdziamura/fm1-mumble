@@ -258,6 +258,12 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "face_top")) *got = (int)voice_portrait.top;     /* the selected one's face: mumble_faces.inc's TOP_* */
     else if (!strcmp(what, "face_body")) *got = (int)voice_portrait.body;   /* BODY_*: 1 ghost, 2 robot ... */
     else if (!strcmp(what, "arp")) *got = (int)voice_arp;
+    else if (!strcmp(what, "arp_rate")) *got = (int)voice_arp_rate;          /* 0 1/4 .. 3 1/16 .. 5 1/32 */
+    else if (!strcmp(what, "arp_pattern")) *got = (int)voice_arp_pattern;    /* 0 up, 1 down, 2 up-down, 3 random, 4 played */
+    else if (!strcmp(what, "arp_octaves")) *got = (int)voice_arp_octaves;
+    else if (!strcmp(what, "arp_gate")) *got = (int)voice_arp_gate;
+    else if (!strcmp(what, "arp_swing")) *got = (int)voice_arp_swing;
+    else if (!strcmp(what, "sung_note")) *got = (int)voice_sung_note;        /* the last note sung (MIDI) */
     else if (!strcmp(what, "scale")) *got = (int)voice_scale;               /* 0 none, 1 C major ... */
     else if (!strcmp(what, "lyric")) *got = (int)voice_lyric_at;
     else if (!strcmp(what, "lyrics")) *got = (int)voice_lyric_count;
