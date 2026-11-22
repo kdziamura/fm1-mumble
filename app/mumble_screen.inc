@@ -452,6 +452,45 @@ static unsigned voice_lyric_next(void)
     if (!voice_lyric_count || voice_lyric_lead < MUMBLE_LETTERS || !voice_lyric_started) return voice_lyric_at;
     return (voice_lyric_at + 1U) % voice_lyric_count;
 }
+/* Where syllable k of the line shows: from its consonants before its vowel
+ * (back to the last syllable's vowel or the word's start). */
+static unsigned voice_lyric_onset(const char *line, unsigned k)
+{
+    unsigned p = voice_lyric_plan[k].index, floor = k ? voice_lyric_plan[k - 1U].index + 1U : 0U;
+    while (p > floor) {
+        char c = (char)(line[p - 1U] | 0x20);
+        if (c < 'a' || c > 'z' || c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') break;
+        --p;
+    }
+    return p;
+}
+/* SING's typewriter: the line types out in the box as it is sung, a letter
+ * every VOICE_TYPE_MS, up to the end of the syllable sung last; from the top
+ * again when the line starts over. */
+enum { VOICE_TYPE_MS = 35 };
+static unsigned voice_typed_from, voice_typed_target;
+static uint32_t voice_typed_ms, voice_typed_sig;
+static unsigned voice_typed(void)
+{
+    unsigned k = voice_typed_from + (frame_time - voice_typed_ms) / VOICE_TYPE_MS;
+    return k < voice_typed_target ? k : voice_typed_target;
+}
+static void voice_typewriter(void)
+{
+    unsigned n, target = 0;
+    const char *line = voice_lyric_text(&n);
+    if (voice_lyric_started && voice_lyric_count)
+        target = voice_lyric_at + 1U < voice_lyric_count ? voice_lyric_onset(line, voice_lyric_at + 1U) : n;
+    if (voice_typed_sig != voice_lyric_sig || target < voice_typed_target) {
+        voice_typed_sig = voice_lyric_sig;
+        voice_typed_from = 0;
+        voice_typed_ms = frame_time;
+    } else if (target > voice_typed_target) {
+        voice_typed_from = voice_typed();
+        voice_typed_ms = frame_time;
+    }
+    voice_typed_target = target;
+}
 
 /* Recording: where the loop is now, on its nearest 16th (a note a little
  * early or late lands on the beat); -1 when it is not running. */
@@ -878,6 +917,7 @@ static void voice_frame(uint32_t now)
         voice_touch();
     }
     voice_lyric_sync();
+    voice_typewriter();
     if (voice_song_dirty && voice_song) voice_publish(0, 0);
     /* Each pass of the loop sings from the top of the line. */
     if (voice_song && voice_now.song_ms >= 0) {
@@ -1269,20 +1309,9 @@ static void voice_play_status(unsigned singers, unsigned notes)
         text(voice_recording ? 182 : 172, 172, take, 1, voice_recording ? AMBER : DIM, BACK);
     }
 }
-/* Where syllable k of the line shows: from its consonants before its vowel
- * (back to the last syllable's vowel or the word's start). */
-static unsigned voice_lyric_onset(const char *line, unsigned k)
-{
-    unsigned p = voice_lyric_plan[k].index, floor = k ? voice_lyric_plan[k - 1U].index + 1U : 0U;
-    while (p > floor) {
-        char c = (char)(line[p - 1U] | 0x20);
-        if (c < 'a' || c > 'z' || c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') break;
-        --p;
-    }
-    return p;
-}
-/* SING mode: the line, the syllable a key would sing now marked, those sung
- * dimmed, and where the queue is. */
+/* SING mode: the line typed out as it is sung (the syllable sung last in the
+ * singer's colour), the one a key would sing now underlined and faint ahead
+ * of it, and where the queue is. */
 static void voice_line_draw(void)
 {
     if (paint_rendering && (paint_top >= BOX_BOTTOM - 2 || paint_top + PAINT_ROWS <= BOX_TOP + 2)) return;
@@ -1297,6 +1326,8 @@ static void voice_line_draw(void)
                              &notes, sizeof notes);
     sig = signature(sig, &voice_lyric_sig, sizeof voice_lyric_sig);
     sig = signature(sig, &voice_scale, sizeof voice_scale);
+    unsigned typed = voice_typed();
+    sig = signature(sig, &typed, sizeof typed);
     /* The TYPE rows share this area: make them redraw on return. */
     cache->voice_cache[4] = cache->voice_cache[5] = 0xfffffffeU;
     if (cache->voice_cache[3] == sig) return;
@@ -1311,10 +1342,12 @@ static void voice_line_draw(void)
         while (to > from + 1U && ((line[to - 1U] | 0x20) < 'a' || (line[to - 1U] | 0x20) > 'z')) --to;
         unsigned start = from > 6U ? from - 6U : 0U;
         if (n > VOICE_COLUMNS && start + VOICE_COLUMNS > n) start = n - VOICE_COLUMNS;
+        unsigned sung = voice_lyric_started ? voice_lyric_onset(line, voice_lyric_at) : n;
         for (unsigned c = 0; c < VOICE_COLUMNS && start + c < n; ++c) {
             unsigned i = start + c;
             char glyph[2] = {line[i], 0};
-            text(10U + c * 12U, 130, glyph, 2, i < from ? DIM : i < to ? mark : TEXT, BACK);
+            if (i < typed) text(10U + c * 12U, 130, glyph, 2, i >= sung ? mark : TEXT, BACK);
+            else if (i >= from && i < to) text(10U + c * 12U, 130, glyph, 2, PANEL, BACK);
         }
         unsigned end = to < start + VOICE_COLUMNS ? to : start + VOICE_COLUMNS;
         if (end > from) paint_fill(10U + (from - start) * 12U, 146, (end - from) * 12U - 2U, 2, mark);

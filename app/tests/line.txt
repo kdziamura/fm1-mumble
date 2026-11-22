@@ -65,6 +65,8 @@ wait 100
 expect lyric 0
 expect lyric_next 1
 shot line-sung.png
+# The typewriter has typed the line out as far as it was sung ("hey ").
+expect typed 4
 # FX: from the top; the next key sings HEY again.
 tap FX
 expect lyric_next 0
