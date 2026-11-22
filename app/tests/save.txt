@@ -1,0 +1,51 @@
+# What is kept over power-off: the line, a character's sound and mute, the
+# loop's notes and size, the scale. Saved 3 s after the last change (not while
+# a key is held or recording); a reboot brings it all back.
+wait 600
+tapkey 7
+tapkey 4
+tapkey 24
+expect length 3
+# SING: K1 moves HERO's PITCH; SCL C major; REC two notes into the loop.
+tap GLO
+expect mode 1
+turn K1 6
+wait 50
+expect edited 1
+tap SEL
+expect scale 1
+tap REC
+expect recording 1
+wait 300
+tapkey 0
+wait 400
+tapkey 4
+wait 100
+tap REC
+expect recording 0
+expect takes 2
+tap PLAY
+wait 100
+expect song 0
+# LOOP: HERO muted, the loop 4 bars at 100 BPM.
+tap GLO
+expect mode 2
+turn K1 1
+turn K3 1
+turn K4 -20
+wait 50
+expect mute 1
+expect bpm <120
+# Left alone 3 s: saved. A reboot: RAM gone, the flash read back.
+wait 3500
+expect store_writes >0
+reboot
+wait 600
+expect mode 0
+expect length 3
+expect edited 1
+expect scale 1
+expect takes 2
+expect mute 1
+expect bpm <120
+shot save-reboot.png

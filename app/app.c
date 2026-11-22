@@ -155,6 +155,8 @@ void app_say(const char *a, const char *b)
 }
 
 #ifdef PLAT_HOST
+/* The host simulator's "reboot": RAM forgotten, as a power-off does. */
+void app_host_reboot(void) { voice_forget(); }
 /* The host simulator's checks: what the page is doing. */
 int app_expect(const char *what, int *got)
 {

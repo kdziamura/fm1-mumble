@@ -9,8 +9,8 @@
 #define APP_SPLASH_RGB RGB(60, 150, 250)
 #define APP_BLOCK 256u                   /* frames per audio block: two of the engine's 128 */
 
-/* the store: the panel calibration (the platform's), and the app's settings (the cast's lines and sounds: a later
- * milestone) */
+/* the store: the panel calibration (the platform's), and the app's settings (the line, the cast's sounds, the loop:
+ * mumble_screen.inc's struct voice_store) */
 enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_NOBJ };
 #define APP_STORE_MAP {0xFC000u, 0xDC000u}
 
@@ -26,3 +26,5 @@ void app_say(const char *a, const char *b);   /* a short message on the screen a
 /* the host simulator's checks (host/plat_host.c "expect") */
 #define APP_HOST_EXPECT
 int app_expect(const char *what, int *got);
+#define APP_HOST_REBOOT
+void app_host_reboot(void);              /* "reboot": the app forgets what RAM would, then boots from the flash */

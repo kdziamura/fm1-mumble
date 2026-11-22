@@ -19,6 +19,8 @@
  *       rewrite the flash under a voice);
  *   P7  a draw pass changes what it draws (the same state, two different
  *       screens) or the same input plays differently twice.
+ *   P8  let go and left alone (not recording), the state is not saved
+ *       within 3 s, or a power-off and on does not bring it back exactly.
  * And on the page's state, every frame:
  *   S1  every field is in its range and agrees with the others and with the
  *       lights (the line printable text of its length, the sequence grouped
@@ -152,6 +154,26 @@ int32_t plat_enc(int role)
     int32_t v = turned[role];
     turned[role] = 0;
     return v;
+}
+/* The store: one object, kept across a "power-off" (boot(1)), emptied by a
+ * fresh boot so every input starts from nothing saved. */
+static uint8_t store[PLAT_STORE_MAX];
+static int store_len = -1;
+static unsigned store_saves;
+int plat_store_load(uint32_t obj, void *dst, uint32_t max)
+{
+    if (obj != OBJ_SETTINGS || store_len < 0) return -1;
+    uint32_t n = (uint32_t)store_len < max ? (uint32_t)store_len : max;
+    memcpy(dst, store, n);
+    return (int)n;
+}
+int plat_store_save(uint32_t obj, const void *src, uint32_t len)
+{
+    if (obj != OBJ_SETTINGS || len > PLAT_STORE_MAX) fail("P8 a save the store cannot take");
+    memcpy(store, src, len);
+    store_len = (int)len;
+    ++store_saves;
+    return 0;
 }
 void plat_leds(uint32_t b, uint32_t k)
 {
@@ -565,9 +587,10 @@ static void check_panic(void)
     phase = was;
 }
 
-static void boot(void)
+static void boot(int keep_store)
 {
     phase = "boot";
+    if (!keep_store) store_len = -1, store_saves = 0;
 #ifndef FUZZ_ASAN_GLOBALS
     state_copy(__start_mumble_bss, pristine_bss, bss_size());
     state_copy(__start_mumble_data, pristine_data, data_size());
@@ -603,9 +626,10 @@ static void explain(const char *format, ...)
 }
 
 /* The input: ops of one byte and their arguments. */
+static void check_kept(void);
 static uint32_t play(const uint8_t *data, size_t size)
 {
-    boot();
+    boot(0);
     phase = "play";
     size_t at = 0;
 #define NEXT() (at < size ? data[at++] : 0u)
@@ -665,7 +689,32 @@ static uint32_t play(const uint8_t *data, size_t size)
     check_repaint();
     uint32_t result = audio_sum ^ sum(fb, sizeof fb) * 7u;
     if (size && data[0] & 1) check_panic();
+    check_kept();
     return result;
+}
+
+/* P8: let go and left alone (not recording), the state is saved within
+ * VOICE_SAVE_MS (or, never changed, is still the boot's), and a power-off and
+ * on brings exactly that back. */
+static void check_kept(void)
+{
+    static struct voice_store now, after;
+    if (voice_recording) return;
+    phase = "save";
+    held_buttons = held_keys = 0;
+    for (unsigned i = 0; i < (VOICE_SAVE_MS + 300u) / 16u; ++i) frame();
+    voice_store_fill(&now);
+    if (signature(0x5AFE, &now, sizeof now) != voice_kept_sig ||
+        (store_len >= 0 && (store_len != (int)sizeof now || memcmp(store, &now, sizeof now))))
+        fail("P8 the state was not saved 3 s after its last change");
+    if (!voice_store_valid(&now)) fail("P8 the state kept does not pass the load's checks");
+    unsigned saves = store_saves;
+    voice_forget();               /* (RAM lost, in either build) */
+    boot(1);
+    phase = "reload";
+    voice_store_fill(&after);
+    if (memcmp(&after, &now, sizeof now)) fail("P8 a power-off lost what was saved");
+    if (store_saves != saves) fail("P8 the boot saved again what it had just read");
 }
 
 /* The panel's buttons in the page's order and back: every combination. */

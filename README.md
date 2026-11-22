@@ -20,6 +20,7 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 | `app/tests/basic.txt` | Host simulator script: typing the shared line, a demo line, SING, the loop and LOOP mode's lanes; screenshots and a WAV |
 | `app/tests/line.txt` | Host simulator script: SING mode on a typed line, keys sharing the leading key's syllable, moving on after it, round the line, FX; a recorded note singing a new line typed while the loop plays; each pass from the line's top |
 | `app/tests/controls.txt` | Host simulator script: TYPE's cursor and letter knobs, EDIT a word back and held to clear, HOME's help card, EDIT with a knob putting a sound back, LOOP mode's knobs; screenshots of each |
+| `app/tests/save.txt` | Host simulator script: a line, a sound, a scale, a recorded loop, a mute and a tempo saved on their own and back after a reboot |
 | `app/tests/record.txt` | Host simulator script: a character as a mono synth, a chord shared out across the choir, recording per singer and playback, the metronome, EDIT clearing a singer, then the loop |
 | `tests/engine_test.c`, `tests/engine.sh` | The engine's host test: text analysis, timing, chords, the loop, the compressor, consonants, the voice's spectrum |
 | `tests/fuzz.c`, `tests/fuzz-seeds/` | libFuzzer harness and property checks over the app as the device builds it |
@@ -28,6 +29,10 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 ## Controls
 
 Hold **HOME** for a card of these on the screen; every button also says on the hint line what it just did.
+
+Everything you make is kept over power-off: the line, each character's sound, choir, mute and level, the loop and
+its size, the scale and the arpeggiator. It saves itself 3 s after the last change, once no key is held and nothing
+is recording.
 
 GLO steps through three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
 view: a lane of the loop for each character, the keys singing as in SING). In TYPE the keys' lights mark the vowels; in SING and
@@ -65,6 +70,7 @@ app/build/host/mumble_host app/tests/basic.txt app/build/host
 app/build/host/mumble_host app/tests/record.txt app/build/host
 app/build/host/mumble_host app/tests/line.txt app/build/host
 app/build/host/mumble_host app/tests/controls.txt app/build/host
+app/build/host/mumble_host app/tests/save.txt app/build/host
 base/.venv/bin/python base/tools/build.py app                    # app/build/mumble.fwsc
 ~~~
 
@@ -74,7 +80,7 @@ base/.venv/bin/python base/tools/build.py app                    # app/build/mum
 platform and plays each fuzz input as a performance from a fresh boot (the app's state is put back between inputs, so
 a crash file replays alone: `app/build/fuzz/mumble-fuzz CRASHFILE`). Besides memory errors and undefined behaviour it
 fails when a blit leaves the screen or its band buffer, a band buffer changes while its DMA is still sending it, the
-incremental redraw differs from a full repaint, an LED names a control the FM-1 lacks, HOME leaves the page, sound
+incremental redraw differs from a full repaint, the state left alone 3 s is not saved or a power-off loses it, an LED names a control the FM-1 lacks, HOME leaves the page, sound
 outlasts a panic by 3 s, or the same input plays differently twice. After every frame it also checks the page's
 state: each field in its range and agreeing with the others and the lights (S1), and the frame's change against a
 model of the controls (S2: REC flips the loop, GLO steps the mode, SELECT and ALGO move by their detents, a knob moves
@@ -108,7 +114,6 @@ The last measured device build (with consonants and glides, before the voice's t
 112,024 B of the 581 KB slot; RAM `.data`+`.bss` 73,568 of 98,304 B; RAM code 15,400 of 32,768 B; pool 84,484 of
 344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
 
-- **Nothing is saved.** The line, the loop and the sounds are lost at power-off (a store object is reserved for them).
 - **No clock.** The loop runs on its own BPM (MIDI clock is the plan).
 - **HOME does nothing**, and Bluetooth MIDI is off.
 

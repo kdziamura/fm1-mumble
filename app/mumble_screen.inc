@@ -231,6 +231,109 @@ static void voice_stop(void)
     voice_held = 0;
 }
 
+/* ------------------------------------------------------------------------
+ * What is kept over power-off (OBJ_SETTINGS): the line, each character's
+ * sound, choir, mute and level, the loop and its size, and the panel's
+ * settings. It is saved VOICE_SAVE_MS after the last change, once nothing is
+ * held or recording, and read back whole at power-on, or not at all when any
+ * of it is out of range.
+ * ---------------------------------------------------------------------- */
+enum { VOICE_STORE_MAGIC = 0x424D554DU /* "MUMB" */, VOICE_STORE_VERSION = 1, VOICE_SAVE_MS = 3000 };
+struct voice_store {
+    uint32_t magic;
+    uint16_t version, size;
+    char text[MUMBLE_TEXT + 1];
+    uint8_t length, cast, caps, demo, scale, arp, bars, bpm, seq_count;
+    int8_t octave;
+    struct voice_track tracks[MUMBLE_CAST];
+    struct mumble_note seq[VOICE_SEQ];
+    uint8_t seq_track[VOICE_SEQ];
+};
+_Static_assert(sizeof(struct voice_store) <= PLAT_STORE_MAX, "the kept state fits a store object");
+static struct voice_store voice_kept;               /* (the image saved or read: too big for the stack) */
+static uint32_t voice_kept_sig, voice_change_sig, voice_change_ms;
+static void voice_store_fill(struct voice_store *k)
+{
+    memset(k, 0, sizeof *k);
+    k->magic = VOICE_STORE_MAGIC;
+    k->version = VOICE_STORE_VERSION;
+    k->size = (uint16_t)sizeof *k;
+    memcpy(k->text, voice_text, voice_length);
+    k->length = (uint8_t)voice_length;
+    k->cast = (uint8_t)voice_cast, k->caps = (uint8_t)voice_caps, k->demo = (uint8_t)voice_demo;
+    k->scale = (uint8_t)voice_scale, k->arp = (uint8_t)voice_arp;
+    k->bars = (uint8_t)voice_bars, k->bpm = (uint8_t)voice_bpm, k->octave = (int8_t)voice_octave;
+    memcpy(k->tracks, voice_tracks, sizeof voice_tracks);
+    k->seq_count = (uint8_t)voice_seq_count;
+    memcpy(k->seq, voice_seq, voice_seq_count * sizeof voice_seq[0]);
+    memcpy(k->seq_track, voice_seq_track, voice_seq_count);
+}
+/* All of it in range, or none of it is used. */
+static unsigned voice_store_valid(const struct voice_store *k)
+{
+    if (k->magic != VOICE_STORE_MAGIC || k->version != VOICE_STORE_VERSION || k->size != sizeof *k) return 0;
+    if (k->length > MUMBLE_TEXT || k->text[k->length]) return 0;
+    for (unsigned i = 0; i < k->length; ++i)
+        if ((unsigned char)k->text[i] < 32U || (unsigned char)k->text[i] > 126U) return 0;
+    if (k->cast >= MUMBLE_CAST || k->caps > 1 || k->demo >= VOICE_LINES || k->scale >= VOICE_SCALES || k->arp > 1 ||
+        (k->bars != 1 && k->bars != 2 && k->bars != 4 && k->bars != 8) || k->bpm < 40 || k->bpm > 240 ||
+        k->octave < -2 || k->octave > 2 || k->seq_count > VOICE_SEQ)
+        return 0;
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
+        const struct voice_track *t = &k->tracks[i];
+        if (t->choir > 1 || t->mute > 1 || t->level > 100) return 0;
+        for (unsigned p = 0; p < MUMBLE_PARAMS; ++p)
+            if (t->sound.value[p] < mumble_params[p].min || t->sound.value[p] > mumble_params[p].max) return 0;
+    }
+    for (unsigned n = 0; n < k->seq_count; ++n) {
+        const struct mumble_note *q = &k->seq[n];
+        if (k->seq_track[n] >= MUMBLE_CAST || (n && k->seq_track[n] < k->seq_track[n - 1U])) return 0;
+        if (q->note > 127U || q->len_ms < 30U || q->shout > 1U || q->slot >= MUMBLE_SYLLABLES || q->bend < -24 || q->bend > 24)
+            return 0;
+    }
+    return 1;
+}
+static void voice_store_load(void)
+{
+    if (plat_store_load(OBJ_SETTINGS, &voice_kept, sizeof voice_kept) != (int)sizeof voice_kept ||
+        !voice_store_valid(&voice_kept))
+        return;
+    const struct voice_store *k = &voice_kept;
+    memcpy(voice_text, k->text, k->length + 1U);
+    voice_length = voice_cursor = k->length;
+    voice_cast = k->cast, voice_caps = k->caps, voice_demo = k->demo, voice_scale = k->scale, voice_arp = k->arp;
+    voice_bars = k->bars, voice_bpm = k->bpm, voice_octave = k->octave;
+    memcpy(voice_tracks, k->tracks, sizeof voice_tracks);
+    voice_seq_count = k->seq_count;
+    memcpy(voice_seq, k->seq, sizeof voice_seq);
+    memcpy(voice_seq_track, k->seq_track, sizeof voice_seq_track);
+}
+/* Each frame: a change is saved once it has stood VOICE_SAVE_MS, with no key
+ * held and nothing recording (a performance is not interrupted). */
+static void voice_store_frame(uint32_t now)
+{
+    voice_store_fill(&voice_kept);
+    uint32_t sig = signature(0x5AFE, &voice_kept, sizeof voice_kept);
+    if (sig == voice_kept_sig) return;
+    if (sig != voice_change_sig) { voice_change_sig = sig; voice_change_ms = now; return; }
+    if (now - voice_change_ms < VOICE_SAVE_MS || voice_held || voice_recording) return;
+    if (plat_store_save(OBJ_SETTINGS, &voice_kept, sizeof voice_kept) == 0) voice_kept_sig = sig;
+    else { voice_notice("COULD NOT SAVE: TRYING AGAIN"); voice_change_ms = now; }
+}
+
+static void voice_close(void);
+/* Power-off, as far as RAM goes: the page starts over (and loads what was
+ * kept) at the next voice_open. */
+static void voice_forget(void)
+{
+    voice_close();
+    voice_ready = 0;
+    voice_set_text("");
+    voice_seq_count = 0;
+    voice_cast = voice_caps = voice_demo = voice_scale = voice_arp = 0;
+    voice_bars = 2, voice_bpm = 120, voice_octave = 0;
+}
+
 static void voice_open(void)
 {
     if (!voice_ready) {
@@ -245,7 +348,9 @@ static void voice_open(void)
         voice_set_text("");
         voice_seq_count = 0;
         voice_cast = 0;
-        if (frame_views[0].tempo) voice_bpm = frame_views[0].tempo;
+        voice_store_load();
+        voice_store_fill(&voice_kept);
+        voice_kept_sig = voice_change_sig = signature(0x5AFE, &voice_kept, sizeof voice_kept);
         voice_ready = 1;
     }
     voice_page = 0;
@@ -903,6 +1008,7 @@ static uint32_t voice_button_bits(void)
 static void voice_frame(uint32_t now)
 {
     mumble_status(&voice_now);
+    voice_store_frame(now);
     /* The audio task adopts a song a block later: only a song that was
      * heard playing can be over. */
     if (voice_song == 1 && voice_now.song_ms >= 0) voice_song = 2;
