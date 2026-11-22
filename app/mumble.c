@@ -68,6 +68,17 @@ static inline __attribute__((always_inline)) float cos_approx(float x)
     return sign * (1.0f + y * (-0.5f + y * (1.0f / 24 + y * (-1.0f / 720 + y * (1.0f / 40320)))));
 }
 /* Smooth unit step on [0, 1]. */
+/* 1 / sqrt(x) for x > 0, to a part in 10^5: the bit guess and two Newton steps. */
+static inline __attribute__((always_inline)) float inv_sqrt(float x)
+{
+    union { float f; uint32_t u; } g = {x};
+    g.u = 0x5F3759DFU - (g.u >> 1);
+    float y = g.f;
+    y *= 1.5f - 0.5f * x * y * y;
+    y *= 1.5f - 0.5f * x * y * y;
+    return y;
+}
+
 static inline __attribute__((always_inline)) float smooth(float x)
 {
     if (x <= 0.0f) return 0.0f;
@@ -1051,17 +1062,31 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
                    kind == MUMBLE_NOISE_AFFRICATE ? 2205U : kind == MUMBLE_NOISE_BREATH ? 2646U : 0U;
     if (voiced) h->onset_len /= 2U;
     h->voice_from = !kind || voiced || !diction ? 0U : kind == MUMBLE_NOISE_BURST ? 1102U : h->onset_len * 4U / 5U;
-    h->noise_level = diction * (voiced ? 0.5f : 1.0f) * (kind == MUMBLE_NOISE_BURST ? 0.9f : 0.45f);
+    h->noise_level = diction * 0.45f;                                     /* (an h's breath) */
     for (unsigned w = 0; w < 2; ++w) {
         /* The noise's band: centre hz, a third of it wide (300 Hz at least). */
-        float hz = (float)(w ? s->coda_hz : s->onset_hz) * 100.0f * (0.8f + 0.2f * tube);
+        unsigned at_hz = w ? s->coda_hz : s->onset_hz;
+        float hz = (float)at_hz * 100.0f * (0.8f + 0.2f * tube);
         if (hz < 500.0f) hz = 500.0f;
         if (hz > RATE * 0.42f) hz = RATE * 0.42f;
         float bw = hz * 0.35f < 300.0f ? 300.0f : hz * 0.35f;
         float r = exp2_approx(-PI * bw / RATE * 1.442695f);
-        h->nz_b[w] = 2.0f * r * cos_approx(2.0f * PI * hz / RATE);
-        h->nz_c[w] = -r * r;
-        h->nz_a[w] = 1.0f - r;
+        float b = 2.0f * r * cos_approx(2.0f * PI * hz / RATE), c = -r * r;
+        h->nz_b[w] = b;
+        h->nz_c[w] = c;
+        /* How loud, against the vowel, as speech has them: sh the loudest
+         * hiss, s and the bursts below it, f and th faint; a voiced one half. */
+        unsigned what = w ? s->coda : kind;
+        float level = 0.0f;
+        if (w ? what == MUMBLE_CODA_STOP : what == MUMBLE_NOISE_BURST) level = w ? 0.16f : 0.30f;
+        else if (w ? what == MUMBLE_CODA_HISS : what == MUMBLE_NOISE_HISS)
+            level = at_hz >= 65U ? 0.07f : at_hz <= 35U ? 0.30f : 0.22f;
+        else if (!w && what == MUMBLE_NOISE_AFFRICATE) level = 0.26f;
+        if (!w && voiced) level *= 0.5f;
+        /* The same loudness at any centre: divide out the resonator's power
+         * gain for white noise, (1 - c) / ((1 + c)((1 - c)^2 - b^2)). */
+        float power = (1.0f - c) / ((1.0f + c) * ((1.0f - c) * (1.0f - c) - b * b));
+        h->nz_a[w] = level * diction * inv_sqrt(power);
     }
     h->ny1 = h->ny2 = 0.0f;
     /* An ending's noise rings on past the voice: a stop's burst, a hiss. */
@@ -1235,7 +1260,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                 else {
                     float v = h->nz_a[band] * white + h->nz_b[band] * h->ny1 + h->nz_c[band] * h->ny2;
                     h->ny2 = h->ny1; h->ny1 = v;
-                    hiss = v * ne * h->noise_level * 3.0f;
+                    hiss = v * ne;
                 }
             }
             for (unsigned k = 0; k < 4; ++k) {

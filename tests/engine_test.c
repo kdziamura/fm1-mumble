@@ -439,10 +439,13 @@ int main(int argc, char **argv)
             struct mumble_sound snd = plain;
             if (v) { snd.onset = MUMBLE_NOISE_HISS; snd.onset_hz = 60; }
             mumble_press_sound(1, &snd, &one, 1, 0);
-            float last = 0.0f;
+            float last = 0.0f, last2 = 0.0f;   /* a second difference: weighted to the hiss's band */
             for (unsigned b = 0; b < 21; ++b) {
                 memset(z, 0, sizeof z); mumble_render(z);
-                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) { float x = z[i] / 8388608.0f, d = x - last; hf[v] += d * d; last = x; }
+                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) {
+                    float x = z[i] / 8388608.0f, d = x - 2.0f * last + last2;
+                    hf[v] += d * d; last2 = last; last = x;
+                }
             }
             mumble_release(1);
         }
