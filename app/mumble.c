@@ -528,6 +528,24 @@ static struct hum hums[VOICES];
 static float wobble_phase; /* shared 2 Hz wobble, so overlapping hums agree */
 static float glottal_flow[GLOTTAL + 1], glottal_slope[GLOTTAL + 1];
 static float mix[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK_FRAMES], room_send[FM1_BLOCK_FRAMES];
+/* A voice's top. Four cascaded formants fall 12 dB an octave each above F4,
+ * where a real vocal tract's fifth, sixth... keep it up: measured against a
+ * real voice's vowels (LJSpeech, the same sentences), MUMBLE's were 35 dB
+ * down at 4 kHz, 58 at 5, 90 at 8. So, as a cascade-parallel formant
+ * synthesiser does, the source itself (the glottal pulse and its breath,
+ * before the formants) is the top: high-passed at 3.5 kHz, gently
+ * low-passed from 9 kHz, it falls as a voice's does, 1-13 dB darker than
+ * speech from 4 to 10 kHz. (A shelf on the formants as well made a shouted
+ * chord's peaks outrun the compressor.) Each voice adds into the tap; the
+ * filters run once, on the mix. */
+#ifndef MUMBLE_TOP_EDGE
+#define MUMBLE_TOP_EDGE 0.2f
+#endif
+#ifndef MUMBLE_TOP_TAP
+#define MUMBLE_TOP_TAP 0.15f
+#endif
+static float tap_mix[FM1_BLOCK_FRAMES];
+static float tap_s1, tap_s2, tap_lp;
 
 /* Shared effects run at half rate (22.05 kHz) on 16-bit lines: a dark,
  * lo-fi echo and a small Schroeder room, about 16 KB together. */
@@ -572,6 +590,7 @@ CONTROL void mumble_init(void)
     memset(lives, 0, sizeof lives);
     pressed.count = 0;
     memset(hums, 0, sizeof hums);
+    tap_s1 = tap_s2 = tap_lp = 0.0f;
     memset(echo_line, 0, sizeof echo_line);
     memset(comb_line, 0, sizeof comb_line);
     memset(allpass_line, 0, sizeof allpass_line);
@@ -1231,7 +1250,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
             uint32_t at = (uint32_t)h->pos;
             if (at >= h->frames) { h->active = 0; break; }
             int32_t pv = (int32_t)(at - h->voice_from);
-            float y = 0.0f;
+            float y = 0.0f, tap = 0.0f;
             if (pv >= 0 && (uint32_t)pv < h->dur) {
                 h->phase += inc * h->period;
                 if (h->phase >= 1.0f) {
@@ -1246,13 +1265,17 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                 float frac = x - (float)n;
                 float flow = glottal_flow[n] + (glottal_flow[n + 1] - glottal_flow[n]) * frac;
                 float slope = glottal_slope[n] + (glottal_slope[n + 1] - glottal_slope[n]) * frac;
-                float source = slope * 0.25f * h->amp;
+                float source = slope * 0.25f * h->amp, plain = source;
                 /* EFFORT: the closure's edge (derivative) mixed in, or the source softened. */
                 float prior = h->last_bright;
                 h->last_bright = source;
                 if (h->edge > 0.0f) source += h->edge * 8.0f * (source - prior);
                 else h->soft += 0.25f * (source - h->soft), source += -h->edge * (h->soft - source);
-                y = source + noise(&h->noise) * h->air * 0.5f * (0.4f + 0.6f * flow);
+                float breath = noise(&h->noise) * h->air * 0.5f * (0.4f + 0.6f * flow);
+                y = source + breath;
+                /* The top's: with some of EFFORT's edge (a pushed voice is brighter up
+                 * there too; all of it, and a shouted chord's spikes outrun the compressor). */
+                tap = plain + MUMBLE_TOP_EDGE * (source - plain) + breath;
             }
             /* The consonants' noise: the onset's at first, then the ending's. */
             float hiss = 0.0f, ne = 0.0f;
@@ -1309,6 +1332,9 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
                 out = h->crushed;
             }
             mix[i] += out;
+            /* The source's top (mumble_render); a radio's or a crushed voice
+             * keeps its own lo-fi one. */
+            if (h->radio <= 0.0f && h->levels <= 0.0f) tap_mix[i] += tap * env * h->gain;
             echo_send[i] += out * h->echo;
             room_send[i] += out * h->room;
         }
@@ -1475,8 +1501,8 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         if (!tail_frames && !clicking) return;
     }
     /* volatile keeps these loops: no libc memset from audio code. */
-    volatile float *dry = mix, *echo = echo_send, *room = room_send;
-    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) dry[i] = echo[i] = room[i] = 0.0f;
+    volatile float *dry = mix, *echo = echo_send, *room = room_send, *tap = tap_mix;
+    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) dry[i] = echo[i] = room[i] = tap[i] = 0.0f;
     unsigned loudest = VOICES;
     float loud = 0.0f, track_loud[MUMBLE_CAST];
     uint8_t track_vowel[MUMBLE_CAST];
@@ -1512,6 +1538,15 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         status_track = hums[loudest].track;
     } else {
         status_vowel = MUMBLE_VOWELS; status_level = 0;
+    }
+    /* The voices' top: the source tap high-passed at 3.5 kHz (Butterworth,
+     * transposed direct form II), low-passed from 9 kHz, into the mix. */
+    for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
+        float x = tap_mix[i], y = 0.7017839f * x + tap_s1;
+        tap_s1 = -1.4035678f * x + 1.3125645f * y + tap_s2;
+        tap_s2 = 0.7017839f * x - 0.4945710f * y;
+        tap_lp += 0.723f * (y - tap_lp);
+        mix[i] += tap_lp * MUMBLE_TOP_TAP;
     }
     /* Effects at half rate; the wet signal steps between pairs. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; i += 2) {

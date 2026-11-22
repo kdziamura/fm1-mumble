@@ -582,6 +582,34 @@ int main(int argc, char **argv)
             mumble_release(1);
         }
         CHECK(ratio[1] > 2.0f * ratio[0], "effort brightens the voice (%.4f vs %.4f of it over 2.5 kHz)", ratio[1], ratio[0]);
+        /* The voice keeps a top: four cascaded formants alone leave a held A
+         * -56 dB over 6 kHz (most of it the soft clip's distortion); with the
+         * source's top, -37.5. */
+        {
+            SETTLE();
+            dry.value[MUMBLE_AIR] = 0;
+            dry.value[MUMBLE_EFFORT] = 50;
+            struct mumble_singer held = {&dry, 0, 57, 0};
+            mumble_press_sound(1, &plain, &held, 1, 0);
+            const double w0 = 2.0 * 3.14159265 * 6000.0 / FM1_SAMPLE_RATE, al = sin(w0) / 1.4, cw = cos(w0);
+            const double b0 = (1 + cw) / 2 / (1 + al), b1 = -(1 + cw) / (1 + al), a1 = -2 * cw / (1 + al), a2 = (1 - al) / (1 + al);
+            double st_[2][4] = {{0}};
+            float all = 0.0f, high = 0.0f;
+            for (unsigned b = 0; b < 200; ++b) {
+                memset(z, 0, sizeof z); mumble_render(z);
+                for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) {
+                    double x = z[i] / 8388608.0, y = x;
+                    for (unsigned f = 0; f < 2; ++f) {
+                        double *q = st_[f], o = b0 * y + b1 * q[0] + b0 * q[1] - a1 * q[2] - a2 * q[3];
+                        q[1] = q[0]; q[0] = y; q[3] = q[2]; q[2] = o; y = o;
+                    }
+                    if (b >= 50) { all += (float)(x * x); high += (float)(y * y); }
+                }
+            }
+            mumble_release(1);
+            float top_db = 10.0f * log10f(high / (all + 1e-12f) + 1e-12f);
+            CHECK(top_db > -47.0f && top_db < -30.0f, "the voice keeps a top (%.1f dB of it over 6 kHz)", top_db);
+        }
         SETTLE();
 #undef SETTLE
     }
