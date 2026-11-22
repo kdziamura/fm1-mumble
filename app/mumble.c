@@ -481,7 +481,7 @@ struct hum {
      * derivative mixed in, a sharper closure; < 0: a low-passed, softer source). */
     float bend, inv_porta, vibrato, vib_phase, edge, last_bright, soft, now_semis;   /* now_semis: the pitch as it is (status) */
     uint32_t porta;
-    float inv_dur, inv_attack, inv_release, inv_glide, wobble_phase, phase, inc, period, amp, semis, gain, air, jitter, wobble, pitch;
+    float inv_dur, inv_attack, inv_release, inv_glide, wobble_phase, wobble_rate, phase, inc, period, amp, semis, gain, air, jitter, wobble, pitch;
     float fall, fade;            /* per frame: pitch fall (semitones) and level fade */
     float start[4], target[4], radius[4], y1[4], y2[4], a[4], b[4], c[4], last;
     /* Effects: crush (hold + quantise), radio (band-pass + drive), sends. */
@@ -530,7 +530,7 @@ static float mix[FM1_BLOCK_FRAMES], mix_r[FM1_BLOCK_FRAMES], echo_send[FM1_BLOCK
 /* The band across the stereo field: each track at its place, left to right
  * (constant power, at most 60 % out, the middle at full level both sides);
  * the shared echo and room come back in the middle. */
-static float pan_gain[MUMBLE_CAST][2];
+static float pan_gain[MUMBLE_CAST][2], pan_goal[MUMBLE_CAST][2];   /* (gains glide to the goal a block at a time) */
 /* A voice's top. Four cascaded formants fall 12 dB an octave each above F4,
  * where a real vocal tract's fifth, sixth... keep it up: measured against a
  * real voice's vowels (LJSpeech, the same sentences), MUMBLE's were 35 dB
@@ -609,8 +609,8 @@ CONTROL void mumble_init(void)
     for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
         float place = ((float)t - 0.5f * (MUMBLE_CAST - 1)) / (0.5f * (MUMBLE_CAST - 1)) * 0.6f;
         float angle = (place + 1.0f) * 0.25f * PI;
-        pan_gain[t][0] = 1.41421356f * cos_approx(angle);
-        pan_gain[t][1] = 1.41421356f * cos_approx(angle - 0.5f * PI);
+        pan_gain[t][0] = pan_goal[t][0] = 1.41421356f * cos_approx(angle);
+        pan_gain[t][1] = pan_goal[t][1] = 1.41421356f * cos_approx(angle - 0.5f * PI);
     }
     memset(echo_line, 0, sizeof echo_line);
     memset(comb_line, 0, sizeof comb_line);
@@ -821,6 +821,18 @@ CONTROL int mumble_type(unsigned track, const char *text, unsigned length, const
     s->voice[track] = *voice;
     live_request = (uint8_t)slot;
     return 1;
+}
+
+/* Where each track sits, -100 (left) .. 100 (right), at constant power; the
+ * audio glides there over some 50 ms, so a move does not click. */
+CONTROL void mumble_pan(const int8_t place[MUMBLE_CAST])
+{
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t) {
+        int p = place[t] < -100 ? -100 : place[t] > 100 ? 100 : place[t];
+        float angle = ((float)p * 0.01f + 1.0f) * 0.25f * PI;
+        pan_goal[t][0] = 1.41421356f * cos_approx(angle);
+        pan_goal[t][1] = 1.41421356f * cos_approx(angle - 0.5f * PI);
+    }
 }
 
 CONTROL void mumble_cut(void)
@@ -1184,6 +1196,8 @@ static FM1_AUDIO_CODE struct hum *hum_start(const struct mumble_syllable *s, con
     h->gain = (float)s->gain * (0.5f / 64.0f);
     h->jitter = (float)v->value[MUMBLE_JITTER] * 0.01f;
     h->wobble = (float)v->value[MUMBLE_WOBBLE] * 0.01f;
+    /* SPEED: how fast the wobble goes (2 Hz at 100%), as it sets how fast a line is said. */
+    h->wobble_rate = (float)(v->value[MUMBLE_SPEED] ? v->value[MUMBLE_SPEED] : 100U) * (0.02f / RATE);
     /* CRUSH: hold each sample 1..9 frames and quantise to 12..3 bits. */
     unsigned crush = v->value[MUMBLE_CRUSH];
     h->crush_hold = (uint8_t)(1U + crush / 12U);
@@ -1261,7 +1275,7 @@ static FM1_AUDIO_CODE void hum_render(struct hum *h, unsigned frames)
         float wp = h->wobble_phase;
         wp -= (float)(int)wp;
         float q = wp < 0.5f ? wp : wp - 0.5f, wave = 16.0f * q * (0.5f - q);
-        h->wobble_phase = wp + (float)run * (2.0f / RATE);
+        h->wobble_phase = wp + (float)run * h->wobble_rate;
         if (wp >= 0.5f) wave = -wave;
         float semis = h->semis - h->fall * t + h->wobble * wave;
         if (h->porta && t < (float)h->porta) semis += h->bend * (1.0f - smooth(t * h->inv_porta));
@@ -1528,6 +1542,8 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
     }
     wobble_phase += (float)FM1_BLOCK_FRAMES * (2.0f / RATE);
     if (wobble_phase >= 1.0f) wobble_phase -= 1.0f;
+    for (unsigned t = 0; t < MUMBLE_CAST; ++t)
+        for (unsigned c = 0; c < 2; ++c) pan_gain[t][c] += (pan_goal[t][c] - pan_gain[t][c]) * 0.15f;
     if (any) tail_frames = FM1_SAMPLE_RATE * 3U;  /* longest echo/room tail */
     else if (tail_frames > FM1_BLOCK_FRAMES) tail_frames -= FM1_BLOCK_FRAMES;
     else tail_frames = 0;

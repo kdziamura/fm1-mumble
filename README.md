@@ -44,9 +44,12 @@ size, the scale and its root, the arpeggiator and auto-chord. It saves itself 3 
 a second (the loop stopped, nothing sounding or held): writing the flash holds the whole FM-1 for a moment, so it
 never happens during a performance. Change something while the loop plays and it is saved when you stop.
 
-The band is spread across the stereo field, each character at their own place from left (HERO) to right (GHOST).
-The shared echo and room duck under the voices, so they fill the gaps rather than blur the singing; a rolled voice
-adds only a little of either. Consonants are bright and crisp before a vowel, a percussive attack, and softer as an
+The band is spread across the stereo field: those who sing (the choir, and anyone with unmuted notes in the loop), in
+the cast's order, each in the middle of their share of it. One alone is in the middle, two at a quarter and three
+quarters, three at a sixth, a half and five sixths, and so on, gliding there as the band changes. The shared echo and
+room duck under the voices, so they fill the gaps rather than blur the singing; a rolled voice adds only a little of
+either, and hardly any WOBBLE. SPEED sets how fast a character talks in TYPE and how fast their WOBBLE goes (2 Hz at
+100 %). Consonants are bright and crisp before a vowel, a percussive attack, and softer as an
 ending; in a chord only the leading singer sings them, the others the vowel alone.
 
 The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the top on the clock, its tempo sizes it
@@ -72,8 +75,8 @@ LOOP a key is lit while it is held.
 | LFO | A random syllable at the cursor (however long it is held) | A new voice rolled for the selected character; held 1 s: for everyone | As in SING |
 | ENV | The selected character's own voice back; held 1 s: everyone's | | |
 | ARP | The arpeggiator on or off (ARP lit; LOOP's ARP tab sets it) | The keys held sung one at a time in the pattern (on the loop's time while it runs), round the choir, a syllable each | As in SING |
-| SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it) | A key sings a chord built up the scale (no scale: major on the root), a note a singer: the choir first, then others join so the chord is whole | As in SING |
-| GLO | The system screen, open or closed: the audio's load (now and the most since boot), dropouts, the battery, how long the FM-1 has been on, the MIDI clock. There EDIT twice resets everything to the first boot | | |
+| SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it) | A key sings a chord built up the scale (no scale: major on the root), a note a singer: as many of its notes, from the root up, as the choir has singers (one alone: the root) | As in SING |
+| GLO | The system screen, open or closed: the audio's load (now and the most since boot), dropouts, the battery, how long the FM-1 has been on, the MIDI clock. There EDIT tapped, then held 3 s, resets everything to the first boot | | |
 | SAVE | The character in or out of the choir | | |
 | PLAY / REC | The loop on or off / record into it (from TYPE: to SING first). With the loop stopped REC waits, blinking, and the first key starts the loop and the recording | | |
 

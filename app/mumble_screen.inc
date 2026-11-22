@@ -19,7 +19,7 @@
  *   PLAY loop on/off   REC record (from TYPE: to SING first; the loop stopped,
  *        it waits, lit blinking, and starts with the first key)   GLO the mode
  *   SELECT character   ALGO mode   PRESET page (SING) or tab (LOOP)   SAVE choir
- *   GLO   the system screen (load, battery, EDIT twice: reset)   HOME held: help
+ *   GLO   the system screen (load, battery; EDIT, then held 3 s: reset)   HOME held: help
  *   ARP   the arpeggiator (a tap, as it is let go): where the keys sing, the
  *         keys held are sung one at a time (on the loop's time while it runs),
  *         round the choir, a syllable each. Held, the knobs set it: K1 the
@@ -216,6 +216,7 @@ enum { CHORD_SHAPES = sizeof voice_chord_sizes, CHORD_SPREADS = 3 };
 static unsigned voice_chord, voice_chord_shape, voice_chord_inversion, voice_chord_spread;
 static int32_t voice_arp_index = -1;
 static uint32_t voice_arp_t0, voice_arp_off, voice_arp_dice = 0x2545F491U;
+static int8_t voice_pans[MUMBLE_CAST];   /* where the band was put (INT8_MIN: not yet told) */
 /* Notes in the sequence for track t (all of them for MUMBLE_CAST). */
 static unsigned voice_notes_of(unsigned t)
 {
@@ -424,8 +425,11 @@ static void voice_faces_update(void)
 
 /* The system screen (GLO): the audio's load (now and the most since boot),
  * dropouts, the battery, how long it has been on, the store, the clock;
- * snapshotted every half second on the control side. EDIT twice there
- * resets everything (voice_resets counts them, for the tests). */
+ * snapshotted every half second on the control side. There EDIT tapped,
+ * then held 3 s, resets everything (voice_resets counts them, for the
+ * tests): voice_reset_armed 1 after the tap (for 3 s), 2 while it is held,
+ * 3 once it has reset (until EDIT is let go). */
+enum { VOICE_RESET_MS = 3000 };
 static unsigned voice_system, voice_reset_armed, voice_resets;
 static uint32_t voice_reset_until, voice_sys_ms;
 static struct { uint32_t cpu, cpu_peak, xruns, up_s; int battery, raw, charging, sync; } voice_sys;
@@ -491,6 +495,7 @@ static void voice_open(void)
 {
     if (!voice_ready) {
         mumble_init();
+        voice_pans[0] = INT8_MIN;
         for (unsigned i = 0; i < MUMBLE_CAST; ++i) {
             struct voice_track *t = &voice_tracks[i];
             t->sound = mumble_cast[i].voice;
@@ -680,6 +685,10 @@ static void voice_reroll(unsigned who)
         const struct mumble_param_info *info = &mumble_params[p];
         unsigned span = info->max - info->min + 1U;
         if (p == MUMBLE_ECHO || p == MUMBLE_ROOM) span = span * 3U / 10U;   /* (a roll adds a little echo and room, not a cave) */
+        if (p == MUMBLE_WOBBLE) {                                           /* (and hardly a wobble: 0..10%) */
+            t->sound.value[p] = (uint16_t)(voice_random() % 11U);
+            continue;
+        }
         unsigned r = info->min + voice_random() % span;
         t->sound.value[p] = (uint16_t)((mumble_cast[who].voice.value[p] + r) / 2U);
     }
@@ -1011,18 +1020,15 @@ static void voice_sing(const struct fm1_controls *c, uint32_t down)
         voice_held |= 1U << key;
         voice_key_order[key] = ++voice_order;
         voice_lyric_take(key);
-        if (voice_chord) {                         /* a chord: its notes to the choir free first, then guests */
+        if (voice_chord) {   /* a chord: as many of its notes, from the root up, as the choir has singers (free ones first) */
             int8_t shift[4];
             uint8_t who[4];
             unsigned n = voice_chord_shifts(key, shift), got = 0;
-            for (unsigned pass = 0; pass < 3 && got < n; ++pass)
+            for (unsigned pass = 0; pass < 2 && got < n; ++pass)
                 for (unsigned i = 0; i < MUMBLE_CAST && got < n; ++i) {
                     unsigned w = (voice_cast + i) % MUMBLE_CAST, taken = 0;
                     for (unsigned k = 0; k < got; ++k) taken |= who[k] == w;
-                    if (taken) continue;
-                    if (pass == 0 ? voice_in_choir(w) && !voice_sings[w]
-                                  : pass == 1 ? !voice_in_choir(w) && !voice_sings[w] : voice_in_choir(w))
-                        who[got++] = (uint8_t)w;
+                    if (!taken && voice_in_choir(w) && (pass || !voice_sings[w])) who[got++] = (uint8_t)w;
                 }
             for (unsigned k = 0; k < got; ++k) voice_note_off(who[k]);
             voice_notes_on(who, shift, got, key);
@@ -1225,15 +1231,24 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
         } else if (edit) voice_reset(i);
         else voice_edit(i, fm_encoder_delta(2 + i, turned));    /* SING: the page's sounds; LOOP: the loop */
     }
-    /* GLO: the system screen, open or closed; there, EDIT twice resets everything. */
+    /* GLO: the system screen, open or closed; there, EDIT tapped and then
+     * held 3 s resets everything. */
     if (system && (pressed & BUTTON(EDIT))) {
-        if (voice_reset_armed && (int32_t)(frame_time - voice_reset_until) < 0) voice_reset_everything();
-        else voice_reset_armed = 1, voice_reset_until = frame_time + 3000U, voice_notice("PRESS EDIT AGAIN: RESET EVERYTHING");
+        if (voice_reset_armed == 1 && (int32_t)(frame_time - voice_reset_until) < 0) voice_reset_armed = 2;
+        else voice_reset_armed = 0;
+    }
+    if (system && voice_reset_armed == 2) {
+        if (!edit) voice_reset_armed = 0, voice_notice("NO RESET: HOLD EDIT 3 S");
+        else if (frame_time - voice_edit_since >= VOICE_RESET_MS) voice_reset_everything(), voice_reset_armed = 3;
+    } else if (voice_reset_armed == 3) {
+        if (!edit) voice_reset_armed = 0;        /* (done: let go, and nothing more) */
+    } else if (system && voice_edit_down && !edit && !voice_reset_armed) {
+        voice_reset_armed = 1, voice_reset_until = frame_time + 3000U, voice_notice("NOW HOLD EDIT 3 S: RESET ALL");
     }
     if (pressed & BUTTON(GLO)) {
         voice_system ^= 1U;
         voice_reset_armed = 0;
-        voice_notice(voice_system ? "SYSTEM: EDIT TWICE RESETS ALL" : "SYSTEM CLOSED");
+        voice_notice(voice_system ? "SYSTEM: EDIT, THEN HOLD IT: RESET" : "SYSTEM CLOSED");
     }
     if ((pressed & BUTTON(REC)) && !voice_play) voice_mode_to(VOICE_SING);  /* REC sings: to SING mode */
     if (pressed & BUTTON(FX)) {                  /* FX: back to the top (TYPE: the cursor to the line's start) */
@@ -1335,6 +1350,23 @@ static uint32_t voice_button_bits(void)
            ((voice_recording | (voice_rec_armed & ((frame_time / 250U) & 1U))) << REC) | (voice_arp << ARP) | (voice_chord << SEQ) | ((voice_scale != 0) << SCL);
 }
 
+/* The band across the stereo field: those who sing (the choir, and anyone
+ * with notes in the loop not muted), in the cast's order, each in the middle
+ * of their share of it: one in the middle, two at a quarter and three
+ * quarters, three at a sixth, a half, five sixths ... (over 80% of the
+ * width to each side); the silent in the middle. */
+static void voice_pan_frame(void)
+{
+    unsigned heard = 0, n = 0;
+    for (unsigned k = 0; k < voice_seq_count; ++k)
+        if (voice_seq_track[k] < MUMBLE_CAST && voice_tracks[voice_seq_track[k]].level) heard |= 1U << voice_seq_track[k];
+    for (unsigned i = 0; i < MUMBLE_CAST; ++i) heard |= (unsigned)voice_in_choir(i) << i, n += (heard >> i) & 1U;
+    int8_t place[MUMBLE_CAST] = {0};
+    for (unsigned i = 0, k = 0; i < MUMBLE_CAST; ++i)
+        if ((heard >> i) & 1U) place[i] = (int8_t)((int)(2U * k++ + 1U) * 80 / (int)n - 80);
+    if (memcmp(place, voice_pans, sizeof place)) memcpy(voice_pans, place, sizeof place), mumble_pan(place);
+}
+
 /* Control-side snapshot, taken once per frame before marking damage: the
  * loop, FM1 sync, the line, edits to republish, and the pitch trace. */
 static void voice_frame(uint32_t now)
@@ -1342,6 +1374,7 @@ static void voice_frame(uint32_t now)
     mumble_status(&voice_now);
     voice_store_frame(now);
     voice_system_frame(now);
+    voice_pan_frame();
     voice_faces_update();
     /* The audio task adopts a song a block later: only a song that was
      * heard playing can be over. */
@@ -1927,7 +1960,7 @@ static void voice_system_draw(void)
     decimal(value, (int)(voice_sys.up_s % 60U), 2), strcat(row, value);
     strcat(row, voice_sys.sync ? "  MIDI CLOCK: SYNC" : "  NO MIDI CLOCK");
     text(10, 166, row, 1, TEXT, BACK);
-    text(10, 176, "EDIT TWICE: RESET EVERYTHING", 1, DIM, BACK);
+    text(10, 176, "RESET ALL: EDIT, THEN HOLD IT 3 S", 1, DIM, BACK);
 }
 
 /* A knob: its name, its value (unit small after it), and over them a bar of
@@ -2051,12 +2084,15 @@ static __attribute__((noinline)) void voice_draw(void)
     const char *keep = voice_edit_clears_line() ? "KEEP HOLDING: CLEAR THE LINE" : "KEEP HOLDING: CLEAR THE LOOP";
     const struct voice_hold *holds[2] = {&voice_lfo_hold, &voice_env_hold};
     static const char *const keeps[2] = {"KEEP HOLDING: ROLL EVERYONE", "KEEP HOLDING: EVERYONE'S OWN VOICE"};
+    uint32_t hold_ms = VOICE_HOLD_MS;
+    if (voice_system && voice_reset_armed == 2 && voice_edit_down)
+        holding = 1, keep = "KEEP HOLDING: RESET EVERYTHING", hold_ms = VOICE_RESET_MS;
     for (unsigned k = 0; k < 2 && !holding; ++k)
         if (holds[k]->down && !holds[k]->spent && (k || voice_play) && frame_time - holds[k]->since >= 150U)
             holding = 1, held = frame_time - holds[k]->since, keep = keeps[k];
     const char *hint = holding ? keep
                      : notice ? notice : voice_tips[voice_mode];
-    if (holding) progress = (held >= VOICE_HOLD_MS ? VOICE_HOLD_MS : held) * 228U / VOICE_HOLD_MS;
+    if (holding) progress = (held >= hold_ms ? hold_ms : held) * 228U / hold_ms;
     uint32_t hint_sig = signature(1 + holding + (progress << 1), hint, (unsigned)strlen(hint));
     if (hint_sig != cache->hint_cache) {
         cache->hint_cache = hint_sig;

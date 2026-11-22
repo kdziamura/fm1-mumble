@@ -115,6 +115,25 @@ int main(int argc, char **argv)
     n = plan("make", 1, s);
     CHECK(n == 2, "open word keeps its final e (%u)", n);
 
+    /* mumble_pan places a track: HERO in the middle, then at the right. */
+    for (int place = 0; place <= 80; place += 80) {
+        mumble_init();
+        int8_t pans[MUMBLE_CAST] = {(int8_t)place};
+        mumble_pan(pans);
+        mumble_say(0, "la la la", 8, &mumble_cast[0].voice);
+        double sides[2] = {0, 0};
+        for (unsigned b = 0; b < 400; ++b) {
+            int32_t block[FM1_BLOCK_WORDS] = {0};
+            mumble_render(block);
+            for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
+                double l = block[2 * i] / 8388608.0, r = block[2 * i + 1] / 8388608.0;
+                sides[0] += l * l, sides[1] += r * r;
+            }
+        }
+        double ratio = sqrt(sides[1] / (sides[0] + 1e-12));
+        CHECK(place ? ratio > 2.0 : ratio > 0.95 && ratio < 1.05, "HERO panned to %d: right/left %.2f", place, ratio);
+    }
+
     /* Render each character through the audio path. */
     mumble_init();
     const char *dir = argc > 1 ? argv[1] : NULL;

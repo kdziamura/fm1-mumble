@@ -25,14 +25,16 @@
  * And on the page's state, every frame:
  *   S1  every field is in its range and agrees with the others and with the
  *       lights (the line printable text of its length, the sequence grouped
- *       by singer with its notes in range, one key per singer and
+ *       by singer with its notes in range, one key per singer, nobody
+ *       out of the choir singing, and
  *       none held unsung while a choir member is free, recording only in
  *       SING or LOOP, the metronome exactly while recording, sounds in
  *       range ...);
  *   S2  the frame did what a model of the controls says: SELECT turns the
  *       character, ALGO the mode (TYPE, SING, LOOP), PRESET SING's pages and
  *       LOOP's tabs, each by its detents; GLO opens and closes the system
- *       screen, where EDIT twice resets everything to the first boot; REC
+ *       screen, where EDIT tapped, then held 3 s, resets everything to the
+ *       first boot; REC
  *       records (from TYPE: to SING first; the loop stopped, it arms, and the
  *       first key starts the loop recording), PLAY starts or stops the loop,
  *       in SING a knob moves its parameter of the selected sound by the
@@ -245,7 +247,7 @@ static void check_state(void)
     if (voice_caps > 1 || voice_play > 1 || voice_song_dirty > 1 || voice_recording > 1 || voice_loop != 1)
         fail("S1 a flag is not 0 or 1 (or the loop not looping)");
     if (voice_song > 2) fail("S1 song state out of range");
-    if (voice_system > 1 || voice_reset_armed > 1) fail("S1 the system screen's state out of range");
+    if (voice_system > 1 || voice_reset_armed > 3) fail("S1 the system screen's state out of range");
     if (voice_bars != 1 && voice_bars != 2 && voice_bars != 4 && voice_bars != 8) fail("S1 bars not 1, 2, 4 or 8");
     if (voice_bpm < 40 || voice_bpm > 240) fail("S1 BPM out of 40..240");
     if (voice_octave < -2 || voice_octave > 2) fail("S1 octave out of -2..2");
@@ -259,6 +261,7 @@ static void check_state(void)
     for (unsigned who = 0; who < MUMBLE_CAST; ++who) {
         if (voice_sings[who] > MUMBLE_LETTERS) fail("S1 a character sings a key that does not exist");
         if (!voice_sings[who]) { choir_free |= voice_in_choir(who); continue; }
+        if (!voice_in_choir(who)) fail("S1 a character out of the choir sings (a chord takes the choir's only)");
         uint32_t key = 1u << (voice_sings[who] - 1u);
         if (!voice_play || !(voice_held & key)) fail("S1 a character sings a key not held in SING");
         if ((sung_keys & key) && !voice_chord) fail("S1 two characters sing one key (without auto-chord)");
@@ -401,7 +404,8 @@ static void step_after(void)
     /* The system screen's reset (EDIT twice there): everything as at the first
      * boot; the rest of the model has nothing to say about that frame. */
     if (voice_resets != before.resets) {
-        if (!before.system || !(pressed & BUTTON(EDIT))) fail("S2 a reset without EDIT on the system screen");
+        if (!before.system || !edit || now_ms - edit_since < VOICE_RESET_MS)
+            fail("S2 a reset but EDIT held 3 s on the system screen");
         if (voice_length != sizeof voice_first_line - 1u || memcmp(voice_text, voice_first_line, voice_length) ||
             voice_seq_count || voice_song || voice_recording || voice_scale || voice_chord || voice_arp)
             fail("S2 the reset left something as it was");

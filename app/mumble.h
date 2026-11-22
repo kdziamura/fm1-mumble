@@ -32,8 +32,8 @@ enum {
     MUMBLE_TUBE,   /* % vocal tract scale: <100 longer/deeper, >100 shorter */
     MUMBLE_MOUTH,  /* % jaw/lip opening */
     MUMBLE_AIR,    /* % breath noise */
-    MUMBLE_SPEED,  /* % letter rate */
-    MUMBLE_WOBBLE, /* % slow 2 Hz pitch wobble (100 = 1 semitone) */
+    MUMBLE_SPEED,  /* % letter rate, and the wobble's rate (2 Hz at 100) */
+    MUMBLE_WOBBLE, /* % slow pitch wobble, at SPEED's rate (100 = 1 semitone) */
     MUMBLE_JITTER, /* % per-period and per-syllable imperfection */
     MUMBLE_TUNE,   /* % intonation range */
     MUMBLE_CRUSH,  /* % sample-rate and bit reduction */
@@ -130,6 +130,7 @@ int mumble_aside(unsigned track, const char *text, unsigned length, const struct
 int mumble_type(unsigned track, const char *text, unsigned length, const struct mumble_voice *voice);
 /* Cut the live lane: drop the rest of its line and let what it sounds go
  * with a short release. The song plays on. */
+void mumble_pan(const int8_t place[MUMBLE_CAST]);   /* -100 left .. 100 right, a track each */
 void mumble_cut(void);
 /* Stop the song and the live lane and release every held letter. Effect
  * tails ring out. */
