@@ -168,8 +168,8 @@ which installers check, and the version string the FM-1 reports and the system s
 
 Releases are made on GitHub, with nothing to tag or write by hand:
 
-1. **Releases > Draft a new release**, and in **Choose a tag** type a new one, `v0.1.0` (GitHub makes the tag on
-   `main`). For a beta, `v0.2.0-beta1` and tick **Set as a pre-release**.
+1. **Releases > Draft a new release**, and in **Choose a tag** type a new one, `0.1.0` (no `v`; GitHub makes the tag
+   on `main`). For a beta, `0.2.0-beta1` and tick **Set as a pre-release**.
 2. **Generate release notes** (GitHub lists the changes since the last release), and **Publish release**.
 
 Publishing runs `.github/workflows/release.yml`: the shared FM-1 builder

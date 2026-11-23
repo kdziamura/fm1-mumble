@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: The release whose package the site installs (vX.Y.Z)
+        description: The release whose package the site installs (X.Y.Z, as 0.1.0)
         required: true
 
 permissions:
@@ -33,9 +33,9 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          [[ "$TAG" =~ ^v[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}(-[A-Za-z0-9]+)?$ ]]
+          [[ "$TAG" =~ ^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}(-[A-Za-z0-9]+)?$ ]]
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
