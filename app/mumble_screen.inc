@@ -1938,7 +1938,7 @@ static void voice_system_draw(void)
     cache->voice_cache[3] = sig;
     paint_fill(4, BOX_TOP + 2, 232, BOX_BOTTOM - BOX_TOP - 4, BACK);
     char row[48], value[12];
-    text(10, 126, "SYSTEM", 1, ACCENT, BACK);
+    text(10, 126, "SYSTEM  MUMBLE " APP_VERSION, 1, ACCENT, BACK);   /* (the release, DEV in a dev build) */
     strcpy(row, "AUDIO LOAD ");
     decimal(value, (int)voice_sys.cpu, 1), strcat(row, value), strcat(row, "%  MOST ");
     decimal(value, (int)voice_sys.cpu_peak, 1), strcat(row, value), strcat(row, "%");
