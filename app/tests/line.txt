@@ -3,8 +3,8 @@
 # that starts a syllable leads it: keys pressed while it is held sing the same
 # syllable; once it is let go, the next key moves on. FX goes back to the start.
 wait 600
-# (The FM-1 boots in SING; this script starts in TYPE: PRESET back one.)
-turn PRESET -1
+# (The FM-1 boots in SING; this script starts in TYPE: SELECT back one.)
+turn SELECT -1
 wait 50
 # The first line ("Our princess is in another castle!") cleared: EDIT held.
 expect length 34
@@ -32,7 +32,7 @@ tapkey 17
 tapkey 4
 expect length 17
 wait 800
-turn PRESET 1
+turn SELECT 1
 expect mode 0
 expect lyrics 4
 expect lyric 0
@@ -100,15 +100,15 @@ expect recording 0
 tapkey 2
 wait 100
 expect lyric 2
-turn PRESET -1
+turn SELECT -1
 tapkey 0
-turn PRESET 1
+turn SELECT 1
 wait 100
 expect lyric 0
 # The loop keeps no words: it sings the line as it is. A note recorded on
 # "ma" sings "moo" once the line is changed, while the loop plays on.
-turn PRESET 1
-turn PRESET 1
+turn SELECT 1
+turn SELECT 1
 expect mode 2
 # EDIT held a second clears the line, held again the loop.
 press EDIT
@@ -123,7 +123,7 @@ expect takes 0
 tapkey 12
 tapkey 0
 expect length 2
-turn PRESET 1
+turn SELECT 1
 expect mode 0
 # (The loop still plays: REC records at once.)
 tap REC
@@ -141,8 +141,8 @@ wait 3500
 expect sounding 1
 expect vowel 0
 # A new line, typed while the loop plays.
-turn PRESET 1
-turn PRESET 1
+turn SELECT 1
+turn SELECT 1
 tap OCT-
 tap OCT-
 expect length 0
@@ -163,7 +163,7 @@ tapkey 26
 tapkey 24
 tapkey 14
 tapkey 20
-turn PRESET 1
+turn SELECT 1
 tapkey 2
 tapkey 3
 expect lyric_next 2

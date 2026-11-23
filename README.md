@@ -57,7 +57,7 @@ The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the
 
 The first boot (and a reset) gives the line "Our princess is in another castle!", yours to change or clear.
 
-PRESET turns between three modes: **SING** (the keys sing the line; the mode at boot), **LOOP** (the multitrack view: a
+SELECT turns between three modes: **SING** (the keys sing the line; the mode at boot), **LOOP** (the multitrack view: a
 lane of the loop for each character, the keys singing as in SING) and **TYPE** (the keys type the line). ALGO turns
 SING's sound pages and LOOP's tabs. In TYPE the keys' lights mark the vowels; in SING and
 LOOP a key is lit while it is held.
@@ -65,8 +65,8 @@ LOOP a key is lit while it is held.
 | Control | SING | LOOP | TYPE |
 |---|---|---|---|
 | Keys | Sing the line a syllable at a time; held keys make a chord | As in SING | Type at the cursor |
-| SELECT | The character | | |
-| PRESET | The mode: SING (at boot), LOOP, TYPE | | |
+| SELECT | The mode: SING (at boot), LOOP, TYPE | | |
+| PRESET | The character | | |
 | ALGO | The sound page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | The tab the knobs set: MIX, ARP, CHORD, SCALE (tabs at the top) | — |
 | K1–K4 | The page's four sounds, shown with a bar of where each sits and a tick at the character's own | MIX: the character's level (0: muted), swing, bars, BPM. ARP: rate (1/4 .. 1/32, triplets), pattern (up, down, up-down, random, as played), octaves (1-3), gate (10-100 %). CHORD: the shape (triad, 7th, power, sus2, sus4, add9), inversion, spread (close, open, wide). SCALE: the root (C .. B), the scale | K1 the cursor, K2 the letter under it (at the end: a new one) |
 | EDIT | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that setting back | As in SING | A word back; held 1 s: clear the line, then the loop |

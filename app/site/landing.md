@@ -18,7 +18,7 @@ This is version {{VERSION}}. You install it at your own risk, and the installer 
 
 ## Three modes
 
-PRESET turns between them; ALGO turns SING's sound pages and LOOP's tabs, and SELECT picks the character.
+SELECT turns between them; ALGO turns SING's sound pages and LOOP's tabs, and PRESET picks the character.
 
 ![LOOP: a lane for each singer, the MIX tab's knobs below](img/screen-loop.png "LOOP")
 

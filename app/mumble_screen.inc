@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
 /* The VOICE page: the MUMBLE retro-game voice synthesizer.
  *
- * One line, sung by eight characters. PRESET turns between three modes
+ * One line, sung by eight characters. SELECT turns between three modes
  * (SING at boot, then LOOP, then TYPE):
  *   SING  keys sing the line a syllable at a time at their pitch, held while
  *         held. The key that starts a syllable leads it: keys pressed while
@@ -17,7 +17,7 @@
  * now, so a new line changes what the loop sings. Each pass of the loop sings
  * from the top of the line.
  *
- *   SELECT character   PRESET mode   ALGO page (SING) or tab (LOOP)   SAVE choir
+ *   PRESET character   SELECT mode   ALGO page (SING) or tab (LOOP)   SAVE choir
  *   PLAY loop on/off   REC record (from TYPE: to SING first; the loop stopped,
  *        it waits, lit blinking, the metronome counting, and starts with the first key)
  *   GLO   the system screen (load, battery; EDIT, then held 3 s: reset)   HOME held: help
@@ -71,22 +71,22 @@ static const char *const voice_tips[VOICE_MODES] = {"KEYS SING THE LINE  HOLD HO
 enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
 static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
     {"KEYS SING THE LINE  HELD: A CHORD",
-     "ALGO: PAGE  K1-K4 SOUND  PRESET: MODE",
+     "ALGO: PAGE  K1-K4 SOUND  SELECT: MODE",
      "OCT- OCT+ OCTAVE  FX: TOP  SCL: SCALE",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "ARP: ARPEGGIO  SEQ: AUTO-CHORD",
      "SAVE: CHOIR  LFO: ROLL  ENV: UNROLL"},
-    {"A LANE EACH  KEYS SING  PRESET: MODE",
+    {"A LANE EACH  KEYS SING  SELECT: MODE",
      "ALGO: TAB  MIX ARP CHORD SCALE",
      "EDIT+KNOB: AS IT WAS",
      "PLAY: LOOP  REC: RECORD  GLO: SYSTEM",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
-     "SELECT: WHO  SAVE: CHOIR"},
-    {"KEYS TYPE AT THE CURSOR  PRESET: MODE",
+     "PRESET: WHO  SAVE: CHOIR"},
+    {"KEYS TYPE AT THE CURSOR  SELECT: MODE",
      "K1 CURSOR  K2 LETTER  OCT- DELETE",
      "OCT+ CAPS  FX: START  LFO: SYLLABLE",
      "EDIT: A WORD BACK  HOLD: CLEAR",
-     "SELECT: WHO  SAVE: CHOIR  PLAY: LOOP",
+     "PRESET: WHO  SAVE: CHOIR  PLAY: LOOP",
      "REC: SING AND RECORD  GLO: SYSTEM"}};
 /* K2's letters in TYPE mode, round and round. */
 static const char voice_alphabet[] = "abcdefghijklmnopqrstuvwxyz ,.?!'-";
@@ -1198,10 +1198,10 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
     if (system) voice_edit_spent = 1;            /* (on the system screen EDIT is the reset's: no tap, no hold) */
     for (unsigned i = 0; i < 7; ++i)
         if (edit && c->encoders[i]) voice_edit_spent = 1;
-    if (c->encoders[0]) {
+    if (c->encoders[6]) {                        /* PRESET: the character */
         unsigned busy = voice_song || voice_held || voice_recording;
         voice_release_all();
-        voice_cast = (unsigned)((int)voice_cast + c->encoders[0] % MUMBLE_CAST + MUMBLE_CAST) % MUMBLE_CAST;
+        voice_cast = (unsigned)((int)voice_cast + c->encoders[6] % MUMBLE_CAST + MUMBLE_CAST) % MUMBLE_CAST;
         /* A greeting in the new voice, unless the loop plays (or keys, or a
          * recording): then it would talk over the music. */
         const char *hello = voice_greetings[voice_cast];
@@ -1209,12 +1209,12 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
             mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
         ++voice_lanes_version;
     }
-    /* The left knobs: SELECT the character (above), PRESET the mode, ALGO
+    /* The left knobs: PRESET the character (above), SELECT the mode, ALGO
      * SING's sound page or LOOP's tab. */
-    if (c->encoders[6]) {
+    if (c->encoders[0]) {
         static const char *const said[VOICE_MODES] = {"SING: KEYS SING THE LINE", "LOOP: A LANE FOR EACH SINGER",
                                                       "TYPE: KEYS TYPE THE LINE"};
-        voice_mode_to((unsigned)((int)voice_mode + c->encoders[6] % VOICE_MODES + VOICE_MODES) % VOICE_MODES);
+        voice_mode_to((unsigned)((int)voice_mode + c->encoders[0] % VOICE_MODES + VOICE_MODES) % VOICE_MODES);
         voice_notice(said[voice_mode]);
     }
     if (voice_mode == VOICE_LOOP) {

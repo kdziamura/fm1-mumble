@@ -4,10 +4,10 @@
 wait 600
 # SING: HERO, SISTER and KID in the choir; auto-chord on.
 tap SAVE
-turn SELECT 2
+turn PRESET 2
 wait 50
 tap SAVE
-turn SELECT 1
+turn PRESET 1
 wait 600
 tap SEQ
 # REC: waits for the first key, then a few chords into the loop.
@@ -34,14 +34,14 @@ wait 100
 tap REC
 expect recording 0
 # LOOP: a lane for each singer, the loop playing.
-turn PRESET 1
+turn SELECT 1
 wait 1500
 expect mode 1
 shot screen-loop.png
 tap PLAY
 wait 100
 # TYPE: the line at the cursor.
-turn PRESET 1
+turn SELECT 1
 wait 600
 expect mode 2
 shot screen-type.png

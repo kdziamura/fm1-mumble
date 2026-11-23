@@ -2,8 +2,8 @@
 # EDIT held, HOME's help card in each mode, EDIT with a knob putting a sound
 # back, and the knobs' bars in each mode.
 wait 600
-# (The FM-1 boots in SING; this script starts in TYPE: PRESET back one.)
-turn PRESET -1
+# (The FM-1 boots in SING; this script starts in TYPE: SELECT back one.)
+turn SELECT -1
 wait 50
 expect mode 2
 # The first line ("Our princess is in another castle!") cleared: EDIT held.
@@ -82,7 +82,7 @@ tapkey 4
 tapkey 17
 tapkey 4
 expect length 17
-turn PRESET 1
+turn SELECT 1
 expect mode 0
 press HOME
 wait 100
@@ -145,9 +145,9 @@ expect edited 1
 tap ENV
 wait 50
 expect edited 0
-# PRESET on to LOOP mode: the lanes; ALGO turns its tabs (the sound pages stay
+# SELECT on to LOOP mode: the lanes; ALGO turns its tabs (the sound pages stay
 # SING's). MIX: EDIT held with K4 turned puts the BPM back; K1 to 0 mutes.
-turn PRESET 1
+turn SELECT 1
 expect mode 1
 expect tab 0
 turn K4 5
@@ -231,9 +231,9 @@ expect singing 1
 key 0 up
 wait 50
 tap SAVE
-turn SELECT 1
+turn PRESET 1
 tap SAVE
-turn SELECT 1
+turn PRESET 1
 wait 50
 key 0 down
 wait 100
@@ -245,7 +245,7 @@ turn K1 1
 wait 50
 expect chord_shape 1
 tap SAVE
-turn SELECT 1
+turn PRESET 1
 wait 50
 key 0 down
 wait 100
@@ -266,11 +266,11 @@ expect singing 1
 key 0 up
 wait 50
 # Out of the choir again, back to HERO.
-turn SELECT -1
+turn PRESET -1
 tap SAVE
-turn SELECT -1
+turn PRESET -1
 tap SAVE
-turn SELECT -1
+turn PRESET -1
 tap SAVE
 wait 50
 expect choir 0
@@ -293,15 +293,15 @@ release EDIT
 wait 50
 expect scale 0
 expect root 0
-# PRESET round to TYPE.
-turn PRESET 1
+# SELECT round to TYPE.
+turn SELECT 1
 expect mode 2
 # The faces are built from the voices: GHOST's is a ghost, BOT's a robot with an antenna.
-turn SELECT -1
+turn PRESET -1
 wait 50
 expect cast 7
 expect face_body 1
-turn SELECT -1
+turn PRESET -1
 wait 50
 expect cast 6
 expect face_body 2
@@ -310,7 +310,7 @@ shot controls-bot.png
 # Another character greets in their voice, but not over the loop playing.
 tap PLAY
 wait 100
-turn SELECT 1
+turn PRESET 1
 wait 300
 expect sounding 0
 tap PLAY
@@ -321,12 +321,12 @@ wait 1100
 release ENV
 wait 50
 expect edited 0
-turn SELECT 1
+turn PRESET 1
 wait 300
 expect sounding 1
 expect edited 0
 # LFO held in SING: everyone rolls a new voice; ENV tapped: HERO's own again.
-turn PRESET 1
+turn SELECT 1
 expect mode 0
 press LFO
 wait 1100
@@ -336,7 +336,7 @@ expect edited 1
 tap ENV
 wait 50
 expect edited 0
-turn PRESET -1
+turn SELECT -1
 # In TYPE, LFO types a random syllable at the cursor.
 expect mode 2
 tap FX

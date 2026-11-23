@@ -1,11 +1,11 @@
 # MIDI clock: a Start starts the loop on the clock, its tempo sizes the loop,
 # a Stop stops it; a clock that goes away leaves the loop its own BPM.
 wait 600
-# (The FM-1 boots in SING; this script starts in TYPE: PRESET back one.)
-turn PRESET -1
+# (The FM-1 boots in SING; this script starts in TYPE: SELECT back one.)
+turn SELECT -1
 wait 50
-turn PRESET 1
-turn PRESET 1
+turn SELECT 1
+turn SELECT 1
 expect mode 1
 expect song 0
 expect tempo 120
