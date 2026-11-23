@@ -13,7 +13,7 @@ art) and gives it the panel's controls, its painting (`app/paint.inc`) and the f
 |---|---|
 | `app/app.c` | The app's contract with fm1-base (`app_init`, `app_render`, `app_frame` ...) and the controls adapter |
 | `app/mumble.c`, `app/mumble.h` | The voice engine: text to syllables, the glottal source, formants, consonants, the choir, the loop, effects and the master compressor |
-| `app/mumble_screen.inc` | The page: TYPE, SING and LOOP, the choir, recording, the knob pages |
+| `app/mumble_screen.inc` | The page: SING, LOOP and TYPE, the choir, recording, the knob pages |
 | `app/mumble_faces.inc`, `app/mumble_sprites.inc` | The cast's faces, built from their voices (portrait, icon, the rig that talks and blinks), and their palette |
 | `app/paint.inc` | The damage-marking painter on fm1-base's `lcd_blit`, two band buffers in turn (adapted from FM1 Open, see `LICENSE.md`) |
 | `app/engine.c`, `app/mumble_port.h` | The engine as an -O2 unit; its audio path runs from RAM (`PLAT_RAM_CODE`) |
@@ -57,25 +57,26 @@ The loop follows a MIDI clock from USB or the TRS jack: Start starts it from the
 
 The first boot (and a reset) gives the line "Our princess is in another castle!", yours to change or clear.
 
-ALGO turns between three modes: **TYPE** (the keys type the line), **SING** (they sing it) and **LOOP** (the multitrack
-view: a lane of the loop for each character, the keys singing as in SING). In TYPE the keys' lights mark the vowels; in SING and
+PRESET turns between three modes: **SING** (the keys sing the line; the mode at boot), **LOOP** (the multitrack view: a
+lane of the loop for each character, the keys singing as in SING) and **TYPE** (the keys type the line). ALGO turns
+SING's sound pages and LOOP's tabs. In TYPE the keys' lights mark the vowels; in SING and
 LOOP a key is lit while it is held.
 
-| Control | TYPE | SING | LOOP |
+| Control | SING | LOOP | TYPE |
 |---|---|---|---|
-| Keys | Type at the cursor | Sing the line a syllable at a time; held keys make a chord | As in SING |
+| Keys | Sing the line a syllable at a time; held keys make a chord | As in SING | Type at the cursor |
 | SELECT | The character | | |
-| ALGO | The mode: TYPE, SING, LOOP | | |
-| PRESET | — | The sound page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | The tab the knobs set: MIX, ARP, CHORD, SCALE (tabs at the top) |
-| K1–K4 | K1 the cursor, K2 the letter under it (at the end: a new one) | The page's four sounds, shown with a bar of where each sits and a tick at the character's own | MIX: the character's level (0: muted), swing, bars, BPM. ARP: rate (1/4 .. 1/32, triplets), pattern (up, down, up-down, random, as played), octaves (1-3), gate (10-100 %). CHORD: the shape (triad, 7th, power, sus2, sus4, add9), inversion, spread (close, open, wide). SCALE: the root (C .. B), the scale |
-| EDIT | A word back; held 1 s: clear the line, then the loop | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that setting back | As in SING |
-| OCT- / OCT+ | Delete / CAPS (shouted words) | Octave down / up | As in SING |
-| FX | The cursor to the line's start | Back to the top of the line | As in SING |
+| PRESET | The mode: SING (at boot), LOOP, TYPE | | |
+| ALGO | The sound page the knobs play: VOICE, FEEL, FX, STYLE (tabs at the top) | The tab the knobs set: MIX, ARP, CHORD, SCALE (tabs at the top) | — |
+| K1–K4 | The page's four sounds, shown with a bar of where each sits and a tick at the character's own | MIX: the character's level (0: muted), swing, bars, BPM. ARP: rate (1/4 .. 1/32, triplets), pattern (up, down, up-down, random, as played), octaves (1-3), gate (10-100 %). CHORD: the shape (triad, 7th, power, sus2, sus4, add9), inversion, spread (close, open, wide). SCALE: the root (C .. B), the scale | K1 the cursor, K2 the letter under it (at the end: a new one) |
+| EDIT | The selected character's notes out of the loop; held 1 s: clear the loop. Held with a knob turned: that setting back | As in SING | A word back; held 1 s: clear the line, then the loop |
+| OCT- / OCT+ | Octave down / up | As in SING | Delete / CAPS (shouted words) |
+| FX | Back to the top of the line | As in SING | The cursor to the line's start |
 | SCL | The next scale (major, minor, pentatonic, blues, dorian, mixolydian, harmonic minor; SCL lit) the keys keep to | | |
-| LFO | A random syllable at the cursor (however long it is held) | A new voice rolled for the selected character; held 1 s: for everyone | As in SING |
+| LFO | A new voice rolled for the selected character; held 1 s: for everyone | As in SING | A random syllable at the cursor (however long it is held) |
 | ENV | The selected character's own voice back; held 1 s: everyone's | | |
-| ARP | The arpeggiator on or off (ARP lit; LOOP's ARP tab sets it) | The keys held sung one at a time in the pattern (on the loop's time while it runs), round the choir, a syllable each | As in SING |
-| SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it) | A key sings a chord built up the scale (no scale: major on the root), a note a singer: as many of its notes, from the root up, as the choir has singers (one alone: the root) | As in SING |
+| ARP | The arpeggiator on or off (ARP lit; LOOP's ARP tab sets it): the keys held sung one at a time in the pattern (on the loop's time while it runs), round the choir, a syllable each | As in SING | On or off, for SING and LOOP |
+| SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it): a key sings a chord built up the scale (no scale: major on the root), a note a singer: as many of its notes, from the root up, as the choir has singers (one alone: the root) | As in SING | On or off, for SING and LOOP |
 | GLO | The system screen, open or closed: the audio's load (now and the most since boot), dropouts, the battery, how long the FM-1 has been on, the MIDI clock. There EDIT tapped, then held 3 s, resets everything to the first boot | | |
 | SAVE | The character in or out of the choir | | |
 | PLAY / REC | The loop on or off / record into it (from TYPE: to SING first). With the loop stopped REC waits, blinking, with the metronome counting the tempo, and the first key starts the loop and the recording | | |
@@ -112,7 +113,7 @@ fails when a blit leaves the screen or its band buffer, a band buffer changes wh
 incremental redraw differs from a full repaint, the state left alone 3 s is not saved or a power-off loses it, an LED names a control the FM-1 lacks, HOME leaves the page, sound
 outlasts a panic by 3 s, or the same input plays differently twice. After every frame it also checks the page's
 state: each field in its range and agreeing with the others and the lights (S1), and the frame's change against a
-model of the controls (S2: REC flips the loop, GLO steps the mode, SELECT and ALGO move by their detents, a knob moves
+model of the controls (S2: REC flips the loop, GLO steps the mode, SELECT, PRESET and ALGO move by their detents, a knob moves
 its parameter by the accelerated amount, typing adds exactly the keys' letters, only SAVE/EDIT+key touch a pad, and
 with nothing pressed or turned no setting changes). Putting the state back needs the app's globals in
 sections of their own, which ASan does not guard, so `tests/fuzz.sh --replay` also runs each seed and corpus input

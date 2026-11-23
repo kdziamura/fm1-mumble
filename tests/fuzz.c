@@ -31,7 +31,7 @@
  *       SING or LOOP, the metronome exactly while recording or armed, sounds in
  *       range ...);
  *   S2  the frame did what a model of the controls says: SELECT turns the
- *       character, ALGO the mode (TYPE, SING, LOOP), PRESET SING's pages and
+ *       character, PRESET the mode (SING, LOOP, TYPE), ALGO SING's pages and
  *       LOOP's tabs, each by its detents; GLO opens and closes the system
  *       screen, where EDIT tapped, then held 3 s, resets everything to the
  *       first boot; REC
@@ -418,10 +418,10 @@ static void step_after(void)
     }
     /* GLO: the system screen, open or closed. */
     if (!!(pressed & BUTTON(GLO)) != (voice_system != before.system)) fail("S2 the system screen opened or closed but by GLO");
-    /* ALGO: the mode, by its detents (round); into TYPE the recording stops. */
-    unsigned mode = before.turned[1] ? (unsigned)(((int)before.mode + before.turned[1] % (int)VOICE_MODES + (int)VOICE_MODES) % (int)VOICE_MODES)
+    /* PRESET: the mode, by its detents (round); into TYPE the recording stops. */
+    unsigned mode = before.turned[6] ? (unsigned)(((int)before.mode + before.turned[6] % (int)VOICE_MODES + (int)VOICE_MODES) % (int)VOICE_MODES)
                                      : before.mode;
-    if (!(pressed & BUTTON(REC)) && voice_mode != mode) fail("S2 the mode moved but by ALGO's detents");
+    if (!(pressed & BUTTON(REC)) && voice_mode != mode) fail("S2 the mode moved but by PRESET's detents");
     if (!voice_play && voice_recording) fail("S2 recording went on into TYPE");
     if (pressed == BUTTON(REC) && alone) {
         if (voice_mode != (before.play ? before.mode : (unsigned)VOICE_SING)) fail("S2 REC did not go to SING");
@@ -490,16 +490,16 @@ static void step_after(void)
         if (!before.key_down && (voice_length != before.length || memcmp(voice_text, before.text, voice_length)))
             fail("S2 another character did not keep the line");
     }
-    /* PRESET: SING's sound page or LOOP's tab, by its detents, in the mode ALGO
-     * left (it is read after ALGO); else they stay. */
-    if (mode == VOICE_SING && before.turned[6]) {
-        if (voice_page != (unsigned)(((int)before.page + before.turned[6] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
-            fail("S2 PRESET did not move the page by its detents");
-    } else if (voice_page != before.page) fail("S2 the sound page changed but by PRESET in SING");
-    if (mode == VOICE_LOOP && before.turned[6]) {
-        if (voice_tab != (unsigned)(((int)before.tab + before.turned[6] % (int)VOICE_TABS + (int)VOICE_TABS) % (int)VOICE_TABS))
-            fail("S2 PRESET did not move LOOP's tab by its detents");
-    } else if (voice_tab != before.tab) fail("S2 LOOP's tab changed but by PRESET in LOOP");
+    /* ALGO: SING's sound page or LOOP's tab, by its detents, in the mode PRESET
+     * left (it is read after PRESET); else they stay. */
+    if (mode == VOICE_SING && before.turned[1]) {
+        if (voice_page != (unsigned)(((int)before.page + before.turned[1] % (int)VOICE_PAGES + (int)VOICE_PAGES) % (int)VOICE_PAGES))
+            fail("S2 ALGO did not move the page by its detents");
+    } else if (voice_page != before.page) fail("S2 the sound page changed but by ALGO in SING");
+    if (mode == VOICE_LOOP && before.turned[1]) {
+        if (voice_tab != (unsigned)(((int)before.tab + before.turned[1] % (int)VOICE_TABS + (int)VOICE_TABS) % (int)VOICE_TABS))
+            fail("S2 ALGO did not move LOOP's tab by its detents");
+    } else if (voice_tab != before.tab) fail("S2 LOOP's tab changed but by ALGO in LOOP");
     /* SING, the knobs on a sound page: the selected sound, those parameters, by
      * the accelerated amount, kept in range; with EDIT held, the character's. */
     unsigned knobs_alone = !pressed && !before.turned[0] && !before.turned[1] && !before.turned[6] && !lfo && !env;

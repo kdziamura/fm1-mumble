@@ -2,6 +2,9 @@
 # loop's notes and size, the scale. Saved 3 s after the last change (not while
 # a key is held or recording, nor while the loop plays); a reboot brings it all back.
 wait 600
+# (The FM-1 boots in SING; this script starts in TYPE: PRESET back one.)
+turn PRESET -1
+wait 50
 # The first line ("Our princess is in another castle!") cleared: EDIT held.
 expect length 34
 press EDIT
@@ -21,8 +24,8 @@ expect store_writes 0
 tap PLAY
 wait 100
 # SING: K1 moves HERO's PITCH; SCL C major; REC two notes into the loop.
-turn ALGO 1
-expect mode 1
+turn PRESET 1
+expect mode 0
 turn K1 6
 wait 50
 expect edited 1
@@ -43,8 +46,8 @@ tap PLAY
 wait 100
 expect song 0
 # LOOP: HERO muted (level 0), the loop 4 bars at 100 BPM.
-turn ALGO 1
-expect mode 2
+turn PRESET 1
+expect mode 1
 spin K1 -100
 turn K3 1
 turn K4 -20

@@ -3,6 +3,9 @@ wait 600
 shot boot.png
 expect mode 0
 expect cast 0
+# (The FM-1 boots in SING; this script starts in TYPE: PRESET back one.)
+turn PRESET -1
+wait 50
 # The first line ("Our princess is in another castle!") cleared: EDIT held.
 expect length 34
 press EDIT
@@ -23,9 +26,9 @@ turn SELECT 1
 wait 300
 expect cast 1
 expect length 2
-# ALGO: SING mode; a held key sings the line's first syllable.
-turn ALGO 1
-expect mode 1
+# PRESET: SING mode; a held key sings the line's first syllable.
+turn PRESET 1
+expect mode 0
 key 0 down
 wait 300
 expect sounding 1
@@ -33,14 +36,14 @@ expect lyric 0
 shot singing.png
 key 0 up
 wait 600
-# PLAY: the loop runs (always looping); ALGO on to LOOP mode shows its lanes.
+# PLAY: the loop runs (always looping); PRESET on to LOOP mode shows its lanes.
 tap PLAY
 wait 100
 expect song 2
 expect loop 1
-turn ALGO 1
+turn PRESET 1
 wait 30
-expect mode 2
+expect mode 1
 shot loop.png
 wav loop.wav
 tapkey 9
@@ -49,6 +52,6 @@ wavstop
 tap PLAY
 wait 100
 expect song 0
-# ALGO: round to TYPE.
-turn ALGO 1
-expect mode 0
+# PRESET: round to TYPE.
+turn PRESET 1
+expect mode 2

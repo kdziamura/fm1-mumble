@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
 /* The VOICE page: the MUMBLE retro-game voice synthesizer.
  *
- * One line, sung by eight characters. ALGO turns between three modes:
- *   TYPE  keys type the line; a vowel speaks the moment it is typed.
+ * One line, sung by eight characters. PRESET turns between three modes
+ * (SING at boot, then LOOP, then TYPE):
  *   SING  keys sing the line a syllable at a time at their pitch, held while
  *         held. The key that starts a syllable leads it: keys pressed while
  *         it is held sing it too (a chord); once it is let go the next key
@@ -10,31 +10,32 @@
  *         the keys held are shared out among the choir (selected first).
  *   LOOP  the multitrack view: a lane of the loop per character; the keys
  *         sing as in SING, the knobs set the loop.
+ *   TYPE  keys type the line; a vowel speaks the moment it is typed.
  * The loop (always looping, BARS x BPM) plays a recorded sequence: REC
  * records what is sung, pass over pass. A note keeps its time, length,
  * pitch, singer and syllable slot, not the words: it sings the line as it is
  * now, so a new line changes what the loop sings. Each pass of the loop sings
  * from the top of the line.
  *
+ *   SELECT character   PRESET mode   ALGO page (SING) or tab (LOOP)   SAVE choir
  *   PLAY loop on/off   REC record (from TYPE: to SING first; the loop stopped,
- *        it waits, lit blinking, and starts with the first key)   GLO the mode
- *   SELECT character   ALGO mode   PRESET page (SING) or tab (LOOP)   SAVE choir
+ *        it waits, lit blinking, the metronome counting, and starts with the first key)
  *   GLO   the system screen (load, battery; EDIT, then held 3 s: reset)   HOME held: help
- *   ARP   the arpeggiator (a tap, as it is let go): where the keys sing, the
- *         keys held are sung one at a time (on the loop's time while it runs),
- *         round the choir, a syllable each. Held, the knobs set it: K1 the
- *         rate, K2 the pattern, K3 octaves, K4 the gate, ALGO swing
- *   TYPE  keys type at the cursor   K1 cursor   K2 the letter under it
- *         OCT- delete   OCT+ CAPS   FX ,  SCL .  ENV ?  LFO !
- *         EDIT a word back; held 1 s: clear the line, then the loop
- *   SING  ALGO / SEQ page (SING only)   K1..K4 sound (EDIT held: back to the character's)
+ *   ARP   the arpeggiator on or off: where the keys sing, the keys held are
+ *         sung one at a time (on the loop's time while it runs), round the
+ *         choir, a syllable each; LOOP's ARP tab sets it
+ *   SEQ   auto-chord on or off; LOOP's CHORD tab sets it
+ *   SING  K1..K4 the page's sounds (EDIT held: back to the character's)
  *         OCT- OCT+ octave   FX from the top of the line   SCL the scale the keys keep to
- *         LFO a new voice for the character, rolled
+ *         LFO a new voice for the character, rolled (held: everyone's); ENV their own back
  *         EDIT clear the selected character's notes; held 1 s: the whole loop
- *   LOOP  ALGO the tab: MIX (K1 the character's level, 0 muted; K2 swing;
+ *   LOOP  the tab: MIX (K1 the character's level, 0 muted; K2 swing;
  *         K3 bars; K4 BPM), ARP (rate, pattern, octaves, gate), CHORD
- *         (shape, inversion, spread), SCALE (root, scale); EDIT held with a knob: back to where it starts; OCT, FX and
- *         EDIT as in SING
+ *         (shape, inversion, spread), SCALE (root, scale); EDIT held with a knob: back to where it starts; the rest
+ *         as in SING
+ *   TYPE  keys type at the cursor   K1 cursor   K2 the letter under it
+ *         OCT- delete   OCT+ CAPS   FX the cursor to the start   LFO a random syllable
+ *         EDIT a word back; held 1 s: clear the line
  * Every button says what it did on the hint line.
  *
  * Included by app.c: uses paint.inc's helpers and draw cache. */
@@ -50,40 +51,40 @@ static const uint16_t vowel_colors[MUMBLE_VOWELS] = {0xf325, 0x2d8d, 0x2b7b, 0xf
                                                      0x2c5f, 0xd51f, 0xfc90};
 static const char *const voice_page_names[MUMBLE_PAGES] = {"VOICE", "FEEL", "FX", "STYLE"};
 /* ALGO turns TYPE, SING, LOOP; the keys sing in both of the last two. */
-enum { VOICE_TYPE, VOICE_SING, VOICE_LOOP, VOICE_MODES };
-/* LOOP's tabs (ALGO turns them): the knobs set the mix, the arpeggiator, the scale. */
+enum { VOICE_SING, VOICE_LOOP, VOICE_TYPE, VOICE_MODES };   /* (SING first: the mode at boot) */
+/* LOOP's tabs (ALGO turns them): the knobs set the mix, the arpeggiator, the chord, the scale. */
 enum { TAB_MIX, TAB_ARP, TAB_CHORD, TAB_SCALE, VOICE_TABS };
 static const char *const voice_tab_names[VOICE_TABS] = {"MIX", "ARP", "CHORD", "SCALE"};
-static const char *const voice_mode_names[VOICE_MODES] = {"TYPE", "SING", "LOOP"};
+static const char *const voice_mode_names[VOICE_MODES] = {"SING", "LOOP", "TYPE"};
 static const char *const voice_greetings[MUMBLE_CAST] = {
     "Hey there!", "Halt.", "Bless you, child.", "Hiya! Hiya!", "Arr...", "Hmm, yes... yes.",
     "Hello. Hello.", "Whooo..."};
 /* The line at the first boot (and after a reset): the user's to change or clear. */
 static const char voice_first_line[] = "Our princess is in another castle!";
 /* The hint line's tip in each mode, and HOME's help card. */
-static const char *const voice_tips[VOICE_MODES] = {"K1 CURSOR  K2 LETTER  HOLD HOME: HELP",
-                                                    "KEYS SING THE LINE  HOLD HOME: HELP",
-                                                    "PRESET: THE TAB  HOLD HOME: HELP"};
+static const char *const voice_tips[VOICE_MODES] = {"KEYS SING THE LINE  HOLD HOME: HELP",
+                                                    "ALGO: THE TAB  HOLD HOME: HELP",
+                                                    "K1 CURSOR  K2 LETTER  HOLD HOME: HELP"};
 enum { VOICE_HELP_ROWS = 6, VOICE_HELP_COLUMNS = 37 };     /* (37 letters fill the box to its border) */
 static const char *const voice_help_rows[VOICE_MODES][VOICE_HELP_ROWS] = {
-    {"KEYS TYPE AT THE CURSOR  ALGO: MODE",
-     "K1 CURSOR  K2 LETTER  OCT- DELETE",
-     "OCT+ CAPS  FX: START  LFO: SYLLABLE",
-     "EDIT: A WORD BACK  HOLD: CLEAR",
-     "SELECT: WHO  SAVE: CHOIR  PLAY: LOOP",
-     "REC: SING AND RECORD  GLO: SYSTEM"},
     {"KEYS SING THE LINE  HELD: A CHORD",
-     "PRESET: PAGE  K1-K4 SOUND  ALGO: MODE",
+     "ALGO: PAGE  K1-K4 SOUND  PRESET: MODE",
      "OCT- OCT+ OCTAVE  FX: TOP  SCL: SCALE",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
      "ARP: ARPEGGIO  SEQ: AUTO-CHORD",
      "SAVE: CHOIR  LFO: ROLL  ENV: UNROLL"},
-    {"A LANE EACH  KEYS SING  ALGO: MODE",
-     "PRESET: TAB  MIX ARP CHORD SCALE",
+    {"A LANE EACH  KEYS SING  PRESET: MODE",
+     "ALGO: TAB  MIX ARP CHORD SCALE",
      "EDIT+KNOB: AS IT WAS",
      "PLAY: LOOP  REC: RECORD  GLO: SYSTEM",
      "EDIT: CLEAR SINGER  HOLD: CLEAR LOOP",
-     "SELECT: WHO  SAVE: CHOIR"}};
+     "SELECT: WHO  SAVE: CHOIR"},
+    {"KEYS TYPE AT THE CURSOR  PRESET: MODE",
+     "K1 CURSOR  K2 LETTER  OCT- DELETE",
+     "OCT+ CAPS  FX: START  LFO: SYLLABLE",
+     "EDIT: A WORD BACK  HOLD: CLEAR",
+     "SELECT: WHO  SAVE: CHOIR  PLAY: LOOP",
+     "REC: SING AND RECORD  GLO: SYSTEM"}};
 /* K2's letters in TYPE mode, round and round. */
 static const char voice_alphabet[] = "abcdefghijklmnopqrstuvwxyz ,.?!'-";
 enum { VOICE_ALPHABET = sizeof voice_alphabet - 1, VOICE_HOLD_MS = 1000 };
@@ -127,7 +128,7 @@ static uint32_t voice_trace_ms;
 static uint32_t voice_keys_lit;
 /* The mode, and whether the keys sing (SING or LOOP); held keys, octave
  * shift, and the last key sung and its note. */
-static unsigned voice_mode, voice_play, voice_sung = MUMBLE_LETTERS, voice_sung_note;
+static unsigned voice_mode = VOICE_SING, voice_play = 1, voice_sung = MUMBLE_LETTERS, voice_sung_note;
 static int voice_octave;
 static uint32_t voice_held;
 /* Every character sings one key at a time: each singer's key + 1 (0: silent)
@@ -511,7 +512,7 @@ static void voice_open(void)
         voice_ready = 1;
     }
     voice_page = 0;
-    voice_mode = voice_play = 0;
+    voice_mode = VOICE_SING, voice_play = 1;
     voice_held = 0;
     voice_song = 0;
     memset(voice_trace, 0, sizeof voice_trace);
@@ -1149,7 +1150,7 @@ static void voice_say_number(const char *a, int value, const char *c)
     decimal(number, value, 1);
     voice_say(a, number, c);
 }
-/* The mode: TYPE, SING, LOOP (recording stops in TYPE; between SING and LOOP
+/* The mode: SING, LOOP, TYPE (recording stops in TYPE; between SING and LOOP
  * the keys and the recording carry on). */
 static void voice_mode_to(unsigned mode)
 {
@@ -1205,23 +1206,23 @@ static int voice_controls(const struct fm1_controls *c, uint32_t pressed, uint32
             mumble_aside(voice_cast, hello, (unsigned)strlen(hello), &voice_track()->sound);
         ++voice_lanes_version;
     }
-    /* The left knobs: SELECT the character (above), ALGO the mode, PRESET
+    /* The left knobs: SELECT the character (above), PRESET the mode, ALGO
      * SING's sound page or LOOP's tab. */
-    if (c->encoders[1]) {
-        static const char *const said[VOICE_MODES] = {"TYPE: KEYS TYPE THE LINE", "SING: KEYS SING THE LINE",
-                                                      "LOOP: A LANE FOR EACH SINGER"};
-        voice_mode_to((unsigned)((int)voice_mode + c->encoders[1] % VOICE_MODES + VOICE_MODES) % VOICE_MODES);
+    if (c->encoders[6]) {
+        static const char *const said[VOICE_MODES] = {"SING: KEYS SING THE LINE", "LOOP: A LANE FOR EACH SINGER",
+                                                      "TYPE: KEYS TYPE THE LINE"};
+        voice_mode_to((unsigned)((int)voice_mode + c->encoders[6] % VOICE_MODES + VOICE_MODES) % VOICE_MODES);
         voice_notice(said[voice_mode]);
     }
     if (voice_mode == VOICE_LOOP) {
         unsigned tabbed = voice_tab;
-        if (c->encoders[6]) voice_tab = (unsigned)((int)voice_tab + c->encoders[6] % VOICE_TABS + VOICE_TABS) % VOICE_TABS;
+        if (c->encoders[1]) voice_tab = (unsigned)((int)voice_tab + c->encoders[1] % VOICE_TABS + VOICE_TABS) % VOICE_TABS;
         if (voice_tab != tabbed) voice_say(voice_tab_names[voice_tab], " TAB", NULL);
     } else if (voice_mode == VOICE_SING) {
         unsigned paged = voice_page;
-        if (c->encoders[6]) voice_page = (unsigned)((int)voice_page + c->encoders[6] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
+        if (c->encoders[1]) voice_page = (unsigned)((int)voice_page + c->encoders[1] % VOICE_PAGES + VOICE_PAGES) % VOICE_PAGES;
         if (voice_page != paged) voice_say(voice_page_names[voice_page], " PAGE", NULL);
-    } else if (c->encoders[6]) voice_notice("PAGES ARE IN SING, TABS IN LOOP");
+    } else if (c->encoders[1]) voice_notice("PAGES ARE IN SING, TABS IN LOOP");
     for (unsigned i = 0; i < 4; ++i) {
         int turned = c->encoders[2 + i];
         if (!turned) continue;
@@ -1543,7 +1544,7 @@ static void voice_header(void)
     paint_fill(0, 0, 240, 28, BACK);
     /* The three modes (the current one lit, a play mark while the loop
      * runs, CAPS in TYPE), and in SING its sound pages, the knobs' one lit. */
-    static const uint16_t mode_colors[VOICE_MODES] = {TEXT, GREEN, ACCENT};
+    static const uint16_t mode_colors[VOICE_MODES] = {GREEN, ACCENT, TEXT};
     for (unsigned m = 0; m < VOICE_MODES; ++m)
         text(8U + m * 30U, 4, voice_mode_names[m], 1, m == voice_mode ? mode_colors[m] : PANEL, BACK);
     if (voice_song)
