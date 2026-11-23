@@ -208,18 +208,15 @@ MUMBLE, send the form on that page once the release is tested; check `fmhub.json
 
 ## Status
 
-Played on an FM-1 (November 2026): one shared line, TYPE and SING, the choir, the recorded loop (pitches, timing and
-syllable slots, singing the line as it is), consonants, glides and the master compressor.
-
-Tested in the simulator and the fuzzer, not yet on an FM-1: the faces built from the voices, LOOP mode, the friendlier controls, the scale lock, the
-arpeggiator, quantized recording, the typewriter, saving, and the MIDI clock (whose timing on the device rests on
-`midi_stamp`).
+Tested on an FM-1 (November 2026): SING, LOOP and TYPE, the choir, chords and the arpeggiator, the recorded loop, the
+faces, saving over power-off, the system screen, and the hub's checks (installed from M-VAVE's V15 and from another
+firmware, and left again).
 
 The last measured device build (with consonants and glides, before the voice's top; CI, November 2026): app image
 112,024 B of the 581 KB slot; RAM `.data`+`.bss` 73,568 of 98,304 B; RAM code 15,400 of 32,768 B; pool 84,484 of
-344,064 B. The package `mumble.fwsc` is 616,059 B. Not yet:
+344,064 B. The package `mumble.fwsc` is 616,059 B.
 
-- **Bluetooth MIDI is off**, and no MIDI notes come in (only the clock).
+Not yet: **Bluetooth MIDI is off**, and no MIDI notes come in (only the clock).
 
 ## License
 
