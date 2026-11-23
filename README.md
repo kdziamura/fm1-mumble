@@ -21,7 +21,13 @@ The [web installer](https://kdziamura.github.io/fm1-mumble/install/) writes the 
 M-VAVE's firmware back. Any FM-1 installer that takes a `.fwsc` works too: M-Flasher, the Firmware Hub, or from a
 terminal `base/tools/fm1_install.py mumble-0.1.fwsc` (needs `mido` and `python-rtmidi`). fm1-base's update loader
 accepts both flash chips (`0x856014` and the newer UC25HQ80 `0xB36014`), and the firmware updates from itself, so
-another firmware or M-VAVE's own goes back on the same way. GLO's system screen shows the version installed.
+another firmware or M-VAVE's own goes back on the same way. GLO's system screen shows the version installed. Over
+USB the FM-1 shows up as **MUMBLE FM-1**, a USB MIDI device.
+
+**Your saves and other firmwares.** MUMBLE does not read what other firmwares saved, and they do not read MUMBLE's.
+It keeps its line, voices and loop in the FM-1's flash at `0xFC000` and `0xDC000`, where other firmwares often keep
+theirs: it ignores anything there that is not its own, and its first save writes over it. Back up the firmware you are
+on before you switch (each firmware's own backup, or M-Flasher's full one).
 
 ## Controls
 
@@ -179,7 +185,21 @@ when it changes.
 [The Firmware Hub](https://thefirmwarehub.com/submit/) lists a firmware with its source public under an open licence
 (`LICENSE`), a GitHub release with the `.fwsc` and the update loader in it, an identity of its own (`FM-1_68`: no
 other firmware's starts so), testing on a real FM-1 (installed from M-VAVE's V15 and from another firmware, and left
-again) and `fmhub.json`, its card. It picks up each new release by itself; a 0.x version shows as beta. To list
+again) and `fmhub.json`, its card. It picks up each new release by itself; a 0.x version shows as beta. The hub runs no tests of its own,
+so before sending it, test the release's very `.fwsc` on a real FM-1 as its
+[knowledge base](https://thefirmwarehub.com/kb/#listed) asks:
+
+- install it from M-VAVE's V15 and from another custom firmware: both end with MUMBLE running, and the hub names it
+  after Connect;
+- leave it again: with MUMBLE running, install another firmware (MUMBLE must start the next package's update loader);
+- USB: it shows up as a MIDI device (**MUMBLE FM-1**: a name the hub's installer finds, as it has "FM-1" in it) and
+  answers the identity request with `FM-1_68000100`;
+- an interrupted update: unplug once while it says Writing, plug in again and press Install: it should continue;
+- before publishing, it can boot in Simon Johansson's
+  [fm1-emulator](https://thefirmwarehub.com/kb/#try) (`./emulator mumble-0.1.fwsc`), the real package on an emulated
+  FM-1.
+
+To list
 MUMBLE, send the form on that page once the release is tested; check `fmhub.json` at
 <https://thefirmwarehub.com/kb/#fmhub> after a change.
 
