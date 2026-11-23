@@ -11,7 +11,7 @@ line says now.
   played with a mouse or your computer's keyboard.
 - **[Install it](https://kdziamura.github.io/fm1-mumble/install/)** from Chrome or Edge, the FM-1 connected by USB.
 - **[Releases](https://github.com/kdziamura/fm1-mumble/releases)**: each one's package (`mumble-X.Y.fwsc`), built
-  and signed on GitHub from its tag; what changed is in [CHANGELOG.md](CHANGELOG.md).
+  and signed on GitHub from its source, with what changed.
 
 You install it at your own risk. Back up the FM-1 first; M-VAVE's own firmware goes back on the same way.
 
@@ -165,20 +165,22 @@ makes `mumble-0.1.fwsc` with the package identity `FM-1_68000100` (fm1.toml's `i
 which installers check, and the version string the FM-1 reports and the system screen shows; a dev build is
 `FM-1_6800` and `DEV`.
 
-To release, add the version's section to [CHANGELOG.md](CHANGELOG.md) (`## 0.1 ...`: it becomes the release's
-notes), then tag and push:
+Releases are made on GitHub, with nothing to tag or write by hand:
 
-~~~sh
-git tag -s v0.1 -m "MUMBLE 0.1" && git push origin v0.1
-~~~
+1. **Releases > Draft a new release**, and in **Choose a tag** type a new one, `v0.1` (GitHub makes the tag on
+   `main`). For a beta, `v0.2-beta1` and tick **Set as a pre-release**.
+2. **Generate release notes** (GitHub lists the changes since the last release), and **Publish release**.
 
-`.github/workflows/release.yml` builds the tag on the shared FM-1 builder
-([`zvenson/fm1-build`](https://github.com/zvenson/fm1-build)), runs `tests/run_tests.sh`, signs build provenance for
-the package, the app, the `.rfm1` (for host apps such as RemoteFM1) and `firmware.json` (the Firmware Hub shows such
-packages as built from source), and publishes the release. It then starts `.github/workflows/site.yml`, which makes
-the site from that attested package with fm1-base's `tools/make_site.py` (the front page `app/site/landing.md`, the
-emulator, the installer, the screen reader's words) and deploys it to GitHub Pages; the repository's Pages source
-must be **GitHub Actions**. `firmware.json` at the root describes the firmware for hubs and installers (its name,
+Publishing runs `.github/workflows/release.yml`: the shared FM-1 builder
+([`zvenson/fm1-build`](https://github.com/zvenson/fm1-build)) builds that tag, runs `tests/run_tests.sh`, signs
+build provenance for the package, the app, the `.rfm1` (for host apps such as RemoteFM1) and `firmware.json` (the
+Firmware Hub shows such packages as built from source) and attaches them to the release, a few minutes later. Their
+signatures are checked, then `.github/workflows/site.yml` makes the site from that attested package with fm1-base's
+`tools/make_site.py` (the front page `app/site/landing.md`, the emulator, the installer, the screen reader's words)
+and deploys it to GitHub Pages; the repository's Pages source must be **GitHub Actions**. A release whose tag is not
+a version, or whose build, tests or signatures fail, is turned back into a draft: fix it and publish the draft again.
+
+`firmware.json` at the root describes the firmware for hubs and installers (its name,
 author, licence, description, tags, links and screenshot, from `app/fm1.toml`); the build rewrites it, so commit it
 when it changes.
 

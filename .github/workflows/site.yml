@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception
 # MUMBLE's site on GitHub Pages (https://kdziamura.github.io/fm1-mumble/): the front page (app/site/landing.md), the
 # demo in the browser (the emulator: the same code as the FM-1, with sound), the web installer with the release's
-# attested package, and the screen reader's words. Made by fm1-base's tools/make_site.py when a release is published
-# (release.yml), or by hand for a tag. Pages must be set to deploy from GitHub Actions (Settings > Pages > Source).
+# attested package, and the screen reader's words. Made by fm1-base's tools/make_site.py once release.yml has built,
+# signed and checked a release (it starts this), or by hand for a release's tag (Actions > Site > Run workflow).
+# Pages must be set to deploy from GitHub Actions (Settings > Pages > Source).
 name: Site
 
 on:
-  release:
-    types: [published]               # (by hand on GitHub; release.yml's publishing asks for this by name)
   workflow_dispatch:
     inputs:
       tag:
@@ -31,7 +30,7 @@ jobs:
       - name: The release
         id: tag
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?(-[A-Za-z0-9]+)?$ ]]

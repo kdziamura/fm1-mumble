@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
-# MUMBLE's release: a pushed tag vX.Y (vX.Y-beta1: a prerelease) is built from source on GitHub by the shared FM-1
-# builder, tested (tests/run_tests.sh), its packages signed with build provenance (the FM-1 Firmware Hub shows
-# them as built from source), and published as a release with mumble-X.Y.fwsc, the app, the .rfm1 for host apps
-# and firmware.json. From fm1-base's template (base/template/.github/workflows/release.yml); site.yml then puts
-# the release on the site.
+# MUMBLE's releases are made on GitHub: Releases > Draft a new release, a new tag vX.Y (vX.Y.Z; vX.Y-beta1 and
+# "Set as a pre-release" for a beta), Generate release notes, Publish. Publishing runs this: the shared FM-1 builder
+# (zvenson/fm1-build, the one The Firmware Hub trusts) builds that tag from source, runs tests/run_tests.sh, signs
+# build provenance for mumble-X.Y.fwsc, the app, the .rfm1 and firmware.json, and attaches them to the release; then
+# their signatures are checked and site.yml puts the release on the site. A release whose tag is no version, whose
+# build or tests fail or whose signatures do not check is turned back into a draft, so no one installs it.
+# From fm1-base's template (base/template/.github/workflows/release.yml), made to start from a published release.
 name: Build and attest firmware
 
 on:
-  push:
-    tags: ['v[0-9]*']
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -19,39 +20,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare:
+  check:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Prepare a draft without replacing a public release
+      - name: The tag is a version (the ones base/tools/build.py --release takes)
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TITLE: MUMBLE
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/tags/* ]]; then exit 0; fi
-          version=${GITHUB_REF_NAME#v}
-          # (the versions base/tools/build.py --release takes)
-          [[ "$version" =~ ^[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?(-[A-Za-z0-9]+)?$ ]]
-          flags=(--prerelease=false)
-          if [[ "$version" == *-* ]]; then flags=(--prerelease --latest=false); fi
-          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft); then
-            [[ "$draft" == true ]] || { echo 'Refusing to rebuild a public release'; exit 1; }
-          else
-            # the notes: CHANGELOG.md's section for this version ("## 0.1 ..."), else GitHub's list of changes
-            awk -v v="$version" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-            if [[ -s "$RUNNER_TEMP/notes.md" ]]; then notes=(--notes-file "$RUNNER_TEMP/notes.md"); else notes=(--generate-notes); fi
-            gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
-              --title "$TITLE $version" "${notes[@]}" "${flags[@]}"
-          fi
+          [[ "$TAG" =~ ^v[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?(-[A-Za-z0-9]+)?$ ]] \
+            || { echo "::error::the tag $TAG is not a version: vX.Y, vX.Y.Z or vX.Y-beta1"; exit 1; }
 
   firmware:
-    needs: prepare
+    needs: check
     # The Firmware Hub recognises attestations from this reviewed builder tag.
     uses: zvenson/fm1-build/.github/workflows/build.yml@v1
     permissions:
@@ -109,7 +89,7 @@ jobs:
     needs: firmware
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
       attestations: read
       actions: write
     steps:
@@ -130,16 +110,28 @@ jobs:
               --signer-workflow zvenson/fm1-build/.github/workflows/build.yml \
               --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA"
           done
-      - name: Publish the verified draft
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false
-      # (a release published with this workflow's token starts no other workflow: site.yml is asked for by name)
+      # (a workflow started with this workflow's token starts no other on its own: site.yml is asked for by name)
       - name: Put the release on the site
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh workflow run site.yml --ref main -f tag="$GITHUB_REF_NAME"
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh workflow run site.yml --ref main -f tag="$TAG"
+
+  # Anything above failed: the release back to a draft (its tag stays), out of the hub's and the installers' reach.
+  # Fix it, then publish the draft again (or delete it and its tag, and make a new one).
+  withdraw:
+    needs: [check, firmware, verify]
+    if: failure()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Back to a draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release edit "$TAG" --draft=true
+          echo "::error::$TAG failed to build, test or verify: it is a draft again"
