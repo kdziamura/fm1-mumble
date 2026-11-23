@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "mumble",
+  "name": "MUMBLE",
+  "author": "Kiryl Dziamura",
+  "license": "GPL-3.0-only",
+  "tagline": "retro-game characters that sing what you type",
+  "description": "Eight retro-game characters sing a line you type. SING it a syllable a key, with the choir on auto-chords and an arpeggiator; record it into a multitrack LOOP that follows MIDI clock; or TYPE and hear it spoken. Every character has their own voice and pixel face, built from their sound, with CRUSH, RADIO, ECHO and ROOM; LFO rolls a new one.",
+  "tags": ["synth", "game", "chords", "sequencer"],
+  "install": "https://kdziamura.github.io/fm1-mumble/install/",
+  "site": "https://kdziamura.github.io/fm1-mumble/",
+  "source": "https://github.com/kdziamura/fm1-mumble",
+  "screenshot": "app/site/img/screen-sing.png",
+  "hardware": {
+    "models": ["FM-1"],
+    "flash": ["856014", "B36014"],
+    "features": ["usb-audio-in", "usb-audio-out", "screen-reader"]
+  },
+  "credits": "Built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (Hügelton Instruments)."
+}

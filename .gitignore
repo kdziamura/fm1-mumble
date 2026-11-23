@@ -1,5 +1,5 @@
 /app/build/
 /app/web/
-/firmware*.json
+/firmware-*.json
 /fuzz-*.log
 __pycache__/

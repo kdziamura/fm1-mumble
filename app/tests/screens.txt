@@ -1,0 +1,47 @@
+# The screens in app/site/img (the README, the site, the hubs' card): run with
+# app/site/img as the output folder (then delete the midi_out.txt it leaves). SING with a chord on three singers, the loop
+# they recorded in LOOP, and the line in TYPE.
+wait 600
+# SING: HERO, SISTER and KID in the choir; auto-chord on.
+tap SAVE
+turn SELECT 2
+wait 50
+tap SAVE
+turn SELECT 1
+wait 600
+tap SEQ
+# REC: waits for the first key, then a few chords into the loop.
+tap REC
+wait 300
+key 0 down
+wait 400
+key 0 up
+wait 100
+key 4 down
+wait 400
+key 4 up
+wait 100
+key 7 down
+wait 400
+key 7 up
+wait 100
+key 5 down
+wait 250
+shot screen-sing.png
+wait 150
+key 5 up
+wait 100
+tap REC
+expect recording 0
+# LOOP: a lane for each singer, the loop playing.
+turn PRESET 1
+wait 1500
+expect mode 1
+shot screen-loop.png
+tap PLAY
+wait 100
+# TYPE: the line at the cursor.
+turn PRESET 1
+wait 600
+expect mode 2
+shot screen-type.png

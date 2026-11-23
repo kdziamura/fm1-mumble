@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception
+# MUMBLE's site on GitHub Pages (https://kdziamura.github.io/fm1-mumble/): the front page (app/site/landing.md), the
+# demo in the browser (the emulator: the same code as the FM-1, with sound), the web installer with the release's
+# attested package, and the screen reader's words. Made by fm1-base's tools/make_site.py when a release is published
+# (release.yml), or by hand for a tag. Pages must be set to deploy from GitHub Actions (Settings > Pages > Source).
+name: Site
+
+on:
+  release:
+    types: [published]               # (by hand on GitHub; release.yml's publishing asks for this by name)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release whose package the site installs (vX.Y)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mumble-site
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: The release
+        id: tag
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?(-[A-Za-z0-9]+)?$ ]]
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: The build's Python (pinned), FriBiDi for the fonts
+        run: |
+          base/tools/setup_toolchain.sh --only uv,python
+          echo "$PWD/base/.venv/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y -qq libfribidi0
+
+      - name: Emscripten 6.0.10 (emsdk at a fixed commit, as the release builder's)
+        run: |
+          git clone -q https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" checkout -q a2b92777574c2feda07994cd4f1079a3dfc151f8
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
+          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
+
+      - name: The release's attested package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p app/build
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "mumble-$VERSION.fwsc" --dir app/build
+          gh attestation verify "app/build/mumble-$VERSION.fwsc" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow zvenson/fm1-build/.github/workflows/build.yml
+
+      - name: The emulator and the site
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          ./build.sh --web --release "$VERSION"
+          python3 base/tools/make_site.py app "app/build/mumble-$VERSION.fwsc" "$VERSION" app/build/site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/build/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -7,9 +7,15 @@ o2 = ["engine.c"]              # the voice engine (app/mumble.c), at -O2; its au
 ble = false                    # USB MIDI only for now
 midi_stamp = true              # MIDI clock stamped where it lands: the loop follows its tempo
 companion = false
-# the site and firmware.json (tools/make_site.py, docs/FIRMWARE-JSON.md)
-tagline = "retro-game character voices from text"
+# the site (base/tools/make_site.py: app/site/landing.md, the installer, the emulator) and firmware.json, which
+# firmware hubs and installers read for the name, the author and the rest (base/docs/FIRMWARE-JSON.md)
+tagline = "retro-game characters that sing what you type"
 licence = "GPL-3.0-only"
-author = "MUMBLE contributors"
-description = "Eight retro-game characters sing a line you type: TYPE it on the keys, SING it a syllable a key with a choir on chords, and record it into a multitrack LOOP, with per-character CRUSH, RADIO, ECHO and ROOM."
-tags = ["synth"]
+author = "Kiryl Dziamura"
+description = "Eight retro-game characters sing a line you type. SING it a syllable a key, with the choir on auto-chords and an arpeggiator; record it into a multitrack LOOP that follows MIDI clock; or TYPE and hear it spoken. Every character has their own voice and pixel face, built from their sound, with CRUSH, RADIO, ECHO and ROOM; LFO rolls a new one."
+tags = ["synth", "game", "chords", "sequencer"]
+repo = "https://github.com/kdziamura/fm1-mumble"
+install = "https://kdziamura.github.io/fm1-mumble/install/"
+site = "https://kdziamura.github.io/fm1-mumble/"
+screenshot = "app/site/img/screen-sing.png"   # the hubs' card: a square PNG, 240 x 240 (app/tests/screens.txt)
+credits = "Built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (Hügelton Instruments)."

@@ -35,23 +35,13 @@ jobs:
           base/tools/setup_toolchain.sh --only jieli,ac79-sdk,uv,python
           echo "$PWD/base/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Engine tests (tests/engine_test.c)
-        run: tests/engine.sh app/build/engine
-
-      - name: Faces (app/mumble_faces.inc draws what tools/faces.py draws)
+      - name: Tests (tests/run_tests.sh, as the release runs them)
         run: |
-          tests/faces.sh python3
-          python3 tools/faces.py app/build/faces
+          sudo apt-get install -y -qq libfribidi0
+          tests/run_tests.sh
 
-      - name: Host simulator tests
-        run: |
-          python3 base/tools/build.py app --host
-          app/build/host/mumble_host app/tests/basic.txt app/build/host
-          app/build/host/mumble_host app/tests/record.txt app/build/host
-          app/build/host/mumble_host app/tests/line.txt app/build/host
-          app/build/host/mumble_host app/tests/controls.txt app/build/host
-          app/build/host/mumble_host app/tests/save.txt app/build/host
-          app/build/host/mumble_host app/tests/clock.txt app/build/host
+      - name: The faces' contact sheets (tools/faces.py)
+        run: python3 tools/faces.py app/build/faces
 
       - name: Fuzz (the seeds, two minutes, the corpus with ASan on globals; tests/fuzz.c)
         run: |
