@@ -177,7 +177,12 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
     }
 }
 
-void app_panic(void) { mumble_stop(); }
+/* Silence now: the engine stopped, and REC no longer armed (its metronome off). */
+void app_panic(void)
+{
+    mumble_stop();
+    voice_rec_armed = 0;
+}
 
 void app_ui_init(void)
 {

@@ -468,6 +468,25 @@ int main(int argc, char **argv)
     any = 0;
     for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) any |= z[i] != 0;
     CHECK(!any, "the metronome off: silence");
+    /* With no loop playing (REC armed, waiting for the first key) it clicks
+     * on its own clock, the first beat at once. */
+    mumble_metronome(4, 1000);
+    float free_beats[8] = {0}, free_between = 0.0f;
+    for (unsigned b = 0; b < 689; ++b) {
+        memset(z, 0, sizeof z); mumble_render(z);
+        unsigned ms = b * FM1_BLOCK_FRAMES * 1000U / FM1_SAMPLE_RATE;
+        float e = 0.0f;
+        for (unsigned i = 0; i < FM1_BLOCK_WORDS; i += 2) { float x = z[i] / 8388608.0f; e += x * x; }
+        unsigned beat = (ms + 125U) / 250U, off = ms % 250U, near = off < 125U ? off : 250U - off;
+        if (near < 20U && beat < 8U) free_beats[beat] += e;
+        else if (near > 60U) free_between += e;
+    }
+    beats_heard = 0;
+    for (unsigned k = 0; k < 8; ++k) beats_heard += free_beats[k] > 1e-3f;
+    CHECK(beats_heard == 8 && free_between < 1e-4f * free_beats[1] && free_beats[0] > 1.5f * free_beats[1],
+          "no loop: the metronome clicks on its own (%u of 8 beats)", beats_heard);
+    mumble_metronome(0, 0);
+    for (unsigned b = 0; b < 200; ++b) { memset(z, 0, sizeof z); mumble_render(z); }
 
     /* The singing voice, measured on HERO with no echo or room (no tails). */
     {

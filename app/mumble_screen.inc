@@ -1413,8 +1413,9 @@ static void voice_frame(uint32_t now)
         if (voice_now.song_ms < voice_loop_last_ms) voice_lyric_rewind();
         voice_loop_last_ms = voice_now.song_ms;
     } else voice_loop_last_ms = -1;
-    /* Recording: the metronome counts the loop's beats. */
-    unsigned click = voice_recording ? voice_bars * 4U : 0U;
+    /* Recording, or armed for it (the loop stopped): the metronome counts
+     * the loop's beats, the tempo to come in on. */
+    unsigned click = voice_recording || voice_rec_armed ? voice_bars * 4U : 0U;
     static uint32_t click_loop;
     if (click != voice_click || (click && click_loop != voice_loop_ms())) {
         voice_click = click;

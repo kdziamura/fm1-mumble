@@ -563,7 +563,7 @@ static uint32_t tail_frames;                     /* effect tail still ringing */
 /* The metronome: beats a loop and each beat's frames (set by the control
  * task), and the click ringing: a damped sine, y = k1 y1 - k2 y2. */
 static volatile uint8_t click_beats;
-static volatile uint32_t click_beat_frames;
+static volatile uint32_t click_beat_frames, click_origin;   /* origin: the free clicks' first, no loop playing */
 static uint32_t click_left;
 static float click_y1, click_y2, click_k1, click_k2;
 static float click_coef[2][3];                   /* plain, accented: k1, k2, first sample */
@@ -747,6 +747,7 @@ CONTROL void mumble_metronome(unsigned beats, uint32_t loop_ms)
     click_beats = 0;                                /* (the audio sees no half-set pair) */
     if (!beats) return;
     click_beat_frames = period / beats;
+    click_origin = now_frames;
     click_beats = (uint8_t)beats;
 }
 CONTROL void mumble_song_stop(void)
@@ -847,6 +848,7 @@ CONTROL void mumble_cut(void)
 CONTROL void mumble_stop(void)
 {
     mumble_song_stop();
+    click_beats = 0;                             /* (the metronome too: it clicks on its own with no loop) */
     unsigned slot;
     struct live *s = live_slot(&slot);
     s->count = 0;
@@ -1517,6 +1519,9 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
             uint32_t at = k == beats ? song_period : k * beat;
             if (at >= into && at - into < FM1_BLOCK_FRAMES) { click_at = at - into; accent = (k % 4U) == 0; break; }
         }
+    } else if (beats && click_beat_frames) {   /* no loop playing (REC armed): beats on their own clock, the first at once */
+        uint32_t beat = click_beat_frames, since = now - click_origin, into = since % beat, at = into ? beat - into : 0U;
+        if (at < FM1_BLOCK_FRAMES) click_at = at, accent = (since + at) / beat % 4U == 0;
     }
     unsigned clicking = click_left || click_at < FM1_BLOCK_FRAMES;
 

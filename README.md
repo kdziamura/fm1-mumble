@@ -78,7 +78,7 @@ LOOP a key is lit while it is held.
 | SEQ | Auto-chord on or off (SEQ lit; LOOP's CHORD tab sets it) | A key sings a chord built up the scale (no scale: major on the root), a note a singer: as many of its notes, from the root up, as the choir has singers (one alone: the root) | As in SING |
 | GLO | The system screen, open or closed: the audio's load (now and the most since boot), dropouts, the battery, how long the FM-1 has been on, the MIDI clock. There EDIT tapped, then held 3 s, resets everything to the first boot | | |
 | SAVE | The character in or out of the choir | | |
-| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first). With the loop stopped REC waits, blinking, and the first key starts the loop and the recording | | |
+| PLAY / REC | The loop on or off / record into it (from TYPE: to SING first). With the loop stopped REC waits, blinking, with the metronome counting the tempo, and the first key starts the loop and the recording | | |
 
 ## Build and test
 

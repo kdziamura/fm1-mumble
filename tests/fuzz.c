@@ -28,7 +28,7 @@
  *       by singer with its notes in range, one key per singer, nobody
  *       out of the choir singing, and
  *       none held unsung while a choir member is free, recording only in
- *       SING or LOOP, the metronome exactly while recording, sounds in
+ *       SING or LOOP, the metronome exactly while recording or armed, sounds in
  *       range ...);
  *   S2  the frame did what a model of the controls says: SELECT turns the
  *       character, ALGO the mode (TYPE, SING, LOOP), PRESET SING's pages and
@@ -275,7 +275,8 @@ static void check_state(void)
     if (voice_rec_armed && (voice_recording || !voice_play || voice_song))
         fail("S1 REC armed while recording, in TYPE or with the loop running");
     if (!voice_recording && voice_rec_held) fail("S1 singers recorded while not recording");
-    if (voice_click != (voice_recording ? voice_bars * 4u : 0u)) fail("S1 the metronome not on exactly while recording");
+    if (voice_click != (voice_recording || voice_rec_armed ? voice_bars * 4u : 0u))
+        fail("S1 the metronome not on exactly while recording or armed");
     if (voice_lyric_count > MUMBLE_SYLLABLES || voice_lyric_at >= (voice_lyric_count ? voice_lyric_count : 1u) ||
         voice_lyric_started > 1)
         fail("S1 the queue's syllable out of its line");
