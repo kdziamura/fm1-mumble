@@ -1640,7 +1640,9 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
         --click_left;
     }
     /* Compress and limit (looking ahead), then a soft clip (straight to 0.75,
-     * then bending to 1 at 1.5), then into the mix at -3 dB under full scale.
+     * then bending to 1 at 1.5), then into the mix at -9 dB under full scale
+     * (a held note about -18 LUFS at full MASTER: headroom for the choir, and
+     * near other firmwares' level).
      * The gain falls to its target within the look-ahead (8 % a frame) and
      * rises back over about 15 ms; the target is set every 4 frames. */
     for (unsigned i = 0; i < FM1_BLOCK_FRAMES; ++i) {
@@ -1675,7 +1677,7 @@ FM1_AUDIO_CODE void mumble_render(int32_t *output)
                 y = 0.75f + 0.25f * d * (27.0f + d * d) / (27.0f + 9.0f * d * d);
                 if (x < 0.0f) y = -y;
             }
-            int32_t value = output[i * 2 + c] + (int32_t)(y * 5940000.0f);
+            int32_t value = output[i * 2 + c] + (int32_t)(y * 2977000.0f);
             output[i * 2 + c] = value > 8388607 ? 8388607 : value < -8388608 ? -8388608 : value;
         }
         comp_at = (comp_at + 1U) % COMP_LOOK;
