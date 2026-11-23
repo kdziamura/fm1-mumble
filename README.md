@@ -10,7 +10,7 @@ line says now.
 - **[Try it in the browser](https://kdziamura.github.io/fm1-mumble/emu/)**: the same code as the FM-1, with sound,
   played with a mouse or your computer's keyboard.
 - **[Install it](https://kdziamura.github.io/fm1-mumble/install/)** from Chrome or Edge, the FM-1 connected by USB.
-- **[Releases](https://github.com/kdziamura/fm1-mumble/releases)**: each one's package (`mumble-X.Y.fwsc`), built
+- **[Releases](https://github.com/kdziamura/fm1-mumble/releases)**: each one's package (`mumble-X.Y.Z.fwsc`), built
   and signed on GitHub from its source, with what changed.
 
 You install it at your own risk. Back up the FM-1 first; M-VAVE's own firmware goes back on the same way.
@@ -19,7 +19,7 @@ You install it at your own risk. Back up the FM-1 first; M-VAVE's own firmware g
 
 The [web installer](https://kdziamura.github.io/fm1-mumble/install/) writes the release's package and can put
 M-VAVE's firmware back. Any FM-1 installer that takes a `.fwsc` works too: M-Flasher, the Firmware Hub, or from a
-terminal `base/tools/fm1_install.py mumble-0.1.fwsc` (needs `mido` and `python-rtmidi`). fm1-base's update loader
+terminal `base/tools/fm1_install.py mumble-0.1.0.fwsc` (needs `mido` and `python-rtmidi`). fm1-base's update loader
 accepts both flash chips (`0x856014` and the newer UC25HQ80 `0xB36014`), and the firmware updates from itself, so
 another firmware or M-VAVE's own goes back on the same way. GLO's system screen shows the version installed. Over
 USB the FM-1 shows up as **MUMBLE FM-1**, a USB MIDI device.
@@ -160,15 +160,16 @@ tests/fuzz.sh --merge                            # the corpus shrunk to the fewe
 
 ### Versions and releases
 
-Versions are `X.Y` (`X.Y.Z` for a fix, `X.Y-beta1` for a prerelease). A release build (`./build.sh --release 0.1`)
-makes `mumble-0.1.fwsc` with the package identity `FM-1_68000100` (fm1.toml's `id_prefix` and the version's digits),
+Versions have three numbers, `X.Y.Z` (`0.1.0`; up to two digits each), and `X.Y.Z-beta1` for a prerelease. A
+release build (`./build.sh --release 0.1.0`) makes `mumble-0.1.0.fwsc` with the package identity `FM-1_68000100`
+(fm1.toml's `id_prefix` and the version's digits, two each),
 which installers check, and the version string the FM-1 reports and the system screen shows; a dev build is
 `FM-1_6800` and `DEV`.
 
 Releases are made on GitHub, with nothing to tag or write by hand:
 
-1. **Releases > Draft a new release**, and in **Choose a tag** type a new one, `v0.1` (GitHub makes the tag on
-   `main`). For a beta, `v0.2-beta1` and tick **Set as a pre-release**.
+1. **Releases > Draft a new release**, and in **Choose a tag** type a new one, `v0.1.0` (GitHub makes the tag on
+   `main`). For a beta, `v0.2.0-beta1` and tick **Set as a pre-release**.
 2. **Generate release notes** (GitHub lists the changes since the last release), and **Publish release**.
 
 Publishing runs `.github/workflows/release.yml`: the shared FM-1 builder
@@ -198,7 +199,7 @@ so before sending it, test the release's very `.fwsc` on a real FM-1 as its
   answers the identity request with `FM-1_68000100`;
 - an interrupted update: unplug once while it says Writing, plug in again and press Install: it should continue;
 - before publishing, it can boot in Simon Johansson's
-  [fm1-emulator](https://thefirmwarehub.com/kb/#try) (`./emulator mumble-0.1.fwsc`), the real package on an emulated
+  [fm1-emulator](https://thefirmwarehub.com/kb/#try) (`./emulator mumble-0.1.0.fwsc`), the real package on an emulated
   FM-1.
 
 To list

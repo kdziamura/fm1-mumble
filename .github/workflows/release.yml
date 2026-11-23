@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-# MUMBLE's releases are made on GitHub: Releases > Draft a new release, a new tag vX.Y (vX.Y.Z; vX.Y-beta1 and
-# "Set as a pre-release" for a beta), Generate release notes, Publish. Publishing runs this: the shared FM-1 builder
+# MUMBLE's releases are made on GitHub: Releases > Draft a new release, a new tag vX.Y.Z (three numbers: v0.1.0;
+# v0.2.0-beta1 and "Set as a pre-release" for a beta), Generate release notes, Publish. Publishing runs this: the shared FM-1 builder
 # (zvenson/fm1-build, the one The Firmware Hub trusts) builds that tag from source, runs tests/run_tests.sh, signs
-# build provenance for mumble-X.Y.fwsc, the app, the .rfm1 and firmware.json, and attaches them to the release; then
+# build provenance for mumble-X.Y.Z.fwsc, the app, the .rfm1 and firmware.json, and attaches them to the release; then
 # their signatures are checked and site.yml puts the release on the site. A release whose tag is no version, whose
 # build or tests fail or whose signatures do not check is turned back into a draft, so no one installs it.
 # From fm1-base's template (base/template/.github/workflows/release.yml), made to start from a published release.
@@ -27,8 +27,8 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          [[ "$TAG" =~ ^v[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?(-[A-Za-z0-9]+)?$ ]] \
-            || { echo "::error::the tag $TAG is not a version: vX.Y, vX.Y.Z or vX.Y-beta1"; exit 1; }
+          [[ "$TAG" =~ ^v[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}(-[A-Za-z0-9]+)?$ ]] \
+            || { echo "::error::the tag $TAG is not a version: vX.Y.Z (v0.1.0), or vX.Y.Z-beta1"; exit 1; }
 
   firmware:
     needs: check
