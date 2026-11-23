@@ -5,7 +5,7 @@
  *
  * Adapted from the panel painting in FM1 Open (app/screen.c), Copyright (c)
  * 2026 M-VAVE, GPL-3.0-only with its linking exception; modified for MUMBLE
- * on fm1-base, November 2026. See LICENSE.md. */
+ * on fm1-base, November 2026. See NOTICE.md. */
 
 enum {
     BACK = 0x0000,

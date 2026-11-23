@@ -112,7 +112,7 @@ static uint32_t frame_time;
 static const char *notice;
 static uint32_t notice_until;
 static uint8_t encoder_speed[7];
-/* A quick turn moves further (adapted from FM1 Open; see LICENSE.md). */
+/* A quick turn moves further (adapted from FM1 Open; see NOTICE.md). */
 static int fm_encoder_delta(unsigned encoder, int16_t value)
 {
     int amount = value < 0 ? -(int)value : value;
