@@ -1,8 +1,11 @@
 {
   "what": "Eight retro-game characters sing a line you type, a syllable a key, as a choir on chords, each with their own voice and a pixel face built from it. Record them into a multitrack loop that follows MIDI clock, or type and hear them speak. All synthesised, no samples.",
   "author": "Kiryl Dziamura",
-  "kinds": ["synth"],
+  "kinds": [
+    "synth"
+  ],
   "play": "https://kdziamura.github.io/fm1-mumble/emu/",
   "image": "app/site/img/screen-sing.png",
-  "color": "#4CD964"
+  "color": "#4CD964",
+  "sounds": "none – all synthesised"
 }
