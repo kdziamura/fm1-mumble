@@ -41,6 +41,9 @@
  * Included by app.c: uses paint.inc's helpers and draw cache. */
 #include "mumble.h"
 #include "mumble_faces.inc"
+#ifndef APP_VERSION
+#define APP_VERSION "DEV"                /* (fm1-base's fm1b_config.h has it; the fuzzer's stand-in platform not) */
+#endif
 
 enum { VOICE_TRACE = 21, VOICE_ROWS = 3, VOICE_COLUMNS = 18 };
 #define RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
